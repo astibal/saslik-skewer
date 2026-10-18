@@ -10,6 +10,7 @@ set(CMAKE_AUTOMOC ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+pkg_check_modules(NCURSESW REQUIRED IMPORTED_TARGET ncursesw)
 
 add_executable(skewer
     src/main.cpp
@@ -23,9 +24,11 @@ add_executable(skewer
     src/main_window.hpp
     src/process_scanner.cpp
     src/process_scanner.hpp
+    src/tui.cpp
+    src/tui.hpp
 )
 
-target_link_libraries(skewer PRIVATE Qt6::Widgets PkgConfig::SYSTEMD)
+target_link_libraries(skewer PRIVATE Qt6::Widgets PkgConfig::SYSTEMD PkgConfig::NCURSESW)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
 
 install(TARGETS skewer RUNTIME DESTINATION bin)
