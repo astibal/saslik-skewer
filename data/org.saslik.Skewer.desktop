@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Skewer
+GenericName=Application traffic selector
+Comment=Select applications for routing through Saslik
+Exec=skewer
+Icon=network-vpn
+Terminal=false
+Categories=Network;Utility;
+Keywords=Saslik;Smithproxy;proxy;routing;traffic;

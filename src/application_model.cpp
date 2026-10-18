@@ -113,8 +113,11 @@ QString ApplicationModel::resolveLaunchCommand(const QString& text) const
 void ApplicationModel::refresh()
 {
     const QVector<ProcessInfo> processes = scanner_.scan(getuid());
+    QHash<pid_t, const ProcessInfo*> by_pid;
+    for (const ProcessInfo& process : processes) by_pid.insert(process.pid, &process);
     QHash<QString, QVector<ProcessInfo>> groups;
-    for (const ProcessInfo& process : processes) groups[applicationKey(process)].push_back(process);
+    for (const ProcessInfo& process : processes)
+        groups[applicationKey(process, by_pid)].push_back(process);
 
     auto foreground = std::make_unique<Node>();
     foreground->type = NodeType::Section;
@@ -126,6 +129,8 @@ void ApplicationModel::refresh()
     background->title = tr("Other user processes");
 
     launch_commands_.clear();
+    for (const DesktopEntry& entry : catalog_.entries())
+        launch_commands_.insert(entry.name, entry.launch_command);
     for (auto it = groups.begin(); it != groups.end(); ++it) {
         const bool is_foreground = foregroundGroup(it.key());
         auto application = buildApplication(it.key(), it.value(), is_foreground);
@@ -215,13 +220,21 @@ void ApplicationModel::buildProcessTree(Node& application, QVector<ProcessInfo> 
     }
 }
 
-QString ApplicationModel::applicationKey(const ProcessInfo& process)
+QString ApplicationModel::applicationKey(
+    const ProcessInfo& process, const QHash<pid_t, const ProcessInfo*>& processes)
 {
     const QString leaf = process.cgroup.section(QLatin1Char('/'), -1);
     if ((process.cgroup.contains(QStringLiteral("/app.slice/"))
          || process.cgroup.contains(QStringLiteral("/session.slice/"))) && !leaf.isEmpty())
         return leaf;
-    return QStringLiteral("process:%1").arg(process.pid);
+    const ProcessInfo* root = &process;
+    QSet<pid_t> visited{process.pid};
+    while (const ProcessInfo* parent = processes.value(root->parent_pid, nullptr)) {
+        if (visited.contains(parent->pid)) break;
+        visited.insert(parent->pid);
+        root = parent;
+    }
+    return QStringLiteral("tree:%1").arg(root->pid);
 }
 
 bool ApplicationModel::foregroundGroup(const QString& key)

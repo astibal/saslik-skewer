@@ -61,7 +61,8 @@ private:
                                                          QVector<ProcessInfo> processes,
                                                          bool foreground);
     static void buildProcessTree(Node& application, QVector<ProcessInfo> processes);
-    [[nodiscard]] static QString applicationKey(const ProcessInfo& process);
+    [[nodiscard]] static QString applicationKey(
+        const ProcessInfo& process, const QHash<pid_t, const ProcessInfo*>& processes);
     [[nodiscard]] static bool foregroundGroup(const QString& key);
 
     ProcessScanner scanner_;

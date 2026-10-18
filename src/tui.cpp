@@ -97,7 +97,7 @@ void Tui::draw()
     attron(A_BOLD | COLOR_PAIR(1));
     mvaddnstr(0, 2, "SKEWER", width - 4);
     attroff(A_BOLD | COLOR_PAIR(1));
-    mvaddnstr(1, 2, "Applications selected for Saslik routing", width - 4);
+    mvaddnstr(1, 2, "Application selection for Saslik routing", width - 4);
     mvhline(2, 0, ACS_HLINE, width);
     const int visible = std::max(0, height - 7);
     const int offset = std::clamp(selected_ - visible / 2, 0,

@@ -12,12 +12,16 @@ class QPushButton;
 class QSortFilterProxyModel;
 class QStringListModel;
 class QTreeView;
+class QCloseEvent;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void launchCommand();
@@ -27,6 +31,7 @@ private slots:
     void updateSelection();
     void routeSelection();
     void releaseSelection();
+    void browseExecutable();
 
 private:
     ApplicationModel* model_{};

@@ -32,6 +32,7 @@ target_link_libraries(skewer PRIVATE Qt6::Widgets PkgConfig::SYSTEMD PkgConfig::
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
 
 install(TARGETS skewer RUNTIME DESTINATION bin)
+install(FILES data/org.saslik.Skewer.desktop DESTINATION share/applications)
 
 include(CTest)
 if(BUILD_TESTING)

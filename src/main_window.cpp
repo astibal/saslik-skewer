@@ -4,6 +4,8 @@
 
 #include <QApplication>
 #include <QCompleter>
+#include <QCloseEvent>
+#include <QFileDialog>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -11,6 +13,7 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QSortFilterProxyModel>
+#include <QSettings>
 #include <QStringListModel>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -20,6 +23,8 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setWindowTitle(tr("Skewer"));
     resize(980, 680);
+    QSettings settings;
+    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
 
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);
@@ -62,7 +67,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* actions = new QHBoxLayout;
     action_status_ = new QLabel(tr("Select an application to manage its routing."), central);
     action_status_->setObjectName(QStringLiteral("actionStatus"));
-    route_button_ = new QPushButton(tr("Route through Skewer"), central);
+    route_button_ = new QPushButton(tr("Attach to Skewer"), central);
     release_button_ = new QPushButton(tr("Release"), central);
     route_button_->setEnabled(false);
     release_button_->setEnabled(false);
@@ -93,10 +98,13 @@ MainWindow::MainWindow(QWidget* parent)
     completer->setCompletionMode(QCompleter::PopupCompletion);
     command_->setCompleter(completer);
     auto* run = new QPushButton(tr("Run"), central);
+    auto* browse = new QPushButton(tr("Browse…"), central);
     launcher->addWidget(command_, 1);
+    launcher->addWidget(browse);
     launcher->addWidget(run);
     layout->addLayout(launcher);
     connect(run, &QPushButton::clicked, this, &MainWindow::launchCommand);
+    connect(browse, &QPushButton::clicked, this, &MainWindow::browseExecutable);
     connect(command_, &QLineEdit::returnPressed, this, &MainWindow::launchCommand);
     connect(model_, &ApplicationModel::launcherSuggestionsChanged,
             this, &MainWindow::updateLauncherSuggestions);
@@ -114,6 +122,13 @@ MainWindow::MainWindow(QWidget* parent)
         "QLabel#routingNote { color: palette(mid); padding-top: 4px; }"
         "QLabel#actionStatus { color: palette(mid); }"
         "QTreeView { font-size: 10pt; }"));
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    QSettings settings;
+    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::launchCommand()
@@ -181,9 +196,20 @@ void MainWindow::updateSelection()
     route_button_->setEnabled(application && !routed);
     release_button_->setEnabled(application && routed);
     action_status_->setText(application
-        ? (routed ? tr("This application is routed through Skewer.")
+        ? (routed ? tr("This application is attached to the Skewer cgroup.")
                   : tr("Existing sockets keep their current route."))
         : tr("Select an application to manage its routing."));
+}
+
+void MainWindow::browseExecutable()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("Choose an application"),
+                                                       QStringLiteral("/usr/bin"));
+    if (path.isEmpty()) return;
+    QString quoted = path;
+    quoted.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    command_->setText(QLatin1Char('"') + quoted + QLatin1Char('"'));
+    command_->setFocus();
 }
 
 void MainWindow::routeSelection()

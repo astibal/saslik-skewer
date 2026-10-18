@@ -2,6 +2,7 @@
 #include "tui.hpp"
 
 #include <QApplication>
+#include <QIcon>
 
 int main(int argc, char* argv[])
 {
@@ -20,6 +21,8 @@ int main(int argc, char* argv[])
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Skewer"));
     QApplication::setOrganizationName(QStringLiteral("Saslik"));
+    QApplication::setDesktopFileName(QStringLiteral("org.saslik.Skewer"));
+    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("network-vpn")));
 
     if (tui) {
         Tui interface;

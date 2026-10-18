@@ -121,7 +121,7 @@ CgroupResult CgroupManager::moveToScope(const QVector<pid_t>& pids,
             ? QString::fromUtf8(raw_error.message) : QStringLiteral("systemd rejected the request");
         return {false, detail, {}};
     }
-    return {true, routed ? QStringLiteral("Application is routed through Skewer")
+    return {true, routed ? QStringLiteral("Application is attached to Skewer")
                          : QStringLiteral("Application was released from Skewer"), stem};
 }
 
