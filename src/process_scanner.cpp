@@ -58,6 +58,8 @@ std::optional<ProcessInfo> readProcess(pid_t pid, uid_t wanted_uid)
                                          : QString::number(pid);
     process.executable = QFileInfo(root + QStringLiteral("/exe")).symLinkTarget();
     process.command_line = readCommandLine(root + QStringLiteral("/cmdline"));
+    const QString cgroup = readTextFile(root + QStringLiteral("/cgroup")).trimmed();
+    process.cgroup = cgroup.startsWith(QStringLiteral("0::")) ? cgroup.sliced(3) : cgroup;
     return process;
 }
 } // namespace

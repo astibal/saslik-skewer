@@ -12,6 +12,7 @@ struct ProcessInfo {
     QString name;
     QString executable;
     QString command_line;
+    QString cgroup;
 };
 
 class ProcessScanner {

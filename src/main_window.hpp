@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QSet>
 
 class ApplicationModel;
 class QLineEdit;
 class QSortFilterProxyModel;
+class QStringListModel;
 class QTreeView;
 
 class MainWindow final : public QMainWindow {
@@ -15,6 +17,9 @@ public:
 
 private slots:
     void launchCommand();
+    void rememberExpandedItems();
+    void restoreExpandedItems();
+    void updateLauncherSuggestions(const QStringList& suggestions);
 
 private:
     ApplicationModel* model_{};
@@ -22,4 +27,7 @@ private:
     QTreeView* tree_{};
     QLineEdit* search_{};
     QLineEdit* command_{};
+    QStringListModel* launcher_model_{};
+    QSet<QString> expanded_items_;
+    bool restored_once_{};
 };

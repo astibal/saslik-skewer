@@ -3,6 +3,7 @@
 #include "application_model.hpp"
 
 #include <QApplication>
+#include <QCompleter>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -10,6 +11,7 @@
 #include <QProcess>
 #include <QPushButton>
 #include <QSortFilterProxyModel>
+#include <QStringListModel>
 #include <QTreeView>
 #include <QVBoxLayout>
 
@@ -57,18 +59,31 @@ MainWindow::MainWindow(QWidget* parent)
                                           QHeaderView::Stretch);
     layout->addWidget(tree_, 1);
 
+    connect(model_, &QAbstractItemModel::modelAboutToBeReset,
+            this, &MainWindow::rememberExpandedItems);
+    connect(model_, &QAbstractItemModel::modelReset,
+            this, &MainWindow::restoreExpandedItems);
+
     connect(search_, &QLineEdit::textChanged, filtered_model_,
             &QSortFilterProxyModel::setFilterFixedString);
 
     auto* launcher = new QHBoxLayout;
     command_ = new QLineEdit(central);
     command_->setPlaceholderText(tr("Run an application through Skewer…"));
+    launcher_model_ = new QStringListModel(model_->launcherSuggestions(), this);
+    auto* completer = new QCompleter(launcher_model_, command_);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setFilterMode(Qt::MatchContains);
+    completer->setCompletionMode(QCompleter::PopupCompletion);
+    command_->setCompleter(completer);
     auto* run = new QPushButton(tr("Run"), central);
     launcher->addWidget(command_, 1);
     launcher->addWidget(run);
     layout->addLayout(launcher);
     connect(run, &QPushButton::clicked, this, &MainWindow::launchCommand);
     connect(command_, &QLineEdit::returnPressed, this, &MainWindow::launchCommand);
+    connect(model_, &ApplicationModel::launcherSuggestionsChanged,
+            this, &MainWindow::updateLauncherSuggestions);
 
     auto* note = new QLabel(
         tr("Attaching a running application only affects newly created sockets. "
@@ -86,15 +101,53 @@ MainWindow::MainWindow(QWidget* parent)
 
 void MainWindow::launchCommand()
 {
-    const QString command = command_->text().trimmed();
+    const QString command = model_->resolveLaunchCommand(command_->text().trimmed());
     if (command.isEmpty()) {
         return;
     }
-    if (!QProcess::startDetached(QStringLiteral("/bin/sh"),
-                                 {QStringLiteral("-lc"), command})) {
+    QStringList words = QProcess::splitCommand(command);
+    if (words.isEmpty()) return;
+    const QString program = words.takeFirst();
+    if (!QProcess::startDetached(program, words)) {
         QMessageBox::warning(this, tr("Skewer"),
                              tr("The command could not be started."));
         return;
     }
     command_->clear();
+}
+
+void MainWindow::rememberExpandedItems()
+{
+    expanded_items_.clear();
+    const auto visit = [this](const auto& self, const QModelIndex& parent) -> void {
+        for (int row = 0; row < filtered_model_->rowCount(parent); ++row) {
+            const QModelIndex index = filtered_model_->index(row, 0, parent);
+            if (tree_->isExpanded(index))
+                expanded_items_.insert(index.data(ApplicationModel::StableIdRole).toString());
+            self(self, index);
+        }
+    };
+    visit(visit, {});
+}
+
+void MainWindow::restoreExpandedItems()
+{
+    const auto visit = [this](const auto& self, const QModelIndex& parent) -> void {
+        for (int row = 0; row < filtered_model_->rowCount(parent); ++row) {
+            const QModelIndex index = filtered_model_->index(row, 0, parent);
+            const auto type = static_cast<ApplicationModel::NodeType>(
+                index.data(ApplicationModel::NodeTypeRole).toInt());
+            const QString id = index.data(ApplicationModel::StableIdRole).toString();
+            if ((!restored_once_ && type == ApplicationModel::NodeType::Section)
+                || expanded_items_.contains(id)) tree_->setExpanded(index, true);
+            self(self, index);
+        }
+    };
+    visit(visit, {});
+    restored_once_ = true;
+}
+
+void MainWindow::updateLauncherSuggestions(const QStringList& suggestions)
+{
+    launcher_model_->setStringList(suggestions);
 }

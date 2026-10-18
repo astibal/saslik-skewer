@@ -1,16 +1,19 @@
 #include "application_model.hpp"
 
+#include <QApplication>
+#include <QBrush>
 #include <QFileIconProvider>
 #include <QFileInfo>
+#include <QFont>
 #include <QHash>
+#include <QPalette>
 
 #include <algorithm>
 #include <unistd.h>
 
-ApplicationModel::ApplicationModel(QObject* parent)
-    : QAbstractItemModel(parent)
+ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
 {
-    refresh_timer_.setInterval(2000);
+    refresh_timer_.setInterval(2500);
     connect(&refresh_timer_, &QTimer::timeout, this, &ApplicationModel::refresh);
     refresh_timer_.start();
     refresh();
@@ -21,117 +24,116 @@ QModelIndex ApplicationModel::index(int row, int column, const QModelIndex& pare
     Node* parent_node = node(parent_index);
     const auto& children = parent_node ? parent_node->children : roots_;
     if (row < 0 || static_cast<std::size_t>(row) >= children.size()
-        || column < 0 || column >= ColumnCount) {
-        return {};
-    }
+        || column < 0 || column >= ColumnCount) return {};
     return createIndex(row, column, children.at(row).get());
 }
 
 QModelIndex ApplicationModel::parent(const QModelIndex& child) const
 {
     Node* child_node = node(child);
-    if (!child_node || !child_node->parent) {
-        return {};
-    }
+    if (!child_node || !child_node->parent) return {};
     Node* parent_node = child_node->parent;
     const auto& siblings = parent_node->parent ? parent_node->parent->children : roots_;
     for (std::size_t row = 0; row < siblings.size(); ++row) {
-        if (siblings.at(row).get() == parent_node) {
+        if (siblings.at(row).get() == parent_node)
             return createIndex(static_cast<int>(row), 0, parent_node);
-        }
     }
     return {};
 }
 
 int ApplicationModel::rowCount(const QModelIndex& parent_index) const
 {
-    if (parent_index.column() > 0) {
-        return 0;
-    }
+    if (parent_index.column() > 0) return 0;
     Node* parent_node = node(parent_index);
     return static_cast<int>(parent_node ? parent_node->children.size() : roots_.size());
 }
 
-int ApplicationModel::columnCount(const QModelIndex&) const
-{
-    return ColumnCount;
-}
+int ApplicationModel::columnCount(const QModelIndex&) const { return ColumnCount; }
 
 QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
 {
     Node* item = node(model_index);
-    if (!item) {
-        return {};
-    }
+    if (!item) return {};
+    if (role == StableIdRole) return item->id;
+    if (role == NodeTypeRole) return static_cast<int>(item->type);
+    if (role == LaunchCommandRole) return item->launch_command;
     if (role == Qt::DisplayRole) {
-        switch (model_index.column()) {
-        case NameColumn: return item->process.name;
-        case ProcessIdColumn: return item->process.pid;
-        case CommandColumn:
-            return item->process.command_line.isEmpty() ? item->process.executable
-                                                        : item->process.command_line;
-        default: return {};
-        }
+        if (model_index.column() == NameColumn) return item->title;
+        if (model_index.column() == ProcessIdColumn && item->type == NodeType::Process)
+            return item->process.pid;
+        if (model_index.column() == CommandColumn) return item->subtitle;
     }
-    if (role == Qt::DecorationRole && model_index.column() == NameColumn
-        && !item->process.executable.isEmpty()) {
-        static QFileIconProvider icons;
-        return icons.icon(QFileInfo(item->process.executable));
+    if (role == Qt::DecorationRole && model_index.column() == NameColumn && !item->icon.isNull())
+        return item->icon;
+    if (role == Qt::ToolTipRole)
+        return item->type == NodeType::Process ? item->process.command_line : item->subtitle;
+    if (role == Qt::FontRole && item->type != NodeType::Process) {
+        QFont font;
+        font.setBold(true);
+        return font;
     }
-    if (role == Qt::ToolTipRole) {
-        return item->process.command_line;
-    }
+    if (role == Qt::ForegroundRole && item->type == NodeType::Section)
+        return QBrush(QApplication::palette().color(QPalette::Mid));
     return {};
 }
 
 QVariant ApplicationModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-    if (orientation != Qt::Horizontal || role != Qt::DisplayRole) {
-        return {};
-    }
+    if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
     switch (section) {
     case NameColumn: return tr("Application / process");
     case ProcessIdColumn: return tr("PID");
-    case CommandColumn: return tr("Command");
+    case CommandColumn: return tr("Identity / command");
     default: return {};
     }
+}
+
+QStringList ApplicationModel::launcherSuggestions() const
+{
+    QStringList result = launch_commands_.keys();
+    result.sort(Qt::CaseInsensitive);
+    return result;
+}
+
+QString ApplicationModel::resolveLaunchCommand(const QString& text) const
+{
+    return launch_commands_.value(text, text);
 }
 
 void ApplicationModel::refresh()
 {
     const QVector<ProcessInfo> processes = scanner_.scan(getuid());
+    QHash<QString, QVector<ProcessInfo>> groups;
+    for (const ProcessInfo& process : processes) groups[applicationKey(process)].push_back(process);
+
+    auto foreground = std::make_unique<Node>();
+    foreground->type = NodeType::Section;
+    foreground->id = QStringLiteral("section:applications");
+    foreground->title = tr("Applications");
+    auto background = std::make_unique<Node>();
+    background->type = NodeType::Section;
+    background->id = QStringLiteral("section:other");
+    background->title = tr("Other user processes");
+
+    launch_commands_.clear();
+    for (auto it = groups.begin(); it != groups.end(); ++it) {
+        const bool is_foreground = foregroundGroup(it.key());
+        auto application = buildApplication(it.key(), it.value(), is_foreground);
+        application->parent = is_foreground ? foreground.get() : background.get();
+        (is_foreground ? foreground->children : background->children).push_back(std::move(application));
+    }
+    const auto order = [](const auto& left, const auto& right) {
+        return left->title.localeAwareCompare(right->title) < 0;
+    };
+    std::sort(foreground->children.begin(), foreground->children.end(), order);
+    std::sort(background->children.begin(), background->children.end(), order);
+
     beginResetModel();
     roots_.clear();
-    QHash<pid_t, Node*> nodes;
-    for (const ProcessInfo& process : processes) {
-        auto item = std::make_unique<Node>();
-        item->process = process;
-        nodes.insert(process.pid, item.get());
-        roots_.push_back(std::move(item));
-    }
-
-    for (int index = static_cast<int>(roots_.size()) - 1; index >= 0; --index) {
-        auto& item = roots_[index];
-        Node* parent_node = nodes.value(item->process.parent_pid, nullptr);
-        if (!parent_node || parent_node == item.get()) {
-            continue;
-        }
-        item->parent = parent_node;
-        parent_node->children.push_back(std::move(item));
-        roots_.erase(roots_.begin() + index);
-    }
-
-    const auto order = [](const std::unique_ptr<Node>& left,
-                          const std::unique_ptr<Node>& right) {
-        const bool left_app = isLikelyApplication(left->process);
-        const bool right_app = isLikelyApplication(right->process);
-        if (left_app != right_app) {
-            return left_app > right_app;
-        }
-        return left->process.name.localeAwareCompare(right->process.name) < 0;
-    };
-    std::sort(roots_.begin(), roots_.end(), order);
+    if (!foreground->children.empty()) roots_.push_back(std::move(foreground));
+    if (!background->children.empty()) roots_.push_back(std::move(background));
     endResetModel();
+    emit launcherSuggestionsChanged(launcherSuggestions());
 }
 
 ApplicationModel::Node* ApplicationModel::node(const QModelIndex& index) const
@@ -139,8 +141,80 @@ ApplicationModel::Node* ApplicationModel::node(const QModelIndex& index) const
     return index.isValid() ? static_cast<Node*>(index.internalPointer()) : nullptr;
 }
 
-bool ApplicationModel::isLikelyApplication(const ProcessInfo& process)
+std::unique_ptr<ApplicationModel::Node>
+ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> processes,
+                                   bool foreground)
 {
-    return !process.executable.isEmpty() && process.parent_pid > 1
-        && !process.name.startsWith(QLatin1Char('('));
+    auto application = std::make_unique<Node>();
+    application->type = NodeType::Application;
+    application->id = QStringLiteral("app:") + key;
+    const ProcessInfo* representative = &processes.first();
+    for (const ProcessInfo& process : processes) {
+        if (process.command_line.contains(QStringLiteral(" --type="))) continue;
+        if (!process.executable.isEmpty()) { representative = &process; break; }
+    }
+    const DesktopEntry* entry = catalog_.match(key, representative->executable, representative->name);
+    if (entry) {
+        application->title = entry->name;
+        application->icon = entry->icon();
+        application->launch_command = entry->launch_command;
+        launch_commands_.insert(entry->name, entry->launch_command);
+    } else {
+        application->title = representative->name;
+        application->launch_command = representative->executable;
+        if (!representative->executable.isEmpty()) {
+            static QFileIconProvider icons;
+            application->icon = icons.icon(QFileInfo(representative->executable));
+            launch_commands_.insert(application->title, representative->executable);
+        }
+    }
+    application->subtitle = tr("%1 processes · %2")
+                                .arg(processes.size())
+                                .arg(foreground ? tr("desktop application") : key);
+    buildProcessTree(*application, std::move(processes));
+    return application;
+}
+
+void ApplicationModel::buildProcessTree(Node& application, QVector<ProcessInfo> processes)
+{
+    QHash<pid_t, Node*> nodes;
+    std::vector<std::unique_ptr<Node>> items;
+    for (const ProcessInfo& process : processes) {
+        auto item = std::make_unique<Node>();
+        item->type = NodeType::Process;
+        item->process = process;
+        item->id = QStringLiteral("pid:%1").arg(process.pid);
+        item->title = process.name;
+        item->subtitle = process.command_line.isEmpty() ? process.executable : process.command_line;
+        nodes.insert(process.pid, item.get());
+        items.push_back(std::move(item));
+    }
+    for (int index = static_cast<int>(items.size()) - 1; index >= 0; --index) {
+        auto& item = items.at(index);
+        Node* parent = nodes.value(item->process.parent_pid, nullptr);
+        if (!parent || parent == item.get()) continue;
+        item->parent = parent;
+        parent->children.push_back(std::move(item));
+        items.erase(items.begin() + index);
+    }
+    for (auto& item : items) {
+        item->parent = &application;
+        application.children.push_back(std::move(item));
+    }
+}
+
+QString ApplicationModel::applicationKey(const ProcessInfo& process)
+{
+    const QString leaf = process.cgroup.section(QLatin1Char('/'), -1);
+    if ((process.cgroup.contains(QStringLiteral("/app.slice/"))
+         || process.cgroup.contains(QStringLiteral("/session.slice/"))) && !leaf.isEmpty())
+        return leaf;
+    return QStringLiteral("process:%1").arg(process.pid);
+}
+
+bool ApplicationModel::foregroundGroup(const QString& key)
+{
+    return key.endsWith(QStringLiteral(".scope"))
+        || (key.startsWith(QStringLiteral("app-")) && !key.contains(QStringLiteral("@autostart")))
+        || key.startsWith(QStringLiteral("snap."));
 }

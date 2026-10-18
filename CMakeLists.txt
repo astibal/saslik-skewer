@@ -13,6 +13,8 @@ add_executable(skewer
     src/main.cpp
     src/application_model.cpp
     src/application_model.hpp
+    src/desktop_catalog.cpp
+    src/desktop_catalog.hpp
     src/main_window.cpp
     src/main_window.hpp
     src/process_scanner.cpp
