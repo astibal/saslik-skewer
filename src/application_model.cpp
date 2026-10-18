@@ -113,6 +113,15 @@ QString ApplicationModel::resolveLaunchCommand(const QString& text) const
 void ApplicationModel::refresh()
 {
     const QVector<ProcessInfo> processes = scanner_.scan(getuid());
+    QByteArray snapshot;
+    for (const ProcessInfo& process : processes) {
+        snapshot += QByteArray::number(process.pid) + ':'
+            + QByteArray::number(process.parent_pid) + ':'
+            + process.cgroup.toUtf8() + ':' + process.name.toUtf8() + '\n';
+    }
+    if (snapshot == snapshot_) return;
+    snapshot_ = std::move(snapshot);
+
     QHash<pid_t, const ProcessInfo*> by_pid;
     for (const ProcessInfo& process : processes) by_pid.insert(process.pid, &process);
     QHash<QString, QVector<ProcessInfo>> groups;

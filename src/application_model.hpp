@@ -4,6 +4,7 @@
 #include "process_scanner.hpp"
 
 #include <QAbstractItemModel>
+#include <QByteArray>
 #include <QTimer>
 
 #include <memory>
@@ -69,5 +70,6 @@ private:
     DesktopCatalog catalog_;
     std::vector<std::unique_ptr<Node>> roots_;
     QHash<QString, QString> launch_commands_;
+    QByteArray snapshot_;
     QTimer refresh_timer_;
 };

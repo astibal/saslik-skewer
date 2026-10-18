@@ -153,6 +153,7 @@ void MainWindow::launchCommand()
 void MainWindow::rememberExpandedItems()
 {
     expanded_items_.clear();
+    selected_item_ = tree_->currentIndex().data(ApplicationModel::StableIdRole).toString();
     const auto visit = [this](const auto& self, const QModelIndex& parent) -> void {
         for (int row = 0; row < filtered_model_->rowCount(parent); ++row) {
             const QModelIndex index = filtered_model_->index(row, 0, parent);
@@ -174,6 +175,8 @@ void MainWindow::restoreExpandedItems()
             const QString id = index.data(ApplicationModel::StableIdRole).toString();
             if ((!restored_once_ && type == ApplicationModel::NodeType::Section)
                 || expanded_items_.contains(id)) tree_->setExpanded(index, true);
+            if (!selected_item_.isEmpty() && id == selected_item_)
+                tree_->setCurrentIndex(index);
             self(self, index);
         }
     };

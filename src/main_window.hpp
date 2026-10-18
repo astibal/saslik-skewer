@@ -44,6 +44,7 @@ private:
     QPushButton* release_button_{};
     QLabel* action_status_{};
     QSet<QString> expanded_items_;
+    QString selected_item_;
     bool restored_once_{};
     CgroupManager cgroups_;
 };
