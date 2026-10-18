@@ -14,7 +14,13 @@ class ApplicationModel final : public QAbstractItemModel {
 
 public:
     enum Column { NameColumn, ProcessIdColumn, CommandColumn, ColumnCount };
-    enum Role { StableIdRole = Qt::UserRole + 1, NodeTypeRole, LaunchCommandRole };
+    enum Role {
+        StableIdRole = Qt::UserRole + 1,
+        NodeTypeRole,
+        LaunchCommandRole,
+        ProcessIdsRole,
+        RoutedRole
+    };
     enum class NodeType { Section, Application, Process };
 
     explicit ApplicationModel(QObject* parent = nullptr);
@@ -44,6 +50,7 @@ private:
         QString subtitle;
         QString launch_command;
         QIcon icon;
+        bool routed{};
         ProcessInfo process;
         Node* parent{};
         std::vector<std::unique_ptr<Node>> children;

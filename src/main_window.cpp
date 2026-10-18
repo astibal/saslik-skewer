@@ -59,6 +59,22 @@ MainWindow::MainWindow(QWidget* parent)
                                           QHeaderView::Stretch);
     layout->addWidget(tree_, 1);
 
+    auto* actions = new QHBoxLayout;
+    action_status_ = new QLabel(tr("Select an application to manage its routing."), central);
+    action_status_->setObjectName(QStringLiteral("actionStatus"));
+    route_button_ = new QPushButton(tr("Route through Skewer"), central);
+    release_button_ = new QPushButton(tr("Release"), central);
+    route_button_->setEnabled(false);
+    release_button_->setEnabled(false);
+    actions->addWidget(action_status_, 1);
+    actions->addWidget(release_button_);
+    actions->addWidget(route_button_);
+    layout->addLayout(actions);
+    connect(tree_->selectionModel(), &QItemSelectionModel::currentChanged,
+            this, &MainWindow::updateSelection);
+    connect(route_button_, &QPushButton::clicked, this, &MainWindow::routeSelection);
+    connect(release_button_, &QPushButton::clicked, this, &MainWindow::releaseSelection);
+
     connect(model_, &QAbstractItemModel::modelAboutToBeReset,
             this, &MainWindow::rememberExpandedItems);
     connect(model_, &QAbstractItemModel::modelReset,
@@ -96,6 +112,7 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(central);
     setStyleSheet(QStringLiteral(
         "QLabel#routingNote { color: palette(mid); padding-top: 4px; }"
+        "QLabel#actionStatus { color: palette(mid); }"
         "QTreeView { font-size: 10pt; }"));
 }
 
@@ -107,8 +124,10 @@ void MainWindow::launchCommand()
     }
     QStringList words = QProcess::splitCommand(command);
     if (words.isEmpty()) return;
-    const QString program = words.takeFirst();
-    if (!QProcess::startDetached(program, words)) {
+    QStringList invocation = CgroupManager::routedLaunchPrefix(words.first());
+    invocation.append(words);
+    const QString program = invocation.takeFirst();
+    if (!QProcess::startDetached(program, invocation)) {
         QMessageBox::warning(this, tr("Skewer"),
                              tr("The command could not be started."));
         return;
@@ -150,4 +169,43 @@ void MainWindow::restoreExpandedItems()
 void MainWindow::updateLauncherSuggestions(const QStringList& suggestions)
 {
     launcher_model_->setStringList(suggestions);
+}
+
+void MainWindow::updateSelection()
+{
+    const QModelIndex index = tree_->currentIndex().siblingAtColumn(0);
+    const auto type = static_cast<ApplicationModel::NodeType>(
+        index.data(ApplicationModel::NodeTypeRole).toInt());
+    const bool application = index.isValid() && type == ApplicationModel::NodeType::Application;
+    const bool routed = application && index.data(ApplicationModel::RoutedRole).toBool();
+    route_button_->setEnabled(application && !routed);
+    release_button_->setEnabled(application && routed);
+    action_status_->setText(application
+        ? (routed ? tr("This application is routed through Skewer.")
+                  : tr("Existing sockets keep their current route."))
+        : tr("Select an application to manage its routing."));
+}
+
+void MainWindow::routeSelection()
+{
+    const QModelIndex index = tree_->currentIndex().siblingAtColumn(0);
+    QVector<pid_t> pids;
+    for (const QVariant& value : index.data(ApplicationModel::ProcessIdsRole).toList())
+        pids.push_back(value.toInt());
+    const CgroupResult result = cgroups_.route(pids, index.data().toString());
+    action_status_->setText(result.detail);
+    if (!result.ok) QMessageBox::warning(this, tr("Skewer"), result.detail);
+    else model_->refresh();
+}
+
+void MainWindow::releaseSelection()
+{
+    const QModelIndex index = tree_->currentIndex().siblingAtColumn(0);
+    QVector<pid_t> pids;
+    for (const QVariant& value : index.data(ApplicationModel::ProcessIdsRole).toList())
+        pids.push_back(value.toInt());
+    const CgroupResult result = cgroups_.release(pids, index.data().toString());
+    action_status_->setText(result.detail);
+    if (!result.ok) QMessageBox::warning(this, tr("Skewer"), result.detail);
+    else model_->refresh();
 }

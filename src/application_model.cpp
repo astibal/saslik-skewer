@@ -57,6 +57,16 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
     if (role == StableIdRole) return item->id;
     if (role == NodeTypeRole) return static_cast<int>(item->type);
     if (role == LaunchCommandRole) return item->launch_command;
+    if (role == RoutedRole) return item->routed;
+    if (role == ProcessIdsRole) {
+        QVariantList pids;
+        const auto collect = [&pids](const auto& self, const Node& current) -> void {
+            if (current.type == NodeType::Process) pids.push_back(current.process.pid);
+            for (const auto& child : current.children) self(self, *child);
+        };
+        collect(collect, *item);
+        return pids;
+    }
     if (role == Qt::DisplayRole) {
         if (model_index.column() == NameColumn) return item->title;
         if (model_index.column() == ProcessIdColumn && item->type == NodeType::Process)
@@ -148,6 +158,7 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
     auto application = std::make_unique<Node>();
     application->type = NodeType::Application;
     application->id = QStringLiteral("app:") + key;
+    application->routed = key.contains(QStringLiteral("skewer-routed"));
     const ProcessInfo* representative = &processes.first();
     for (const ProcessInfo& process : processes) {
         if (process.command_line.contains(QStringLiteral(" --type="))) continue;
@@ -168,9 +179,10 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
             launch_commands_.insert(application->title, representative->executable);
         }
     }
-    application->subtitle = tr("%1 processes · %2")
+    application->subtitle = tr("%1 processes · %2%3")
                                 .arg(processes.size())
-                                .arg(foreground ? tr("desktop application") : key);
+                                .arg(foreground ? tr("desktop application") : key)
+                                .arg(application->routed ? tr(" · routed") : QString{});
     buildProcessTree(*application, std::move(processes));
     return application;
 }

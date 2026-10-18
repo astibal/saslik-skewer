@@ -1,10 +1,14 @@
 #pragma once
 
+#include "cgroup_manager.hpp"
+
 #include <QMainWindow>
 #include <QSet>
 
 class ApplicationModel;
 class QLineEdit;
+class QLabel;
+class QPushButton;
 class QSortFilterProxyModel;
 class QStringListModel;
 class QTreeView;
@@ -20,6 +24,9 @@ private slots:
     void rememberExpandedItems();
     void restoreExpandedItems();
     void updateLauncherSuggestions(const QStringList& suggestions);
+    void updateSelection();
+    void routeSelection();
+    void releaseSelection();
 
 private:
     ApplicationModel* model_{};
@@ -28,6 +35,10 @@ private:
     QLineEdit* search_{};
     QLineEdit* command_{};
     QStringListModel* launcher_model_{};
+    QPushButton* route_button_{};
+    QPushButton* release_button_{};
+    QLabel* action_status_{};
     QSet<QString> expanded_items_;
     bool restored_once_{};
+    CgroupManager cgroups_;
 };
