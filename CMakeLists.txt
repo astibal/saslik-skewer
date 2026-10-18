@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(saslik-skewer VERSION 0.1.0 LANGUAGES CXX)
 
+include(GNUInstallDirs)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -30,11 +32,24 @@ add_executable(skewer
     src/tui.hpp
 )
 
+add_executable(skewer-net-helper
+    src/net_helper.cpp
+    src/routing_plan.cpp
+    src/routing_plan.hpp
+)
+
 target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets PkgConfig::SYSTEMD PkgConfig::NCURSESW)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(skewer-net-helper PRIVATE Qt6::Core Qt6::Network)
+target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
 
 install(TARGETS skewer RUNTIME DESTINATION bin)
+install(TARGETS skewer-net-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 install(FILES data/org.saslik.Skewer.desktop DESTINATION share/applications)
+set(SKEWER_HELPER_PATH "${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
+configure_file(data/org.saslik.skewer.policy.in org.saslik.skewer.policy @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.saslik.skewer.policy
+        DESTINATION share/polkit-1/actions)
 
 include(CTest)
 if(BUILD_TESTING)
