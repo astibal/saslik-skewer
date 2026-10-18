@@ -20,6 +20,11 @@ yet install nftables policy-routing rules or provide a remote transport. Until a
 transport backend is configured, `attached` means that an application is in the
 Skewer cgroup, not that its packets are already leaving through Saslik.
 
+The next networking milestone is intentionally smaller: route traffic from the
+Skewer cgroup toward a configurable, directly reachable next-hop IP. A dynamic
+authenticated tuntom client is a later transport option, planned for the Saslik
+VM/appliance phase; see [TODO.md](TODO.md).
+
 Existing sockets retain the routing context in which they were created. For a
 reliable test, launch the application through Skewer instead of attaching an
 already-running process tree.
