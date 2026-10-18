@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Test)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(NCURSESW REQUIRED IMPORTED_TARGET ncursesw)
@@ -44,4 +44,19 @@ if(BUILD_TESTING)
     target_link_libraries(cgroup_manager_test PRIVATE Qt6::Core PkgConfig::SYSTEMD)
     target_compile_options(cgroup_manager_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME cgroup_manager COMMAND cgroup_manager_test)
+
+    add_executable(application_model_test
+        tests/application_model_test.cpp
+        src/application_model.cpp
+        src/application_model.hpp
+        src/desktop_catalog.cpp
+        src/desktop_catalog.hpp
+        src/process_scanner.cpp
+        src/process_scanner.hpp
+    )
+    target_include_directories(application_model_test PRIVATE src)
+    target_link_libraries(application_model_test PRIVATE Qt6::Widgets Qt6::Test)
+    target_compile_options(application_model_test PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME application_model COMMAND application_model_test)
+    set_tests_properties(application_model PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

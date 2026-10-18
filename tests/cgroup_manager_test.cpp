@@ -28,21 +28,25 @@ bool waitForCgroup(qint64 pid, const QString& needle)
 int main(int argc, char** argv)
 {
     QCoreApplication application(argc, argv);
+    CgroupManager manager;
+    if (manager.route({1}, QStringLiteral("forbidden")).ok) {
+        std::cerr << "PID 1 must never be accepted\n";
+        return 1;
+    }
     QProcess child;
     child.start(QStringLiteral("/usr/bin/sleep"), {QStringLiteral("20")});
     if (!child.waitForStarted()) {
         std::cerr << "cannot start test process\n";
-        return 1;
+        return 2;
     }
 
-    CgroupManager manager;
     const QVector<pid_t> pids{static_cast<pid_t>(child.processId())};
     const CgroupResult routed = manager.route(pids, QStringLiteral("integration-test"));
     if (!routed.ok || !waitForCgroup(child.processId(), QStringLiteral("skewer-routed.slice"))) {
         std::cerr << "route failed: " << routed.detail.toStdString() << '\n';
         child.kill();
         child.waitForFinished();
-        return 2;
+        return 3;
     }
 
     const CgroupResult released = manager.release(pids, QStringLiteral("integration-test"));
@@ -50,7 +54,7 @@ int main(int argc, char** argv)
         std::cerr << "release failed: " << released.detail.toStdString() << '\n';
         child.kill();
         child.waitForFinished();
-        return 3;
+        return 4;
     }
     child.terminate();
     child.waitForFinished();

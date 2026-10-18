@@ -1,12 +1,14 @@
 #include "cgroup_manager.hpp"
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QRegularExpression>
 
 #include <systemd/sd-bus.h>
 
 #include <memory>
 #include <cstdint>
+#include <unistd.h>
 
 namespace {
 using BusPointer = std::unique_ptr<sd_bus, decltype(&sd_bus_unref)>;
@@ -65,6 +67,19 @@ CgroupResult CgroupManager::moveToScope(const QVector<pid_t>& pids,
                                         const QString& application_name, bool routed) const
 {
     if (pids.isEmpty()) return {false, QStringLiteral("No processes selected"), {}};
+    QVector<pid_t> validated;
+    validated.reserve(pids.size());
+    const uid_t caller = getuid();
+    for (pid_t pid : pids) {
+        const QFileInfo process(QStringLiteral("/proc/%1").arg(pid));
+        if (pid <= 1 || !process.exists()) continue;
+        if (process.ownerId() != caller) {
+            return {false, QStringLiteral("Refusing a process owned by another user"), {}};
+        }
+        validated.push_back(pid);
+    }
+    if (validated.isEmpty())
+        return {false, QStringLiteral("No live processes owned by the current user"), {}};
     sd_bus* raw_bus = nullptr;
     int result = sd_bus_open_user(&raw_bus);
     BusPointer bus(raw_bus, &sd_bus_unref);
@@ -89,7 +104,7 @@ CgroupResult CgroupManager::moveToScope(const QVector<pid_t>& pids,
         || !appendStringProperty(message.get(), "Slice",
              routed ? QByteArray("skewer-routed.slice") : QByteArray("app.slice"))
         || !appendStringProperty(message.get(), "CollectMode", QByteArray("inactive-or-failed"))
-        || !appendPidProperty(message.get(), pids)
+        || !appendPidProperty(message.get(), validated)
         || sd_bus_message_close_container(message.get()) < 0
         || sd_bus_message_open_container(message.get(), SD_BUS_TYPE_ARRAY, "(sa(sv))") < 0
         || sd_bus_message_close_container(message.get()) < 0) {
