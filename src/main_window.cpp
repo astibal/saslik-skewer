@@ -6,6 +6,7 @@
 #include <QCompleter>
 #include <QCloseEvent>
 #include <QFileDialog>
+#include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -42,6 +43,25 @@ MainWindow::MainWindow(QWidget* parent)
     search_->setPlaceholderText(tr("Find an application or process…"));
     search_->setClearButtonEnabled(true);
     layout->addWidget(search_);
+
+    auto* routing_box = new QGroupBox(tr("Routing"), central);
+    auto* routing_layout = new QHBoxLayout(routing_box);
+    next_hop_ = new QLineEdit(routing_box);
+    next_hop_->setPlaceholderText(tr("Directly reachable next-hop IPv4 address"));
+    QSettings initial_settings;
+    next_hop_->setText(initial_settings.value(QStringLiteral("routing/nextHop")).toString());
+    routing_up_ = new QPushButton(tr("Enable"), routing_box);
+    routing_down_ = new QPushButton(tr("Disable"), routing_box);
+    routing_status_ = new QLabel(routing_box);
+    routing_status_->setObjectName(QStringLiteral("routingStatus"));
+    routing_layout->addWidget(next_hop_, 1);
+    routing_layout->addWidget(routing_up_);
+    routing_layout->addWidget(routing_down_);
+    routing_layout->addWidget(routing_status_);
+    layout->addWidget(routing_box);
+    connect(routing_up_, &QPushButton::clicked, this, &MainWindow::activateRouting);
+    connect(routing_down_, &QPushButton::clicked, this, &MainWindow::deactivateRouting);
+    updateRoutingStatus();
 
     model_ = new ApplicationModel(this);
     filtered_model_ = new QSortFilterProxyModel(this);
@@ -121,6 +141,7 @@ MainWindow::MainWindow(QWidget* parent)
     setStyleSheet(QStringLiteral(
         "QLabel#routingNote { color: palette(mid); padding-top: 4px; }"
         "QLabel#actionStatus { color: palette(mid); }"
+        "QLabel#routingStatus { color: palette(mid); min-width: 58px; }"
         "QTreeView { font-size: 10pt; }"));
 }
 
@@ -128,7 +149,42 @@ void MainWindow::closeEvent(QCloseEvent* event)
 {
     QSettings settings;
     settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    settings.setValue(QStringLiteral("routing/nextHop"), next_hop_->text().trimmed());
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::activateRouting()
+{
+    const QString next_hop = next_hop_->text().trimmed();
+    if (next_hop.isEmpty()) {
+        QMessageBox::information(this, tr("Skewer"), tr("Enter a next-hop IPv4 address."));
+        return;
+    }
+    const RoutingResult result = routing_.activate(next_hop,
+        RoutingController::Authorization::Desktop);
+    if (!result.ok) QMessageBox::warning(this, tr("Skewer routing"), result.detail);
+    else {
+        QSettings().setValue(QStringLiteral("routing/nextHop"), next_hop);
+        action_status_->setText(result.detail);
+    }
+    updateRoutingStatus();
+}
+
+void MainWindow::deactivateRouting()
+{
+    const RoutingResult result = routing_.deactivate(RoutingController::Authorization::Desktop);
+    if (!result.ok) QMessageBox::warning(this, tr("Skewer routing"), result.detail);
+    else action_status_->setText(result.detail);
+    updateRoutingStatus();
+}
+
+void MainWindow::updateRoutingStatus()
+{
+    const bool active = routing_.active();
+    routing_status_->setText(active ? tr("● active") : tr("○ inactive"));
+    routing_up_->setEnabled(!active);
+    routing_down_->setEnabled(active);
+    next_hop_->setEnabled(!active);
 }
 
 void MainWindow::launchCommand()

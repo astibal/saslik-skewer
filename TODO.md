@@ -1,13 +1,13 @@
 # Skewer roadmap
 
-## Next: minimal local routing
+## Completed: minimal local routing
 
-- Keep application selection and process movement in `skewer-routed.slice`.
-- Add an explicit, configurable next-hop IP for traffic from that cgroup.
-- Install narrowly scoped packet marking and policy-routing rules.
-- Keep all unrelated host traffic on its existing routes.
-- Make setup, status and teardown idempotent and visible in both the GUI and TUI.
-- Document that sockets opened before an application is attached retain their
+- [x] Keep application selection and process movement in `skewer-routed.slice`.
+- [x] Add an explicit, configurable next-hop IP for traffic from that cgroup.
+- [x] Install narrowly scoped packet marking and policy-routing rules.
+- [x] Keep all unrelated host traffic on its existing routes.
+- [x] Make setup, status and teardown idempotent and visible in both the GUI and TUI.
+- [x] Document that sockets opened before an application is attached retain their
   previous routing; launching the application through Skewer is authoritative.
 
 This phase deliberately has no tunnel protocol and no dependency on a Saslik
@@ -26,3 +26,13 @@ to accept and forward the selected traffic.
 
 This is intentionally deferred. Do not couple the first routing implementation
 to tuntom, WireGuard, OpenVPN or the future Saslik VM.
+
+## Later: Saslik connection utilities
+
+- Let the user enter a Saslik URL and establish an explicitly trusted connection.
+- Discover the remote workspace/identity and advertised service endpoints.
+- Show Saslik and Smithproxy health and compatibility before routing traffic.
+- Download the active CA certificate and offer installation into supported
+  local trust stores.
+- Keep API credentials out of URLs and use a bootstrap/exchange flow when the
+  Saslik API defines one.

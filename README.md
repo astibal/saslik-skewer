@@ -13,12 +13,14 @@ applications into a stable cgroup that can be routed through a Saslik lab.
   manager, without running the GUI as root;
 - launches new applications directly in that slice;
 - provides both a Qt 6 desktop interface and an ncurses headless interface;
-- rejects processes that do not belong to the current user.
+- rejects processes that do not belong to the current user;
+- can mark traffic from `skewer-routed.slice` and policy-route it through a
+  directly reachable IPv4 next hop without changing unrelated host traffic.
 
-Skewer currently establishes the process-selection boundary only. It does not
-yet install nftables policy-routing rules or provide a remote transport. Until a
-transport backend is configured, `attached` means that an application is in the
-Skewer cgroup, not that its packets are already leaving through Saslik.
+Moving applications and configuring networking are deliberately separate.
+`Attached` means that an application is in the Skewer cgroup. `Routing active`
+means that nftables marking and the dedicated policy-routing table are also
+installed. No remote transport is provided yet.
 
 The next networking milestone is intentionally smaller: route traffic from the
 Skewer cgroup toward a configurable, directly reachable next-hop IP. A dynamic
@@ -51,6 +53,18 @@ Run the terminal interface, for example inside `screen` or `tmux`:
 
 Without a graphical session, Skewer selects the TUI automatically. `--gui`
 forces the desktop interface.
+
+## Routing
+
+Enter an IPv4 address that is directly reachable on one of the host's links.
+Enabling routing creates one nftables output table and one policy-routing table
+for the invoking UID. Packets from other users and processes outside
+`skewer-routed.slice` are not marked. The next-hop address itself is explicitly
+excluded to prevent recursive routing.
+
+The graphical interface authorizes the narrow `skewer-net-helper` through
+polkit. The TUI invokes the same helper through `sudo`. Disable routing before
+the next-hop machine disappears; repeating enable or disable is safe.
 
 ## Design rules
 

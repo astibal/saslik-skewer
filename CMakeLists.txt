@@ -28,6 +28,8 @@ add_executable(skewer
     src/process_scanner.hpp
     src/routing_plan.cpp
     src/routing_plan.hpp
+    src/routing_controller.cpp
+    src/routing_controller.hpp
     src/tui.cpp
     src/tui.hpp
 )
@@ -40,6 +42,8 @@ add_executable(skewer-net-helper
 
 target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets PkgConfig::SYSTEMD PkgConfig::NCURSESW)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(skewer PRIVATE
+    SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 target_link_libraries(skewer-net-helper PRIVATE Qt6::Core Qt6::Network)
 target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
 

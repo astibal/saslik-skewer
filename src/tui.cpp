@@ -2,6 +2,7 @@
 
 #include <QElapsedTimer>
 #include <QProcess>
+#include <QSettings>
 
 #include <ncurses.h>
 
@@ -54,6 +55,8 @@ int Tui::run()
         case KEY_RIGHT: case '\n': case ' ': toggleExpanded(); break;
         case 's': changeRouting(true); break;
         case 'd': changeRouting(false); break;
+        case 'g': configureRouting(); break;
+        case 'x': disableRouting(); break;
         case 'n': launch(); break;
         case 'r': model_.refresh(); rebuildRows(); refresh.restart(); break;
         case KEY_RESIZE: break;
@@ -97,7 +100,11 @@ void Tui::draw()
     attron(A_BOLD | COLOR_PAIR(1));
     mvaddnstr(0, 2, "SKEWER", width - 4);
     attroff(A_BOLD | COLOR_PAIR(1));
-    mvaddnstr(1, 2, "Application selection for Saslik routing", width - 4);
+    const QString routing_state = routing_.active()
+        ? QStringLiteral("routing ACTIVE") : QStringLiteral("routing inactive");
+    const QByteArray heading = QStringLiteral("Application selection for Saslik routing · %1")
+        .arg(routing_state).toLocal8Bit();
+    mvaddnstr(1, 2, heading.constData(), width - 4);
     mvhline(2, 0, ACS_HLINE, width);
     const int visible = std::max(0, height - 7);
     const int offset = std::clamp(selected_ - visible / 2, 0,
@@ -129,8 +136,28 @@ void Tui::draw()
     const QByteArray status = clipped(status_, width - 4).toLocal8Bit();
     mvaddnstr(height - 3, 2, status.constData(), width - 4);
     mvaddnstr(height - 2, 2,
-              "Enter expand  S route  D release  N launch  R refresh  Q quit", width - 4);
+              "Enter expand  S attach  D release  G gateway  X routing off  N launch  R refresh  Q quit", width - 4);
     refresh();
+}
+
+void Tui::configureRouting()
+{
+    QSettings settings;
+    QString next_hop = prompt(QStringLiteral("Next-hop IPv4"));
+    if (next_hop.isEmpty()) next_hop = settings.value(QStringLiteral("routing/nextHop")).toString();
+    if (next_hop.isEmpty()) {
+        status_ = QStringLiteral("No next hop entered");
+        return;
+    }
+    const RoutingResult result = routing_.activate(next_hop,
+        RoutingController::Authorization::Terminal);
+    status_ = result.detail;
+    if (result.ok) settings.setValue(QStringLiteral("routing/nextHop"), next_hop);
+}
+
+void Tui::disableRouting()
+{
+    status_ = routing_.deactivate(RoutingController::Authorization::Terminal).detail;
 }
 
 void Tui::moveSelection(int delta)

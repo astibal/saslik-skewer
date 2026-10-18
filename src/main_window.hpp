@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cgroup_manager.hpp"
+#include "routing_controller.hpp"
 
 #include <QMainWindow>
 #include <QSet>
@@ -32,6 +33,9 @@ private slots:
     void routeSelection();
     void releaseSelection();
     void browseExecutable();
+    void activateRouting();
+    void deactivateRouting();
+    void updateRoutingStatus();
 
 private:
     ApplicationModel* model_{};
@@ -43,8 +47,13 @@ private:
     QPushButton* route_button_{};
     QPushButton* release_button_{};
     QLabel* action_status_{};
+    QLineEdit* next_hop_{};
+    QPushButton* routing_up_{};
+    QPushButton* routing_down_{};
+    QLabel* routing_status_{};
     QSet<QString> expanded_items_;
     QString selected_item_;
     bool restored_once_{};
     CgroupManager cgroups_;
+    RoutingController routing_;
 };
