@@ -41,6 +41,10 @@ sudo apt install ./skewer-linux-amd64.deb
 ```
 
 Release tags use the shared ecosystem version without a prefix, e.g. `0.9.50`.
+An optional fourth number denotes a stable hotfix, e.g. `0.9.50.1` and
+`0.9.50.2`. Set the complete version in CMake before tagging: the tag,
+application and DEB version must match exactly. Hotfixes are ordinary stable
+releases eligible for `latest`. Prefixes and suffixes are rejected.
 The GitHub release workflow builds and tests in Ubuntu 26.04 and publishes a
 DEB and SHA-256 checksum. The real cgroup movement test requires a local user
 systemd session and is run separately before tagging.

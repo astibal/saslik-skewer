@@ -15,8 +15,14 @@ ctest --test-dir /tmp/skewer-build --output-on-failure -E '^cgroup_manager$'
 mkdir -p /out
 cd /out
 cmake -S /src -B /tmp/skewer-build
-cpack --config /tmp/skewer-build/CPackConfig.cmake
-test "$(dpkg-deb -f skewer-linux-amd64.deb Version)" = "$(/tmp/skewer-build/skewer --version | cut -d' ' -f2)"
+binary_version=$(/tmp/skewer-build/skewer --version | cut -d' ' -f2)
+deb_version=$binary_version
+if [[ -n "${RELEASE_TAG:-}" ]]; then
+    [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]
+    test "$RELEASE_TAG" = "$binary_version"
+fi
+cpack --config /tmp/skewer-build/CPackConfig.cmake -D "CPACK_DEBIAN_PACKAGE_VERSION=$deb_version"
+test "$(dpkg-deb -f skewer-linux-amd64.deb Version)" = "$deb_version"
 sha256sum skewer-linux-amd64.deb > SHA256SUMS
 # Validate dependencies and installed paths in the container, not on the host.
 apt-get install -y ./skewer-linux-amd64.deb
