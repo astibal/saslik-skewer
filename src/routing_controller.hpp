@@ -14,7 +14,9 @@ public:
     [[nodiscard]] RoutingResult activate(const QString& next_hop,
                                          Authorization authorization) const;
     [[nodiscard]] RoutingResult deactivate(Authorization authorization) const;
-    [[nodiscard]] bool active() const;
+    [[nodiscard]] bool active(const QString& next_hop) const;
+    [[nodiscard]] bool nextHopReachable(const QString& next_hop) const;
+    [[nodiscard]] QString directInterface(const QString& next_hop) const;
 
 private:
     [[nodiscard]] static QString helperPath();

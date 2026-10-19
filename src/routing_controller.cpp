@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 
 #include <unistd.h>
 
@@ -47,13 +48,37 @@ RoutingResult RoutingController::deactivate(Authorization authorization) const
     return invoke({QStringLiteral("down")}, authorization);
 }
 
-bool RoutingController::active() const
+bool RoutingController::active(const QString& next_hop) const
 {
-    const RoutingResult result = run(QStringLiteral("/usr/sbin/ip"),
+    const RoutingResult rule = run(QStringLiteral("/usr/sbin/ip"),
         {QStringLiteral("-4"), QStringLiteral("rule"), QStringLiteral("show"),
          QStringLiteral("pref"),
          QString::number(RoutingPlanner::rulePriority(getuid()))}, 3000);
-    return result.ok && !result.detail.isEmpty() && result.detail != QStringLiteral("Command failed");
+    if (!rule.ok || rule.detail.isEmpty() || rule.detail == QStringLiteral("Command failed"))
+        return false;
+
+    const RoutingResult route = run(QStringLiteral("/usr/sbin/ip"),
+        {QStringLiteral("-4"), QStringLiteral("route"), QStringLiteral("show"),
+         QStringLiteral("table"), QString::number(RoutingPlanner::routeTable(getuid())),
+         QStringLiteral("default")}, 3000);
+    return route.ok && route.detail.contains(QStringLiteral("default via %1 ").arg(next_hop));
+}
+
+bool RoutingController::nextHopReachable(const QString& next_hop) const
+{
+    return !directInterface(next_hop).isEmpty();
+}
+
+QString RoutingController::directInterface(const QString& next_hop) const
+{
+    if (next_hop.isEmpty()) return {};
+    const RoutingResult route = run(QStringLiteral("/usr/sbin/ip"),
+        {QStringLiteral("-4"), QStringLiteral("route"), QStringLiteral("get"), next_hop}, 3000);
+    if (!route.ok || route.detail.contains(QStringLiteral(" via "))
+        || !route.detail.startsWith(next_hop + QLatin1Char(' '))) return {};
+    const QRegularExpression device(QStringLiteral("(?:^|\\s)dev\\s+(\\S+)"));
+    const auto match = device.match(route.detail);
+    return match.hasMatch() ? match.captured(1) : QString{};
 }
 
 QString RoutingController::helperPath()

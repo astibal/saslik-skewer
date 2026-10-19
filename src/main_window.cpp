@@ -5,21 +5,31 @@
 #include <QApplication>
 #include <QCompleter>
 #include <QCloseEvent>
+#include <QComboBox>
+#include <QDateTime>
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
 #include <QPushButton>
 #include <QSortFilterProxyModel>
 #include <QSettings>
+#include <QStatusBar>
 #include <QStringListModel>
+#include <QTimer>
+#include <QUrlQuery>
 #include <QTreeView>
 #include <QVBoxLayout>
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("Skewer"));
@@ -46,21 +56,59 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* routing_box = new QGroupBox(tr("Routing"), central);
     auto* routing_layout = new QHBoxLayout(routing_box);
+    routing_source_ = new QComboBox(routing_box);
+    routing_source_->addItem(tr("Set gateway"), QStringLiteral("gateway"));
+    routing_source_->addItem(tr("Saslik URL"), QStringLiteral("saslik"));
     next_hop_ = new QLineEdit(routing_box);
     next_hop_->setPlaceholderText(tr("Directly reachable next-hop IPv4 address"));
     QSettings initial_settings;
     next_hop_->setText(initial_settings.value(QStringLiteral("routing/nextHop")).toString());
+    saslik_url_ = new QLineEdit(routing_box);
+    saslik_url_->setPlaceholderText(tr("http://127.0.0.1:8765/api/skewer"));
+    saslik_url_->setText(initial_settings.value(QStringLiteral("routing/saslikUrl")).toString());
+    routing_source_->setCurrentIndex(
+        initial_settings.value(QStringLiteral("routing/mode")) == QStringLiteral("saslik") ? 1 : 0);
+    routing_requested_ = initial_settings.value(QStringLiteral("routing/requested"), false).toBool();
     routing_up_ = new QPushButton(tr("Enable"), routing_box);
     routing_down_ = new QPushButton(tr("Disable"), routing_box);
     routing_status_ = new QLabel(routing_box);
     routing_status_->setObjectName(QStringLiteral("routingStatus"));
+    routing_layout->addWidget(routing_source_);
     routing_layout->addWidget(next_hop_, 1);
+    routing_layout->addWidget(saslik_url_, 1);
     routing_layout->addWidget(routing_up_);
     routing_layout->addWidget(routing_down_);
     routing_layout->addWidget(routing_status_);
     layout->addWidget(routing_box);
     connect(routing_up_, &QPushButton::clicked, this, &MainWindow::activateRouting);
     connect(routing_down_, &QPushButton::clicked, this, &MainWindow::deactivateRouting);
+    routing_status_bar_ = new QLabel(this);
+    statusBar()->addPermanentWidget(routing_status_bar_);
+    connect(routing_source_, &QComboBox::currentIndexChanged,
+            this, &MainWindow::updateRoutingSource);
+    network_ = new QNetworkAccessManager(this);
+    connect(network_, &QNetworkAccessManager::finished, this, &MainWindow::receiveSaslik);
+    if (!connect_url.isEmpty()) {
+        const QUrl url(connect_url);
+        const QString discovery = QUrlQuery(url).queryItemValue(QStringLiteral("discovery"));
+        if (url.scheme() == QStringLiteral("skewer") && !discovery.isEmpty()) {
+            routing_source_->setCurrentIndex(1);
+            saslik_url_->setText(discovery);
+            routing_requested_ = true;
+            initial_settings.setValue(QStringLiteral("routing/mode"), QStringLiteral("saslik"));
+            initial_settings.setValue(QStringLiteral("routing/saslikUrl"), discovery);
+            initial_settings.setValue(QStringLiteral("routing/requested"), true);
+        }
+    }
+    updateRoutingSource();
+    routing_watchdog_ = new QTimer(this);
+    routing_watchdog_->setInterval(2000);
+    connect(routing_watchdog_, &QTimer::timeout, this, [this] {
+        if (usesSaslikUrl()) pollSaslik();
+        updateRoutingStatus();
+    });
+    routing_watchdog_->start();
+    if (usesSaslikUrl()) pollSaslik();
     updateRoutingStatus();
 
     model_ = new ApplicationModel(this);
@@ -152,21 +200,32 @@ void MainWindow::closeEvent(QCloseEvent* event)
     QSettings settings;
     settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("routing/nextHop"), next_hop_->text().trimmed());
+    settings.setValue(QStringLiteral("routing/saslikUrl"), saslik_url_->text().trimmed());
+    settings.setValue(QStringLiteral("routing/mode"),
+                      usesSaslikUrl() ? QStringLiteral("saslik") : QStringLiteral("gateway"));
     QMainWindow::closeEvent(event);
 }
 
 void MainWindow::activateRouting()
 {
-    const QString next_hop = next_hop_->text().trimmed();
+    if (usesSaslikUrl()) pollSaslik();
+    const QString next_hop = currentNextHop();
     if (next_hop.isEmpty()) {
-        QMessageBox::information(this, tr("Skewer"), tr("Enter a next-hop IPv4 address."));
+        QMessageBox::information(this, tr("Skewer"), usesSaslikUrl()
+            ? tr("Saslik has not supplied a usable directly-connected gateway yet.")
+            : tr("Enter a next-hop IPv4 address."));
         return;
     }
     const RoutingResult result = routing_.activate(next_hop,
         RoutingController::Authorization::Desktop);
     if (!result.ok) QMessageBox::warning(this, tr("Skewer routing"), result.detail);
     else {
+        routing_requested_ = true;
         QSettings().setValue(QStringLiteral("routing/nextHop"), next_hop);
+        QSettings().setValue(QStringLiteral("routing/saslikUrl"), saslik_url_->text().trimmed());
+        QSettings().setValue(QStringLiteral("routing/mode"),
+                             usesSaslikUrl() ? QStringLiteral("saslik") : QStringLiteral("gateway"));
+        QSettings().setValue(QStringLiteral("routing/requested"), true);
         action_status_->setText(result.detail);
     }
     updateRoutingStatus();
@@ -176,17 +235,142 @@ void MainWindow::deactivateRouting()
 {
     const RoutingResult result = routing_.deactivate(RoutingController::Authorization::Desktop);
     if (!result.ok) QMessageBox::warning(this, tr("Skewer routing"), result.detail);
-    else action_status_->setText(result.detail);
+    else {
+        routing_requested_ = false;
+        QSettings().setValue(QStringLiteral("routing/requested"), false);
+        action_status_->setText(result.detail);
+    }
     updateRoutingStatus();
 }
 
 void MainWindow::updateRoutingStatus()
 {
-    const bool active = routing_.active();
-    routing_status_->setText(active ? tr("● active") : tr("○ inactive"));
-    routing_up_->setEnabled(!active);
-    routing_down_->setEnabled(active);
-    next_hop_->setEnabled(!active);
+    const QString next_hop = currentNextHop();
+    const bool active = !next_hop.isEmpty() && routing_.active(next_hop);
+    const bool reachable = !next_hop.isEmpty() && routing_.nextHopReachable(next_hop);
+    QString text;
+    QString color;
+    if (active) {
+        text = tr("● Routing active via %1").arg(next_hop);
+        color = QStringLiteral("#63dc94");
+    } else if (routing_requested_) {
+        if (!discovery_warning_.isEmpty()) text = tr("● %1").arg(discovery_warning_);
+        else if (usesSaslikUrl() && !discovery_online_) text = tr("● Waiting for Saslik…");
+        else text = reachable ? tr("● Restoring routing…") : tr("● Gateway unavailable…");
+        color = QStringLiteral("#e3b94f");
+    } else {
+        text = tr("○ Routing inactive");
+        color = QStringLiteral("#899098");
+    }
+    routing_status_->setText(text);
+    routing_status_bar_->setText(text);
+    routing_status_->setStyleSheet(QStringLiteral("color:%1").arg(color));
+    routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
+    routing_up_->setEnabled(!routing_requested_ && !active);
+    routing_down_->setEnabled(routing_requested_ || active);
+    routing_source_->setEnabled(!routing_requested_ && !active);
+    next_hop_->setEnabled(!routing_requested_ && !active && !usesSaslikUrl());
+    saslik_url_->setEnabled(!routing_requested_ && !active && usesSaslikUrl());
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (routing_requested_ && discovery_warning_.isEmpty()
+        && (!usesSaslikUrl() || discovery_online_) && reachable && !active && !routing_repairing_
+        && now - last_routing_repair_ms_ >= 5000) {
+        last_routing_repair_ms_ = now;
+        QTimer::singleShot(0, this, &MainWindow::repairRouting);
+    }
+}
+
+void MainWindow::repairRouting()
+{
+    if (routing_repairing_) return;
+    routing_repairing_ = true;
+    const RoutingResult result = routing_.activate(currentNextHop(),
+        RoutingController::Authorization::Desktop);
+    routing_repairing_ = false;
+    if (result.ok) action_status_->setText(tr("Routing restored after Saslik reconnect."));
+    else action_status_->setText(tr("Routing restore failed: %1").arg(result.detail));
+    updateRoutingStatus();
+}
+
+bool MainWindow::usesSaslikUrl() const
+{
+    return routing_source_->currentData().toString() == QStringLiteral("saslik");
+}
+
+QString MainWindow::currentNextHop() const
+{
+    return usesSaslikUrl() ? discovery_gateway_ : next_hop_->text().trimmed();
+}
+
+void MainWindow::updateRoutingSource()
+{
+    const bool saslik = usesSaslikUrl();
+    if (!saslik) {
+        discovery_online_ = false;
+        discovery_warning_.clear();
+    }
+    next_hop_->setVisible(!saslik);
+    saslik_url_->setVisible(saslik);
+    if (saslik) pollSaslik();
+    updateRoutingStatus();
+}
+
+void MainWindow::pollSaslik()
+{
+    if (discovery_request_pending_) return;
+    const QUrl url(saslik_url_->text().trimmed());
+    if (!url.isValid() || (url.scheme() != QStringLiteral("http")
+                           && url.scheme() != QStringLiteral("https"))) {
+        discovery_online_ = false;
+        discovery_warning_ = tr("Invalid Saslik URL");
+        return;
+    }
+    discovery_request_pending_ = true;
+    QNetworkRequest request(url);
+    request.setTransferTimeout(1800);
+    network_->get(request);
+}
+
+void MainWindow::receiveSaslik(QNetworkReply* reply)
+{
+    discovery_request_pending_ = false;
+    const QByteArray payload = reply->readAll();
+    const bool request_ok = reply->error() == QNetworkReply::NoError;
+    reply->deleteLater();
+    if (!request_ok) {
+        discovery_online_ = false;
+        discovery_warning_.clear();
+        updateRoutingStatus();
+        return;
+    }
+    QJsonParseError parse_error;
+    const QJsonDocument document = QJsonDocument::fromJson(payload, &parse_error);
+    const QJsonObject value = document.object();
+    const QString gateway = value.value(QStringLiteral("gateway")).toString();
+    const QString advertised_interface = value.value(QStringLiteral("host_interface")).toString();
+    if (parse_error.error != QJsonParseError::NoError || gateway.isEmpty()
+        || advertised_interface.isEmpty() || !value.value(QStringLiteral("available")).toBool()) {
+        discovery_online_ = false;
+        discovery_warning_.clear();
+        updateRoutingStatus();
+        return;
+    }
+    const QString actual_interface = routing_.directInterface(gateway);
+    discovery_online_ = true;
+    discovery_warning_ = actual_interface.isEmpty()
+        ? tr("Saslik gateway is not directly connected")
+        : actual_interface != advertised_interface
+            ? tr("Saslik expected %1, found %2").arg(advertised_interface, actual_interface)
+            : QString{};
+    discovery_gateway_ = gateway;
+    discovery_interface_ = advertised_interface;
+    const QString generation = value.value(QStringLiteral("generation")).toString();
+    const bool reconnected = !discovery_generation_.isEmpty()
+        && generation != discovery_generation_;
+    discovery_generation_ = generation;
+    if (reconnected) action_status_->setText(tr("Saslik reconnected; checking routing."));
+    updateRoutingStatus();
 }
 
 void MainWindow::launchCommand()

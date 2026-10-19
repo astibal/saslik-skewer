@@ -35,5 +35,6 @@ private:
     QSet<QString> expanded_;
     int selected_{};
     bool routing_active_{};
+    QString routing_next_hop_;
     QString status_{QStringLiteral("Ready")};
 };

@@ -28,7 +28,14 @@ int main(int argc, char* argv[])
         Tui interface;
         return interface.run();
     }
-    MainWindow window;
+    QString connect_url;
+    for (const QString& argument : arguments) {
+        if (argument.startsWith(QStringLiteral("skewer://"))) {
+            connect_url = argument;
+            break;
+        }
+    }
+    MainWindow window(connect_url);
     window.show();
     return application.exec();
 }

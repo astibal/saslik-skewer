@@ -39,7 +39,8 @@ int Tui::run()
     expanded_.insert(QStringLiteral("section:applications"));
     expanded_.insert(QStringLiteral("section:other"));
     rebuildRows();
-    routing_active_ = routing_.active();
+    routing_next_hop_ = QSettings().value(QStringLiteral("routing/nextHop")).toString();
+    routing_active_ = routing_.active(routing_next_hop_);
     QElapsedTimer refresh;
     refresh.start();
     bool running = true;
@@ -47,7 +48,7 @@ int Tui::run()
         if (refresh.elapsed() >= 2500) {
             model_.refresh();
             rebuildRows();
-            routing_active_ = routing_.active();
+            routing_active_ = routing_.active(routing_next_hop_);
             refresh.restart();
         }
         draw();
@@ -154,14 +155,19 @@ void Tui::configureRouting()
     const RoutingResult result = routing_.activate(next_hop,
         RoutingController::Authorization::Terminal);
     status_ = result.detail;
-    routing_active_ = routing_.active();
-    if (result.ok) settings.setValue(QStringLiteral("routing/nextHop"), next_hop);
+    if (result.ok) {
+        routing_next_hop_ = next_hop;
+        settings.setValue(QStringLiteral("routing/nextHop"), next_hop);
+        settings.setValue(QStringLiteral("routing/requested"), true);
+    }
+    routing_active_ = routing_.active(routing_next_hop_);
 }
 
 void Tui::disableRouting()
 {
     status_ = routing_.deactivate(RoutingController::Authorization::Terminal).detail;
-    routing_active_ = routing_.active();
+    QSettings().setValue(QStringLiteral("routing/requested"), false);
+    routing_active_ = routing_.active(routing_next_hop_);
 }
 
 void Tui::moveSelection(int delta)
