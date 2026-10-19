@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QFileInfo>
+#include <QFile>
 #include <QRegularExpression>
 
 #include <systemd/sd-bus.h>
@@ -76,6 +77,11 @@ CgroupResult CgroupManager::moveToScope(const QVector<pid_t>& pids,
         if (process.ownerId() != caller) {
             return {false, QStringLiteral("Refusing a process owned by another user"), {}};
         }
+        QFile comm(process.filePath() + QStringLiteral("/comm"));
+        if (!comm.open(QIODevice::ReadOnly))
+            return {false, QStringLiteral("Cannot inspect selected process"), {}};
+        if (comm.readAll().trimmed() == "systemd")
+            return {false, QStringLiteral("Refusing to move the session manager"), {}};
         validated.push_back(pid);
     }
     if (validated.isEmpty())

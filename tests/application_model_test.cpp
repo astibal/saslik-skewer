@@ -12,6 +12,20 @@ int main(int argc, char** argv)
 {
     QApplication application(argc, argv);
 
+    ProcessInfo manager, browser, child, terminal;
+    manager.pid = 10; manager.name = QStringLiteral("systemd");
+    manager.cgroup = QStringLiteral("/user.slice/user-1000.slice/user@1000.service");
+    browser.pid = 20; browser.parent_pid = 10; browser.cgroup = manager.cgroup;
+    child.pid = 21; child.parent_pid = 20; child.cgroup = manager.cgroup;
+    terminal.pid = 30; terminal.parent_pid = 10; terminal.cgroup = manager.cgroup;
+    QHash<pid_t, const ProcessInfo*> tree{{10, &manager}, {20, &browser},
+                                         {21, &child}, {30, &terminal}};
+    if (ApplicationModel::applicationKey(browser, tree) != QStringLiteral("tree:20")
+        || ApplicationModel::applicationKey(child, tree) != QStringLiteral("tree:20")
+        || ApplicationModel::applicationKey(terminal, tree) != QStringLiteral("tree:30")) return 4;
+    browser.cgroup += QStringLiteral("/snap.firefox.scope/subgroup");
+    if (!ApplicationModel::applicationKey(browser, tree).endsWith(QStringLiteral("/snap.firefox.scope"))) return 5;
+
     ProcessScanner scanner;
     const QVector<ProcessInfo> processes = scanner.scan(getuid());
     const auto self = std::find_if(processes.begin(), processes.end(), [](const auto& process) {

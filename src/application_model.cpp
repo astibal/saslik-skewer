@@ -174,9 +174,12 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
     application->id = QStringLiteral("app:") + key;
     application->routed = key.contains(QStringLiteral("skewer-routed"));
     const ProcessInfo* representative = &processes.first();
+    QSet<pid_t> members;
+    for (const ProcessInfo& process : processes) members.insert(process.pid);
     for (const ProcessInfo& process : processes) {
-        if (process.command_line.contains(QStringLiteral(" --type="))) continue;
-        if (!process.executable.isEmpty()) { representative = &process; break; }
+        // Name an application after its root, never an arbitrary helper child.
+        if (!members.contains(process.parent_pid)
+            && !process.executable.isEmpty()) { representative = &process; break; }
     }
     const DesktopEntry* entry = catalog_.match(key, representative->executable, representative->name);
     if (entry) {
@@ -232,14 +235,30 @@ void ApplicationModel::buildProcessTree(Node& application, QVector<ProcessInfo> 
 QString ApplicationModel::applicationKey(
     const ProcessInfo& process, const QHash<pid_t, const ProcessInfo*>& processes)
 {
-    const QString leaf = process.cgroup.section(QLatin1Char('/'), -1);
-    if ((process.cgroup.contains(QStringLiteral("/app.slice/"))
-         || process.cgroup.contains(QStringLiteral("/session.slice/"))) && !leaf.isEmpty())
-        return leaf;
+    // Units can live outside app.slice (Snap and Skewer do). Keep the full
+    // path so similarly named units in different slices cannot be conflated.
+    const auto unitKey = [](const QString& path) -> QString {
+        const QStringList parts = path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        for (int i = parts.size() - 1; i >= 0; --i) {
+            const QString& part = parts.at(i);
+            if (part.startsWith(QStringLiteral("user@"))
+                || part.startsWith(QStringLiteral("session-"))) continue;
+            if (part.endsWith(QStringLiteral(".scope")) || part.endsWith(QStringLiteral(".service")))
+                return QStringLiteral("/") + parts.mid(0, i + 1).join(QLatin1Char('/'));
+        }
+        return {};
+    };
+    const QString unit = unitKey(process.cgroup);
+    if (!unit.isEmpty()) return unit;
     const ProcessInfo* root = &process;
     QSet<pid_t> visited{process.pid};
     while (const ProcessInfo* parent = processes.value(root->parent_pid, nullptr)) {
         if (visited.contains(parent->pid)) break;
+        // Session infrastructure is an ownership boundary, not an application.
+        if (parent->name == QStringLiteral("systemd")
+            || parent->name == QStringLiteral("init")
+            || parent->name == QStringLiteral("kthreadd")
+            || parent->cgroup != root->cgroup) break;
         visited.insert(parent->pid);
         root = parent;
     }
@@ -248,7 +267,8 @@ QString ApplicationModel::applicationKey(
 
 bool ApplicationModel::foregroundGroup(const QString& key)
 {
-    return key.endsWith(QStringLiteral(".scope"))
-        || (key.startsWith(QStringLiteral("app-")) && !key.contains(QStringLiteral("@autostart")))
-        || key.startsWith(QStringLiteral("snap."));
+    const QString leaf = key.section(QLatin1Char('/'), -1);
+    return leaf.endsWith(QStringLiteral(".scope"))
+        || (leaf.startsWith(QStringLiteral("app-")) && !leaf.contains(QStringLiteral("@autostart")))
+        || leaf.startsWith(QStringLiteral("snap."));
 }
