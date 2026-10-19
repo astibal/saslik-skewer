@@ -31,7 +31,21 @@ Existing sockets retain the routing context in which they were created. For a
 reliable test, launch the application through Skewer instead of attaching an
 already-running process tree.
 
-## Build and test
+## Install a release
+
+Ubuntu / Kubuntu 26.04 LTS, amd64:
+
+```sh
+curl -fLO https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-linux-amd64.deb
+sudo apt install ./skewer-linux-amd64.deb
+```
+
+Release tags use the shared ecosystem version without a prefix, e.g. `0.9.50`.
+The GitHub release workflow builds and tests in Ubuntu 26.04 and publishes a
+DEB and SHA-256 checksum. The real cgroup movement test requires a local user
+systemd session and is run separately before tagging.
+
+## Build from source
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug

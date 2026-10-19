@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(saslik-skewer VERSION 0.1.0 LANGUAGES CXX)
+project(saslik-skewer VERSION 0.9.50 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -45,6 +45,7 @@ add_executable(skewer-net-helper
 target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets PkgConfig::SYSTEMD PkgConfig::NCURSESW)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer PRIVATE
+    SKEWER_VERSION="${PROJECT_VERSION}"
     SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 target_link_libraries(skewer-net-helper PRIVATE Qt6::Core Qt6::Network)
 target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
@@ -95,3 +96,15 @@ if(BUILD_TESTING)
     add_test(NAME application_model COMMAND application_model_test)
     set_tests_properties(application_model PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
+
+set(CPACK_GENERATOR DEB)
+set(CPACK_PACKAGE_NAME skewer)
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_CONTACT "Ales Stibal <astib@mag0.net>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Application traffic selector for Saslik")
+set(CPACK_DEBIAN_PACKAGE_SECTION net)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, nftables, polkitd, pkexec, sudo, systemd, libqt6svg6, qt6-svg-plugins, qt6-qpa-plugins, qt6-wayland")
+set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
+set(CPACK_PACKAGE_FILE_NAME "skewer-linux-amd64")
+include(CPack)
