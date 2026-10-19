@@ -72,18 +72,21 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
         if (model_index.column() == ProcessIdColumn && item->type == NodeType::Process)
             return item->process.pid;
         if (model_index.column() == CommandColumn) return item->subtitle;
+        if (model_index.column() == RoutingColumn && item->type == NodeType::Application)
+            return item->routed ? tr("● Attached") : QString{};
     }
     if (role == Qt::DecorationRole && model_index.column() == NameColumn && !item->icon.isNull())
         return item->icon;
     if (role == Qt::ToolTipRole)
         return item->type == NodeType::Process ? item->process.command_line : item->subtitle;
-    if (role == Qt::FontRole && item->type != NodeType::Process) {
+    if (role == Qt::FontRole && item->type != NodeType::Process
+        && model_index.column() == NameColumn) {
         QFont font;
         font.setBold(true);
         return font;
     }
     if (role == Qt::ForegroundRole && item->type == NodeType::Section)
-        return QBrush(QApplication::palette().color(QPalette::Mid));
+        return QBrush(QApplication::palette().color(QPalette::Active, QPalette::Text));
     return {};
 }
 
@@ -93,6 +96,7 @@ QVariant ApplicationModel::headerData(int section, Qt::Orientation orientation, 
     switch (section) {
     case NameColumn: return tr("Application / process");
     case ProcessIdColumn: return tr("PID");
+    case RoutingColumn: return tr("Routing");
     case CommandColumn: return tr("Identity / command");
     default: return {};
     }
@@ -208,10 +212,9 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
             launch_commands_.insert(application->title, representative->executable);
         }
     }
-    application->subtitle = tr("%1 processes · %2%3")
+    application->subtitle = tr("%1 processes · %2")
                                 .arg(processes.size())
-                                .arg(foreground ? tr("desktop application") : key)
-                                .arg(application->routed ? tr(" · routed") : QString{});
+                                .arg(foreground ? tr("desktop application") : key);
     buildProcessTree(*application, std::move(processes));
     return application;
 }

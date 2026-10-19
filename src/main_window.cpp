@@ -80,6 +80,8 @@ MainWindow::MainWindow(QWidget* parent)
                                           QHeaderView::ResizeToContents);
     tree_->header()->setSectionResizeMode(ApplicationModel::ProcessIdColumn,
                                           QHeaderView::ResizeToContents);
+    tree_->header()->setSectionResizeMode(ApplicationModel::RoutingColumn,
+                                          QHeaderView::ResizeToContents);
     tree_->header()->setSectionResizeMode(ApplicationModel::CommandColumn,
                                           QHeaderView::Stretch);
     layout->addWidget(tree_, 1);
@@ -139,9 +141,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     setCentralWidget(central);
     setStyleSheet(QStringLiteral(
-        "QLabel#routingNote { color: palette(mid); padding-top: 4px; }"
-        "QLabel#actionStatus { color: palette(mid); }"
-        "QLabel#routingStatus { color: palette(mid); min-width: 58px; }"
+        "QLabel#routingNote { color: palette(window-text); padding-top: 4px; }"
+        "QLabel#actionStatus { color: palette(window-text); }"
+        "QLabel#routingStatus { color: palette(window-text); min-width: 58px; }"
         "QTreeView { font-size: 10pt; }"));
 }
 

@@ -14,7 +14,7 @@ class ApplicationModel final : public QAbstractItemModel {
     Q_OBJECT
 
 public:
-    enum Column { NameColumn, ProcessIdColumn, CommandColumn, ColumnCount };
+    enum Column { NameColumn, ProcessIdColumn, RoutingColumn, CommandColumn, ColumnCount };
     enum Role {
         StableIdRole = Qt::UserRole + 1,
         NodeTypeRole,
