@@ -40,7 +40,9 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
         "  chain output {\n"
         "    type route hook output priority mangle; policy accept;\n"
         "    meta skuid %2 ip daddr %3 return\n"
-        "    meta skuid %2 socket cgroupv2 level %4 \"skewer-routed.slice\" "
+        // nft resolves this path relative to /sys/fs/cgroup, not the chosen
+        // ancestor level. The level selects which socket ancestor to compare.
+        "    meta skuid %2 socket cgroupv2 level %4 \"user.slice/user-%2.slice/user@%2.service/skewer.slice/skewer-routed.slice\" "
         "counter meta mark set %5\n"
         "  }\n"
         "}\n")
