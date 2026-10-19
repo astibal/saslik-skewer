@@ -39,6 +39,7 @@ int Tui::run()
     expanded_.insert(QStringLiteral("section:applications"));
     expanded_.insert(QStringLiteral("section:other"));
     rebuildRows();
+    routing_active_ = routing_.active();
     QElapsedTimer refresh;
     refresh.start();
     bool running = true;
@@ -46,6 +47,7 @@ int Tui::run()
         if (refresh.elapsed() >= 2500) {
             model_.refresh();
             rebuildRows();
+            routing_active_ = routing_.active();
             refresh.restart();
         }
         draw();
@@ -100,7 +102,7 @@ void Tui::draw()
     attron(A_BOLD | COLOR_PAIR(1));
     mvaddnstr(0, 2, "SKEWER", width - 4);
     attroff(A_BOLD | COLOR_PAIR(1));
-    const QString routing_state = routing_.active()
+    const QString routing_state = routing_active_
         ? QStringLiteral("routing ACTIVE") : QStringLiteral("routing inactive");
     const QByteArray heading = QStringLiteral("Application selection for Saslik routing · %1")
         .arg(routing_state).toLocal8Bit();
@@ -152,12 +154,14 @@ void Tui::configureRouting()
     const RoutingResult result = routing_.activate(next_hop,
         RoutingController::Authorization::Terminal);
     status_ = result.detail;
+    routing_active_ = routing_.active();
     if (result.ok) settings.setValue(QStringLiteral("routing/nextHop"), next_hop);
 }
 
 void Tui::disableRouting()
 {
     status_ = routing_.deactivate(RoutingController::Authorization::Terminal).detail;
+    routing_active_ = routing_.active();
 }
 
 void Tui::moveSelection(int delta)

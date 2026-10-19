@@ -181,10 +181,19 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
         if (!members.contains(process.parent_pid)
             && !process.executable.isEmpty()) { representative = &process; break; }
     }
-    const DesktopEntry* entry = catalog_.match(key, representative->executable, representative->name);
+    // Catalog matching and icon lookup do not change with process churn.
+    // Cache misses too, so background processes do not rescan the catalog.
+    const QString identity = key + QChar(0) + representative->executable
+        + QChar(0) + representative->name;
+    if (!desktop_matches_.contains(identity))
+        desktop_matches_.insert(identity,
+            catalog_.match(key, representative->executable, representative->name));
+    const DesktopEntry* entry = desktop_matches_.value(identity);
     if (entry) {
         application->title = entry->name;
-        application->icon = entry->icon();
+        if (!application_icons_.contains(entry->id))
+            application_icons_.insert(entry->id, entry->icon());
+        application->icon = application_icons_.value(entry->id);
         application->launch_command = entry->launch_command;
         launch_commands_.insert(entry->name, entry->launch_command);
     } else {
@@ -192,7 +201,10 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
         application->launch_command = representative->executable;
         if (!representative->executable.isEmpty()) {
             static QFileIconProvider icons;
-            application->icon = icons.icon(QFileInfo(representative->executable));
+            const QString icon_key = representative->executable;
+            if (!application_icons_.contains(icon_key))
+                application_icons_.insert(icon_key, icons.icon(QFileInfo(icon_key)));
+            application->icon = application_icons_.value(icon_key);
             launch_commands_.insert(application->title, representative->executable);
         }
     }

@@ -70,6 +70,8 @@ private:
     DesktopCatalog catalog_;
     std::vector<std::unique_ptr<Node>> roots_;
     QHash<QString, QString> launch_commands_;
+    QHash<QString, const DesktopEntry*> desktop_matches_;
+    QHash<QString, QIcon> application_icons_;
     QByteArray snapshot_;
     QTimer refresh_timer_;
 };

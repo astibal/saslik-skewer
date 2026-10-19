@@ -34,5 +34,6 @@ private:
     QVector<Row> rows_;
     QSet<QString> expanded_;
     int selected_{};
+    bool routing_active_{};
     QString status_{QStringLiteral("Ready")};
 };

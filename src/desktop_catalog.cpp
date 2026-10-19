@@ -52,6 +52,8 @@ void DesktopCatalog::reload()
             entry.icon_name = settings.value(QStringLiteral("Icon")).toString();
             entry.launch_command = cleanExec(settings.value(QStringLiteral("Exec")).toString());
             entry.executable = executableFrom(entry.launch_command);
+            entry.match_id = normalized(entry.id);
+            entry.match_binary = normalized(QFileInfo(entry.executable).fileName());
             entry.keywords = settings.value(QStringLiteral("Keywords")).toStringList();
             entry.terminal = settings.value(QStringLiteral("Terminal")).toBool();
             if (entry.name.isEmpty() || entry.launch_command.isEmpty()) continue;
@@ -73,8 +75,8 @@ const DesktopEntry* DesktopCatalog::match(const QString& cgroup, const QString& 
     const DesktopEntry* best = nullptr;
     int best_score = 0;
     for (const DesktopEntry& entry : entries_) {
-        const QString id = normalized(entry.id);
-        const QString entry_binary = normalized(QFileInfo(entry.executable).fileName());
+        const QString& id = entry.match_id;
+        const QString& entry_binary = entry.match_binary;
         int score = 0;
         if (!id.isEmpty() && group.contains(id)) score += 100;
         if (!entry_binary.isEmpty() && entry_binary == binary) score += 60;
@@ -90,10 +92,14 @@ const DesktopEntry* DesktopCatalog::match(const QString& cgroup, const QString& 
 
 QString DesktopCatalog::normalized(QString value)
 {
+    // Compile these once rather than on every catalog comparison.
+    static const QRegularExpression escaped(QStringLiteral("\\\\x[0-9a-fA-F]{2}"));
+    static const QRegularExpression punctuation(QStringLiteral("[-_.@{}]"));
+    static const QRegularExpression identifier(QStringLiteral("[0-9a-f]{8,}"));
     value = value.toLower();
-    value.replace(QRegularExpression(QStringLiteral("\\\\x[0-9a-fA-F]{2}")), QStringLiteral("-"));
-    value.remove(QRegularExpression(QStringLiteral("[-_.@{}]")));
-    value.remove(QRegularExpression(QStringLiteral("[0-9a-f]{8,}")));
+    value.replace(escaped, QStringLiteral("-"));
+    value.remove(punctuation);
+    value.remove(identifier);
     return value;
 }
 

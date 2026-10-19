@@ -12,6 +12,8 @@ struct DesktopEntry {
     QString executable;
     QString launch_command;
     QStringList keywords;
+    QString match_id;
+    QString match_binary;
     bool terminal{};
 
     [[nodiscard]] QIcon icon() const;
