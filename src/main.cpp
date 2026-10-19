@@ -22,7 +22,7 @@ int main(int argc, char* argv[])
     QApplication::setApplicationName(QStringLiteral("Skewer"));
     QApplication::setOrganizationName(QStringLiteral("Saslik"));
     QApplication::setDesktopFileName(QStringLiteral("org.saslik.Skewer"));
-    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral("network-vpn")));
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/skewer.svg")));
 
     if (tui) {
         Tui interface;

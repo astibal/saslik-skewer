@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Network Widgets Test)
 find_package(PkgConfig REQUIRED)
@@ -15,6 +16,7 @@ pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(NCURSESW REQUIRED IMPORTED_TARGET ncursesw)
 
 add_executable(skewer
+    data/icons.qrc
     src/main.cpp
     src/application_model.cpp
     src/application_model.hpp
@@ -50,6 +52,7 @@ target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
 install(TARGETS skewer RUNTIME DESTINATION bin)
 install(TARGETS skewer-net-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 install(FILES data/org.saslik.Skewer.desktop DESTINATION share/applications)
+install(FILES data/org.saslik.Skewer.svg DESTINATION share/icons/hicolor/scalable/apps)
 set(SKEWER_HELPER_PATH "${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 configure_file(data/org.saslik.skewer.policy.in org.saslik.skewer.policy @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.saslik.skewer.policy

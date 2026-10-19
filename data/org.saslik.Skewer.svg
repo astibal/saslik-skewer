@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Skewer</title>
+  <desc>A restrained three-tined ember-orange fork, tilted to the right.</desc>
+  <defs>
+    <linearGradient id="ember" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff9a62"/>
+      <stop offset="1" stop-color="#ff5a28"/>
+    </linearGradient>
+  </defs>
+  <g transform="rotate(35 32 32)" fill="none" stroke="url(#ember)"
+     stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 10v14a10 10 0 0 0 20 0V10M32 10v44"/>
+  </g>
+</svg>

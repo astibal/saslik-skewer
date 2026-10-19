@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/icons">
+    <file alias="skewer.svg">org.saslik.Skewer.svg</file>
+  </qresource>
+</RCC>
