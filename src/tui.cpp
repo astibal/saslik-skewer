@@ -126,7 +126,9 @@ void Tui::draw()
             : QStringLiteral("  ");
         QString text = prefix + index.data().toString();
         if (type == ApplicationModel::NodeType::Application)
-            text += routed ? QStringLiteral("  [ROUTED]") : QStringLiteral("  [direct]");
+            text += index.data(ApplicationModel::PartiallyRoutedRole).toBool()
+                ? QStringLiteral("  [PARTIAL]")
+                : routed ? QStringLiteral("  [ROUTED]") : QStringLiteral("  [direct]");
         if (row == selected_) attron(COLOR_PAIR(4));
         else if (routed) attron(COLOR_PAIR(2));
         else if (type == ApplicationModel::NodeType::Section) attron(A_BOLD | COLOR_PAIR(3));

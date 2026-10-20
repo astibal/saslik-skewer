@@ -20,7 +20,8 @@ public:
         NodeTypeRole,
         LaunchCommandRole,
         ProcessIdsRole,
-        RoutedRole
+        RoutedRole,
+        PartiallyRoutedRole
     };
     enum class NodeType { Section, Application, Process };
 
@@ -44,6 +45,7 @@ signals:
 
 public slots:
     void refresh();
+    void setProcesses(const QVector<ProcessInfo>& processes);
 
 private:
     struct Node {
@@ -54,6 +56,9 @@ private:
         QString launch_command;
         QIcon icon;
         bool routed{};
+        bool partially_routed{};
+        QString identity;
+        int process_count{};
         ProcessInfo process;
         Node* parent{};
         std::vector<std::unique_ptr<Node>> children;
@@ -64,6 +69,7 @@ private:
                                                          QVector<ProcessInfo> processes,
                                                          bool foreground);
     static void buildProcessTree(Node& application, QVector<ProcessInfo> processes);
+    static void groupInstances(Node& section);
     [[nodiscard]] static bool foregroundGroup(const QString& key);
 
     ProcessScanner scanner_;

@@ -136,7 +136,7 @@ QString CgroupManager::safeName(QString value)
     value = value.toLower();
     value.replace(QRegularExpression(QStringLiteral("[^a-z0-9]+")), QStringLiteral("-"));
     value = value.left(32).trimmed();
-    while (value.startsWith(QLatin1Char('-'))) value.removeFirst();
+    while (value.startsWith(QLatin1Char('-'))) value.remove(0, 1);
     while (value.endsWith(QLatin1Char('-'))) value.chop(1);
     return value.isEmpty() ? QStringLiteral("application") : value;
 }

@@ -4,8 +4,8 @@
 <policyconfig>
   <vendor>Saslik</vendor>
   <action id="org.saslik.skewer.configure-routing">
-    <description>Configure selective routing for Skewer applications</description>
-    <message>Authentication is required to configure Skewer routing</message>
+    <description>Configure Skewer routing or system certificate trust</description>
+    <message>Authentication is required to change Skewer networking or system trust</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

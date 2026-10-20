@@ -1,4 +1,4 @@
-Skewer 0.9.50 for Ubuntu / Kubuntu 26.04 LTS (amd64).
+Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
 
 Download `skewer-linux-amd64.deb`, then install it with:
 

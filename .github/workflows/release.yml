@@ -1,7 +1,9 @@
 name: Release
 on:
   push:
+    branches: [main]
     tags: ['[0-9]*.[0-9]*.[0-9]*']
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,21 +19,42 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || exit 1
           grep -F "VERSION $RELEASE_TAG LANGUAGES" CMakeLists.txt
-      - name: Build and test Ubuntu 26.04 package
+      - name: Build shared DEB on Debian 12
         env:
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
         run: |
           mkdir -p dist
-          docker run --rm -e RELEASE_TAG -v "$PWD:/src:ro" -v "$PWD/dist:/out" ubuntu:26.04 bash /src/packaging/build-deb.sh
+          docker run --rm --platform linux/amd64 -e RELEASE_TAG -v "$PWD:/src:ro" -v "$PWD/dist:/out" debian:12 bash /src/packaging/build-deb.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: skewer-ubuntu-26.04-amd64
+          name: skewer-linux-amd64
           path: |
             dist/*.deb
             dist/SHA256SUMS
+  install:
+    needs: package
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # This is the supported distribution list. Every entry is mandatory.
+        image: ['debian:12', 'debian:13', 'ubuntu:24.04', 'ubuntu:26.04']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: skewer-linux-amd64
+          path: dist
+      - name: Verify identical artifact
+        run: cd dist && sha256sum -c SHA256SUMS
+      - name: Install and start packaged application
+        env:
+          TEST_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm --platform linux/amd64 -v "$PWD:/src:ro" -v "$PWD/dist:/packages:ro" "$TEST_IMAGE" bash /src/packaging/test-installed.sh
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: package
+    needs: [package, install]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -39,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: skewer-ubuntu-26.04-amd64
+          name: skewer-linux-amd64
           path: dist
       - name: Publish release
         env:

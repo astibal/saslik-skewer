@@ -58,6 +58,7 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
     if (role == NodeTypeRole) return static_cast<int>(item->type);
     if (role == LaunchCommandRole) return item->launch_command;
     if (role == RoutedRole) return item->routed;
+    if (role == PartiallyRoutedRole) return item->partially_routed;
     if (role == ProcessIdsRole) {
         QVariantList pids;
         const auto collect = [&pids](const auto& self, const Node& current) -> void {
@@ -73,7 +74,8 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
             return item->process.pid;
         if (model_index.column() == CommandColumn) return item->subtitle;
         if (model_index.column() == RoutingColumn && item->type == NodeType::Application)
-            return item->routed ? tr("● Attached") : QString{};
+            return item->partially_routed ? tr("◐ Partially attached")
+                : item->routed ? tr("● Attached") : QString{};
     }
     if (role == Qt::DecorationRole && model_index.column() == NameColumn && !item->icon.isNull())
         return item->icon;
@@ -117,11 +119,17 @@ QString ApplicationModel::resolveLaunchCommand(const QString& text) const
 void ApplicationModel::refresh()
 {
     const QVector<ProcessInfo> processes = scanner_.scan(getuid());
+    setProcesses(processes);
+}
+
+void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
+{
     QByteArray snapshot;
     for (const ProcessInfo& process : processes) {
         snapshot += QByteArray::number(process.pid) + ':'
             + QByteArray::number(process.parent_pid) + ':'
-            + process.cgroup.toUtf8() + ':' + process.name.toUtf8() + '\n';
+            + process.cgroup.toUtf8() + ':' + process.name.toUtf8() + ':'
+            + process.executable.toUtf8() + ':' + process.command_line.toUtf8() + '\n';
     }
     if (snapshot == snapshot_) return;
     snapshot_ = std::move(snapshot);
@@ -150,11 +158,8 @@ void ApplicationModel::refresh()
         application->parent = is_foreground ? foreground.get() : background.get();
         (is_foreground ? foreground->children : background->children).push_back(std::move(application));
     }
-    const auto order = [](const auto& left, const auto& right) {
-        return left->title.localeAwareCompare(right->title) < 0;
-    };
-    std::sort(foreground->children.begin(), foreground->children.end(), order);
-    std::sort(background->children.begin(), background->children.end(), order);
+    groupInstances(*foreground);
+    groupInstances(*background);
 
     beginResetModel();
     roots_.clear();
@@ -194,6 +199,7 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
             catalog_.match(key, representative->executable, representative->name));
     const DesktopEntry* entry = desktop_matches_.value(identity);
     if (entry) {
+        application->identity = QStringLiteral("desktop:") + entry->id;
         application->title = entry->name;
         if (!application_icons_.contains(entry->id))
             application_icons_.insert(entry->id, entry->icon());
@@ -201,6 +207,10 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
         application->launch_command = entry->launch_command;
         launch_commands_.insert(entry->name, entry->launch_command);
     } else {
+        // A display name alone must never merge unrelated executables.
+        application->identity = representative->executable.isEmpty()
+            ? QStringLiteral("unknown:") + key
+            : QStringLiteral("exe:") + representative->executable;
         application->title = representative->name;
         application->launch_command = representative->executable;
         if (!representative->executable.isEmpty()) {
@@ -215,8 +225,59 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
     application->subtitle = tr("%1 processes · %2")
                                 .arg(processes.size())
                                 .arg(foreground ? tr("desktop application") : key);
+    application->process_count = processes.size();
     buildProcessTree(*application, std::move(processes));
     return application;
+}
+
+void ApplicationModel::groupInstances(Node& section)
+{
+    std::vector<std::unique_ptr<Node>> grouped;
+    QHash<QString, Node*> identities;
+    for (auto& instance : section.children) {
+        Node* group = identities.value(instance->identity, nullptr);
+        if (!group) {
+            auto item = std::make_unique<Node>();
+            item->type = NodeType::Application;
+            item->id = section.id + QStringLiteral(":group:") + instance->identity;
+            item->title = instance->title;
+            item->icon = instance->icon;
+            item->launch_command = instance->launch_command;
+            item->parent = &section;
+            group = item.get();
+            identities.insert(instance->identity, group);
+            grouped.push_back(std::move(item));
+        }
+        group->process_count += instance->process_count;
+        instance->parent = group;
+        group->children.push_back(std::move(instance));
+    }
+    const auto order = [](const auto& left, const auto& right) {
+        const int comparison = left->title.localeAwareCompare(right->title);
+        return comparison == 0 ? left->id < right->id : comparison < 0;
+    };
+    for (auto& group : grouped) {
+        // Keep single-instance applications compact, preserving their stable ID.
+        if (group->children.size() == 1) {
+            auto instance = std::move(group->children.front());
+            instance->parent = &section;
+            group = std::move(instance);
+            continue;
+        }
+        int attached = 0;
+        for (auto& instance : group->children) {
+            attached += instance->routed;
+            instance->subtitle += QStringLiteral(" · ") + instance->id.mid(4);
+        }
+        group->routed = attached > 0;
+        group->partially_routed = attached > 0
+            && attached < static_cast<int>(group->children.size());
+        group->subtitle = tr("%1 instances · %2 processes")
+            .arg(group->children.size()).arg(group->process_count);
+        std::sort(group->children.begin(), group->children.end(), order);
+    }
+    std::sort(grouped.begin(), grouped.end(), order);
+    section.children = std::move(grouped);
 }
 
 void ApplicationModel::buildProcessTree(Node& application, QVector<ProcessInfo> processes)

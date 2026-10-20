@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# Run as root inside a disposable Ubuntu 26.04 build container.
+# Run as root inside a disposable Debian 12 baseline build container.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config \

@@ -16,6 +16,8 @@ applications into a stable cgroup that can be routed through a Saslik lab.
 - rejects processes that do not belong to the current user;
 - can mark traffic from `skewer-routed.slice` and policy-route it through a
   directly reachable IPv4 next hop without changing unrelated host traffic.
+- downloads the active workspace CA and manages supported local NSS and system
+  trust stores, including removal.
 
 Moving applications and configuring networking are deliberately separate.
 `Attached` means that an application is in the Skewer cgroup. `Routing active`
@@ -33,7 +35,8 @@ already-running process tree.
 
 ## Install a release
 
-Ubuntu / Kubuntu 26.04 LTS, amd64:
+Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS, amd64
+(for upcoming releases; the original 0.9.50 asset targets Ubuntu 26.04 only):
 
 ```sh
 curl -fLO https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-linux-amd64.deb
@@ -45,9 +48,17 @@ An optional fourth number denotes a stable hotfix, e.g. `0.9.50.1` and
 `0.9.50.2`. Set the complete version in CMake before tagging: the tag,
 application and DEB version must match exactly. Hotfixes are ordinary stable
 releases eligible for `latest`. Prefixes and suffixes are rejected.
-The GitHub release workflow builds and tests in Ubuntu 26.04 and publishes a
-DEB and SHA-256 checksum. The real cgroup movement test requires a local user
-systemd session and is run separately before tagging.
+The GitHub release workflow builds one DEB on Debian 12 with Qt 6.4, then
+installs the exact same artifact in every distribution listed in its `install`
+matrix: Debian 12/13 and Ubuntu 24.04/26.04. Every entry must pass dependency
+resolution, installed-file checks, dynamic library resolution and an offscreen
+GUI startup before publication. No forced dependencies or per-distribution
+rebuilds are used. The matrix runs on main, pull requests and release tags.
+Only tags publish releases. Published assets are not retroactively replaced.
+
+Container checks do not cover a real desktop polkit prompt, user systemd session
+or privileged packet forwarding. The real cgroup movement test requires a local
+user systemd session and is run separately before tagging.
 
 ## Build from source
 

@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTextStream>
@@ -13,6 +14,7 @@
 namespace {
 constexpr auto ip_binary = "/usr/sbin/ip";
 constexpr auto nft_binary = "/usr/sbin/nft";
+constexpr auto update_ca_binary = "/usr/sbin/update-ca-certificates";
 
 struct Result {
     int exit_code{-1};
@@ -166,6 +168,55 @@ int status(uid_t uid)
     QTextStream(stdout) << (active ? "active" : "inactive") << '\n';
     return active ? 0 : 3;
 }
+
+QString caTarget(const QString& identity)
+{
+    if (!QRegularExpression(QStringLiteral("^[A-Za-z0-9_.-]+$")).match(identity).hasMatch())
+        return {};
+    return QStringLiteral("/usr/local/share/ca-certificates/skewer-saslik-%1.crt").arg(identity);
+}
+
+int caInstall(uid_t uid, const QString& identity, const QString& source)
+{
+    const QString target = caTarget(identity);
+    const QFileInfo info(source);
+    QFile input(source);
+    if (target.isEmpty() || !info.isFile() || info.isSymLink() || info.ownerId() != uid
+        || info.size() <= 0 || info.size() > 1024 * 1024 || !input.open(QIODevice::ReadOnly)) {
+        QTextStream(stderr) << "skewer-net-helper: invalid CA certificate source\n";
+        return 2;
+    }
+    const QByteArray value = input.readAll();
+    if (!value.contains("-----BEGIN CERTIFICATE-----")
+        || !value.contains("-----END CERTIFICATE-----")) {
+        QTextStream(stderr) << "skewer-net-helper: source is not a PEM certificate\n";
+        return 2;
+    }
+    QFile::remove(target);
+    if (!QFile::copy(source, target)) {
+        QTextStream(stderr) << "skewer-net-helper: cannot install system certificate\n";
+        return 1;
+    }
+    QFile::setPermissions(target, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                  | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+    const Result update = run(QString::fromLatin1(update_ca_binary), {});
+    if (update.exit_code != 0) {
+        QFile::remove(target);
+        QTextStream(stderr) << "skewer-net-helper: update-ca-certificates failed: "
+                            << update.output << '\n';
+        return 1;
+    }
+    return 0;
+}
+
+int caRemove(const QString& identity)
+{
+    const QString target = caTarget(identity);
+    if (target.isEmpty()) return 2;
+    QFile::remove(target);
+    const Result update = run(QString::fromLatin1(update_ca_binary), {QStringLiteral("--fresh")});
+    return update.exit_code == 0 ? 0 : 1;
+}
 }
 
 int main(int argc, char* argv[])
@@ -181,10 +232,15 @@ int main(int argc, char* argv[])
         return 2;
     }
     const QStringList arguments = application.arguments().sliced(1);
+    if (arguments.size() == 3 && arguments.first() == QStringLiteral("ca-install"))
+        return caInstall(*uid, arguments.at(1), arguments.at(2));
+    if (arguments.size() == 2 && arguments.first() == QStringLiteral("ca-remove"))
+        return caRemove(arguments.at(1));
     if (arguments == QStringList{QStringLiteral("down")}) return down(*uid);
     if (arguments == QStringList{QStringLiteral("status")}) return status(*uid);
     if (arguments.size() == 2 && arguments.first() == QStringLiteral("up"))
         return up(*uid, arguments.at(1));
-    QTextStream(stderr) << "usage: skewer-net-helper up NEXT_HOP | down | status\n";
+    QTextStream(stderr) << "usage: skewer-net-helper up NEXT_HOP | down | status | "
+                           "ca-install IDENTITY PEM | ca-remove IDENTITY\n";
     return 2;
 }

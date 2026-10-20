@@ -32,7 +32,9 @@ to tuntom, WireGuard, OpenVPN or the future Saslik VM.
 - Let the user enter a Saslik URL and establish an explicitly trusted connection.
 - Discover the remote workspace/identity and advertised service endpoints.
 - Show Saslik and Smithproxy health and compatibility before routing traffic.
-- Download the active CA certificate and offer installation into supported
-  local trust stores.
+- [x] Download the active CA certificate and offer installation/removal in
+  explicitly supported local NSS and system trust stores.
+- Discover additional application trust stores locally and advertise them to
+  Saslik through a future authenticated Skewer capability channel.
 - Keep API credentials out of URLs and use a bootstrap/exchange flow when the
   Saslik API defines one.

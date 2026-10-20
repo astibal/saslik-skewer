@@ -49,5 +49,43 @@ int main(int argc, char** argv)
         return 3;
     }
     model.refresh();
+    ProcessInfo first, second, helper, unrelated;
+    first.pid = 100; first.name = QStringLiteral("skewer-test-app");
+    first.executable = QStringLiteral("/opt/test-one/skewer-test-app");
+    first.cgroup = QStringLiteral("/app-first.scope");
+    second = first; second.pid = 200;
+    second.cgroup = QStringLiteral("/skewer-routed.slice/app-second.scope");
+    helper = first; helper.pid = 101; helper.parent_pid = 100;
+    unrelated = first; unrelated.pid = 300;
+    unrelated.executable = QStringLiteral("/opt/test-two/skewer-test-app");
+    unrelated.cgroup = QStringLiteral("/app-third.scope");
+    model.setProcesses({first, helper, second, unrelated});
+    const auto section = model.index(0, 0);
+    if (model.rowCount(section) != 2) return 6;
+    QModelIndex group;
+    for (int row = 0; row < model.rowCount(section); ++row) {
+        const auto candidate = model.index(row, 0, section);
+        if (candidate.data(ApplicationModel::ProcessIdsRole).toList().size() == 3)
+            group = candidate;
+    }
+    if (!group.isValid() || model.rowCount(group) != 2
+        || !group.data(ApplicationModel::PartiallyRoutedRole).toBool()) return 7;
+    const QString stable_id = group.data(ApplicationModel::StableIdRole).toString();
+    for (int row = 0; row < model.rowCount(group); ++row) {
+        const auto instance = model.index(row, 0, group);
+        if (model.parent(instance) != group) return 8;
+    }
+    first.cgroup = second.cgroup + QStringLiteral("/separate.scope");
+    helper.cgroup = first.cgroup;
+    model.setProcesses({unrelated, second, first, helper});
+    bool found = false;
+    for (int row = 0; row < model.rowCount(model.index(0, 0)); ++row) {
+        const auto candidate = model.index(row, 0, model.index(0, 0));
+        if (candidate.data(ApplicationModel::StableIdRole).toString() != stable_id) continue;
+        found = true;
+        if (!candidate.data(ApplicationModel::RoutedRole).toBool()
+            || candidate.data(ApplicationModel::PartiallyRoutedRole).toBool()) return 9;
+    }
+    if (!found) return 10;
     return 0;
 }

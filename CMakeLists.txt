@@ -10,7 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Network Widgets Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Network Widgets Test)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(NCURSESW REQUIRED IMPORTED_TARGET ncursesw)
@@ -22,6 +22,8 @@ add_executable(skewer
     src/application_model.hpp
     src/cgroup_manager.cpp
     src/cgroup_manager.hpp
+    src/ca_store.cpp
+    src/ca_store.hpp
     src/desktop_catalog.cpp
     src/desktop_catalog.hpp
     src/main_window.cpp
@@ -81,6 +83,14 @@ if(BUILD_TESTING)
     target_compile_options(routing_plan_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME routing_plan COMMAND routing_plan_test)
 
+    add_executable(ca_store_test tests/ca_store_test.cpp src/ca_store.cpp src/ca_store.hpp)
+    target_include_directories(ca_store_test PRIVATE src)
+    target_link_libraries(ca_store_test PRIVATE Qt6::Core)
+    target_compile_options(ca_store_test PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_definitions(ca_store_test PRIVATE
+        SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
+    add_test(NAME ca_store COMMAND ca_store_test)
+
     add_executable(application_model_test
         tests/application_model_test.cpp
         src/application_model.cpp
@@ -95,6 +105,20 @@ if(BUILD_TESTING)
     target_compile_options(application_model_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME application_model COMMAND application_model_test)
     set_tests_properties(application_model PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(saslik_status_test
+        tests/saslik_status_test.cpp
+        src/main_window.cpp src/main_window.hpp
+        src/ca_store.cpp src/ca_store.hpp
+        src/application_model.cpp src/application_model.hpp
+        src/cgroup_manager.cpp src/cgroup_manager.hpp
+        src/desktop_catalog.cpp src/process_scanner.cpp
+        src/routing_controller.cpp src/routing_plan.cpp)
+    target_include_directories(saslik_status_test PRIVATE src)
+    target_link_libraries(saslik_status_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Test PkgConfig::SYSTEMD)
+    target_compile_definitions(saslik_status_test PRIVATE
+        SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
+    add_test(NAME saslik_status COMMAND saslik_status_test)
+    set_tests_properties(saslik_status PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 set(CPACK_GENERATOR DEB)
@@ -104,7 +128,8 @@ set(CPACK_PACKAGE_CONTACT "Ales Stibal <astib@mag0.net>")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Application traffic selector for Saslik")
 set(CPACK_DEBIAN_PACKAGE_SECTION net)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, nftables, polkitd, pkexec, sudo, systemd, libqt6svg6, qt6-svg-plugins, qt6-qpa-plugins, qt6-wayland")
+# Qt 6.4 ships its SVG plugins inside libqt6svg6; newer releases split them out.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "iproute2, nftables, polkitd, pkexec, sudo, systemd, ca-certificates, libnss3-tools, libqt6svg6, qt6-svg-plugins | libqt6svg6 (<< 6.5), qt6-qpa-plugins, qt6-wayland")
 set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
 set(CPACK_PACKAGE_FILE_NAME "skewer-linux-amd64")
 include(CPack)
