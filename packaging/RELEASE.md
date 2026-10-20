@@ -1,5 +1,14 @@
 Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
 
+### 0.9.50.1
+
+- Dedicated CA Trust tab with exact-certificate installation/removal, Snap
+  revision filters, sortable compact rows and application trust indicators.
+- Background CA discovery and trust reporting to Saslik.
+- Close-to-tray preference (enabled by default), dark-mode monochrome icon
+  and live routing status in the tray tooltip. Use Quit to exit the UI.
+- Package smoke tests also verify the isolated NSS helper.
+
 Download `skewer-linux-amd64.deb`, then install it with:
 
 ```sh
