@@ -4,9 +4,11 @@
 #include "routing_controller.hpp"
 
 #include <QMainWindow>
+#include <QJsonObject>
 #include <QSet>
 
 class ApplicationModel;
+class CaTrustPanel;
 class QLineEdit;
 class QLabel;
 class QPushButton;
@@ -18,6 +20,8 @@ class QStringListModel;
 class QTreeView;
 class QCloseEvent;
 class QTimer;
+class QSystemTrayIcon;
+class QAction;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -27,6 +31,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private slots:
     void launchCommand();
@@ -48,7 +53,13 @@ private slots:
 private:
     [[nodiscard]] QString currentNextHop() const;
     [[nodiscard]] bool usesSaslikUrl() const;
+    void sendTrustReport();
+    void updateTrayIcon();
+    QSystemTrayIcon* tray_{};
+    QAction* close_to_tray_{};
+    bool quitting_{};
     ApplicationModel* model_{};
+    CaTrustPanel* ca_panel_{};
     QSortFilterProxyModel* filtered_model_{};
     QTreeView* tree_{};
     QLineEdit* search_{};
@@ -66,6 +77,9 @@ private:
     QLabel* routing_status_bar_{};
     QTimer* routing_watchdog_{};
     QNetworkAccessManager* network_{};
+    QNetworkAccessManager* report_network_{};
+    QJsonObject trust_report_;
+    qint64 last_trust_report_ms_{};
     QSet<QString> expanded_items_;
     QString selected_item_;
     bool restored_once_{};
@@ -73,6 +87,7 @@ private:
     bool routing_repairing_{};
     qint64 last_routing_repair_ms_{};
     bool discovery_request_pending_{};
+    bool saslik_reachable_{};
     bool discovery_online_{};
     QString discovery_gateway_;
     QString discovery_interface_;

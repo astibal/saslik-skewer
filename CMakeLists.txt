@@ -10,10 +10,20 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Network Widgets Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Network Widgets Test Concurrent)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(NCURSESW REQUIRED IMPORTED_TARGET ncursesw)
+find_path(NSS_INCLUDE_DIR cert.h PATH_SUFFIXES nss REQUIRED)
+find_path(NSPR_INCLUDE_DIR prtypes.h PATH_SUFFIXES nspr REQUIRED)
+find_library(NSS_LIBRARY nss3 REQUIRED)
+find_library(NSPR_LIBRARY nspr4 REQUIRED)
+add_executable(skewer-nss-helper src/nss_helper.cpp)
+target_include_directories(skewer-nss-helper PRIVATE ${NSS_INCLUDE_DIR} ${NSPR_INCLUDE_DIR})
+target_link_libraries(skewer-nss-helper PRIVATE Qt6::Network ${NSS_LIBRARY} ${NSPR_LIBRARY})
+target_compile_options(skewer-nss-helper PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(skewer-nss-helper PRIVATE QT_NO_KEYWORDS)
+install(TARGETS skewer-nss-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 
 add_executable(skewer
     data/icons.qrc
@@ -24,6 +34,7 @@ add_executable(skewer
     src/cgroup_manager.hpp
     src/ca_store.cpp
     src/ca_store.hpp
+    src/ca_panel.cpp src/ca_panel.hpp
     src/desktop_catalog.cpp
     src/desktop_catalog.hpp
     src/main_window.cpp
@@ -40,17 +51,19 @@ add_executable(skewer
 
 add_executable(skewer-net-helper
     src/net_helper.cpp
+    src/ca_store.cpp src/ca_store.hpp
     src/routing_plan.cpp
     src/routing_plan.hpp
 )
 
-target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets PkgConfig::SYSTEMD PkgConfig::NCURSESW)
+target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets Qt6::Concurrent PkgConfig::SYSTEMD PkgConfig::NCURSESW)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer PRIVATE
     SKEWER_VERSION="${PROJECT_VERSION}"
     SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 target_link_libraries(skewer-net-helper PRIVATE Qt6::Core Qt6::Network)
 target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_definitions(skewer-net-helper PRIVATE SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 
 install(TARGETS skewer RUNTIME DESTINATION bin)
 install(TARGETS skewer-net-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
@@ -85,11 +98,12 @@ if(BUILD_TESTING)
 
     add_executable(ca_store_test tests/ca_store_test.cpp src/ca_store.cpp src/ca_store.hpp)
     target_include_directories(ca_store_test PRIVATE src)
-    target_link_libraries(ca_store_test PRIVATE Qt6::Core)
+    target_link_libraries(ca_store_test PRIVATE Qt6::Network)
     target_compile_options(ca_store_test PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_definitions(ca_store_test PRIVATE
         SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
     add_test(NAME ca_store COMMAND ca_store_test)
+    add_dependencies(ca_store_test skewer-nss-helper)
 
     add_executable(application_model_test
         tests/application_model_test.cpp
@@ -109,13 +123,15 @@ if(BUILD_TESTING)
         tests/saslik_status_test.cpp
         src/main_window.cpp src/main_window.hpp
         src/ca_store.cpp src/ca_store.hpp
+        src/ca_panel.cpp src/ca_panel.hpp
         src/application_model.cpp src/application_model.hpp
         src/cgroup_manager.cpp src/cgroup_manager.hpp
         src/desktop_catalog.cpp src/process_scanner.cpp
         src/routing_controller.cpp src/routing_plan.cpp)
     target_include_directories(saslik_status_test PRIVATE src)
-    target_link_libraries(saslik_status_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Test PkgConfig::SYSTEMD)
+    target_link_libraries(saslik_status_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test PkgConfig::SYSTEMD)
     target_compile_definitions(saslik_status_test PRIVATE
+        SKEWER_VERSION="${PROJECT_VERSION}"
         SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
     add_test(NAME saslik_status COMMAND saslik_status_test)
     set_tests_properties(saslik_status PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

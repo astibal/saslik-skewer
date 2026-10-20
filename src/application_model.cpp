@@ -69,6 +69,9 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
         return pids;
     }
     if (role == Qt::DisplayRole) {
+        if (model_index.column() == CaColumn && item->type == NodeType::Application)
+            return ca_fingerprint_.isEmpty() ? QStringLiteral("-")
+                : ca_statuses_.value(item->identity, QStringLiteral("-"));
         if (model_index.column() == NameColumn) return item->title;
         if (model_index.column() == ProcessIdColumn && item->type == NodeType::Process)
             return item->process.pid;
@@ -79,6 +82,12 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
     }
     if (role == Qt::DecorationRole && model_index.column() == NameColumn && !item->icon.isNull())
         return item->icon;
+    if (role == Qt::ToolTipRole && model_index.column() == CaColumn)
+        return tr("Selected CA: %1\nLast scan of mapped profiles only; this does not verify the application's active TLS connections.")
+            .arg(ca_fingerprint_.isEmpty() ? tr("none") : ca_fingerprint_);
+    if (role == Qt::ForegroundRole && model_index.column() == CaColumn
+        && ca_statuses_.value(item->identity).contains("missing", Qt::CaseInsensitive))
+        return QBrush(QColor("#dc9930"));
     if (role == Qt::ToolTipRole)
         return item->type == NodeType::Process ? item->process.command_line : item->subtitle;
     if (role == Qt::FontRole && item->type != NodeType::Process
@@ -99,6 +108,7 @@ QVariant ApplicationModel::headerData(int section, Qt::Orientation orientation, 
     case NameColumn: return tr("Application / process");
     case ProcessIdColumn: return tr("PID");
     case RoutingColumn: return tr("Routing");
+    case CaColumn: return tr("CA trust · profiles");
     case CommandColumn: return tr("Identity / command");
     default: return {};
     }
@@ -109,6 +119,19 @@ QStringList ApplicationModel::launcherSuggestions() const
     QStringList result = launch_commands_.keys();
     result.sort(Qt::CaseInsensitive);
     return result;
+}
+void ApplicationModel::setCaStatus(const QHash<QString, QString>& statuses, const QString& fingerprint)
+{
+    ca_statuses_ = statuses;
+    ca_fingerprint_ = fingerprint;
+    const auto update = [this](const auto& self, const QModelIndex& parent) -> void {
+        for (int row = 0; row < rowCount(parent); ++row) {
+            const auto cell = index(row, CaColumn, parent);
+            emit dataChanged(cell, cell);
+            self(self, index(row, 0, parent));
+        }
+    };
+    update(update, {});
 }
 
 QString ApplicationModel::resolveLaunchCommand(const QString& text) const
@@ -241,6 +264,7 @@ void ApplicationModel::groupInstances(Node& section)
             item->type = NodeType::Application;
             item->id = section.id + QStringLiteral(":group:") + instance->identity;
             item->title = instance->title;
+            item->identity = instance->identity;
             item->icon = instance->icon;
             item->launch_command = instance->launch_command;
             item->parent = &section;

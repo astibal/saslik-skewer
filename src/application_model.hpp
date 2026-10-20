@@ -14,7 +14,7 @@ class ApplicationModel final : public QAbstractItemModel {
     Q_OBJECT
 
 public:
-    enum Column { NameColumn, ProcessIdColumn, RoutingColumn, CommandColumn, ColumnCount };
+    enum Column { NameColumn, ProcessIdColumn, RoutingColumn, CaColumn, CommandColumn, ColumnCount };
     enum Role {
         StableIdRole = Qt::UserRole + 1,
         NodeTypeRole,
@@ -46,6 +46,7 @@ signals:
 public slots:
     void refresh();
     void setProcesses(const QVector<ProcessInfo>& processes);
+    void setCaStatus(const QHash<QString, QString>& statuses, const QString& fingerprint);
 
 private:
     struct Node {
@@ -80,4 +81,6 @@ private:
     QHash<QString, QIcon> application_icons_;
     QByteArray snapshot_;
     QTimer refresh_timer_;
+    QHash<QString, QString> ca_statuses_;
+    QString ca_fingerprint_;
 };

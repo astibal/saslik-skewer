@@ -24,6 +24,41 @@ Moving applications and configuring networking are deliberately separate.
 means that nftables marking and the dedicated policy-routing table are also
 installed. No remote transport is provided yet.
 
+## CA Trust
+
+The separate **CA Trust** tab fetches a public CA from Saslik or opens a saved
+PEM file for offline cleanup. Verify the displayed SHA-256 fingerprint out of
+band before granting trust, especially when downloading over plain HTTP.
+Discovery never installs a certificate. Installation targets one selected NSS
+profile or the shared system store and requires explicit confirmation.
+Shared NSS/system stores can affect corporate clients such as Teams; application
+discovery is only a heuristic inventory, not a claim that each application has
+its own supported store. Certificate pinning is not bypassed.
+
+**Scan and remove this CA from all…** rescans first and previews matching
+nicknames and local system anchor paths. Removal rechecks the exact certificate
+fingerprint, never just its name. System changes use Polkit. Each target reports
+success or failure; inaccessible NSS records remain unverified.
+The isolated NSS helper selects the exact DER certificate, including when
+multiple certificates share the same subject or nickname.
+Close affected applications before changing their databases and restart them
+afterward; existing TLS sessions cannot be revoked by deleting a trust anchor.
+
+Scanning is bounded to the current user's Mozilla, Thunderbird, LibreWolf,
+Snap, Flatpak, `.config` and shared NSS directories, without following symlinks
+or entering caches. System removal covers root-owned local `.crt` anchors under
+`/usr/local/share/ca-certificates`, not distribution-managed roots, other users,
+Java stores or arbitrary application-specific certificate formats. Save the CA
+before switching labs if you will need to remove it later.
+
+Snap stores show the application name/icon, revision and `current`,
+`retained (not current)` or `common (shared)` classification. Classification is
+read again on each scan from the validated `current` symlink; revision numbers
+are not interpreted as chronological order. Missing or invalid links are shown
+as `current unknown`. A current revision is not proof that no older process is
+running. Symlink aliases are not scanned twice, and mutations always target the
+explicit real database path shown in the confirmation.
+
 The next networking milestone is intentionally smaller: route traffic from the
 Skewer cgroup toward a configurable, directly reachable next-hop IP. A dynamic
 authenticated tuntom client is a later transport option, planned for the Saslik

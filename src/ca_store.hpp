@@ -1,32 +1,23 @@
 #pragma once
-
-#include <QString>
+#include <QSslCertificate>
 #include <QStringList>
 #include <QVector>
-
 struct CaStore {
-    QString key;
-    QString label;
-    QStringList databases;
-    bool system{};
-    bool available{};
-    bool installed{};
+    QString key, label, path;
+    QStringList matches;
+    bool system{}, available{}, installed{};
+    QString detail;
+    QString snap_name, snap_revision, snap_state;
 };
-
+// Every operation is bound to immutable certificate bytes, never a workspace name.
 class CaStoreManager {
 public:
-    explicit CaStoreManager(QString identity);
-
+    explicit CaStoreManager(QSslCertificate certificate);
+    static QSslCertificate parse(const QByteArray& pem);
+    [[nodiscard]] QString fingerprint() const;
     [[nodiscard]] QVector<CaStore> stores() const;
-    [[nodiscard]] bool install(const QString& key, const QString& certificate, QString& error) const;
-    [[nodiscard]] bool remove(const QString& key, QString& error) const;
-
+    [[nodiscard]] bool install(const CaStore& store, QString& error) const;
+    [[nodiscard]] bool remove(const CaStore& store, QString& error) const;
 private:
-    [[nodiscard]] QString nickname() const;
-    [[nodiscard]] QVector<CaStore> discovered() const;
-    [[nodiscard]] bool modifyNss(const CaStore& store, const QString& certificate,
-                                 bool remove, QString& error) const;
-    [[nodiscard]] bool modifySystem(const QString& certificate, bool remove,
-                                    QString& error) const;
-    QString identity_;
+    QSslCertificate certificate_;
 };

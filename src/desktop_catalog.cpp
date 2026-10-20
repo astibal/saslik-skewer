@@ -35,6 +35,8 @@ void DesktopCatalog::reload()
     entries_.clear();
     QSet<QString> seen;
     QStringList roots = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+    // A launcher started outside a desktop session may lack Snap's XDG path.
+    roots << QStringLiteral("/var/lib/snapd/desktop/applications");
     roots.removeDuplicates();
     for (const QString& root : roots) {
         const auto files = QDir(root).entryInfoList({QStringLiteral("*.desktop")}, QDir::Files);
