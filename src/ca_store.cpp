@@ -1,5 +1,6 @@
 #include "ca_store.hpp"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
@@ -43,6 +44,14 @@ bool run(const QString& program, const QStringList& arguments, QString& error)
         return false;
     }
     return true;
+}
+
+QString helperPath()
+{
+    const QString adjacent = QCoreApplication::applicationDirPath()
+        + QStringLiteral("/skewer-net-helper");
+    if (QFileInfo(adjacent).isExecutable()) return adjacent;
+    return QString::fromLatin1(SKEWER_INSTALLED_HELPER_PATH);
 }
 }
 
@@ -127,10 +136,22 @@ bool CaStoreManager::modifyNss(const CaStore& store, const QString& certificate,
 
 bool CaStoreManager::modifySystem(const QString& certificate, bool remove, QString& error) const
 {
-    QStringList arguments{QString::fromLatin1(SKEWER_INSTALLED_HELPER_PATH),
+    const QString helper = helperPath();
+    if (!QFileInfo(helper).isExecutable()) {
+        error = QStringLiteral("Skewer privileged helper is missing: %1. "
+                               "Build the skewer-net-helper target or install the Skewer package.")
+                    .arg(helper);
+        return false;
+    }
+    const QString pkexec = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
+    if (pkexec.isEmpty()) {
+        error = QStringLiteral("pkexec is not installed");
+        return false;
+    }
+    QStringList arguments{helper,
                           remove ? QStringLiteral("ca-remove") : QStringLiteral("ca-install"), identity_};
     if (!remove) arguments << certificate;
-    return run(QStandardPaths::findExecutable(QStringLiteral("pkexec")), arguments, error);
+    return run(pkexec, arguments, error);
 }
 
 bool CaStoreManager::install(const QString& key, const QString& certificate, QString& error) const
