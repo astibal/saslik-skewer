@@ -1,5 +1,6 @@
 #include "routing_plan.hpp"
 #include "ca_store.hpp"
+#include "socket_cleanup.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -111,7 +112,7 @@ void cleanup(const RoutingPlan& plan)
     for (const auto& command : plan.cleanup) execute(command, ignored);
 }
 
-int up(uid_t uid, const QString& next_hop)
+int up(uid_t uid, const QString& next_hop, const QStringList& exemptions)
 {
     QString error;
     const QString interface_name = interfaceFor(next_hop, error);
@@ -124,7 +125,7 @@ int up(uid_t uid, const QString& next_hop)
         QTextStream(stderr) << "skewer-net-helper: " << error << '\n';
         return 2;
     }
-    const RoutingPlan plan = RoutingPlanner::create(uid, next_hop, interface_name, level);
+    const RoutingPlan plan = RoutingPlanner::create(uid, next_hop, interface_name, level, exemptions);
     if (!plan.valid) {
         QTextStream(stderr) << "skewer-net-helper: " << plan.error << '\n';
         return 2;
@@ -294,14 +295,28 @@ int main(int argc, char* argv[])
         return 2;
     }
     const QStringList arguments = application.arguments().sliced(1);
+    if (!arguments.isEmpty() && (arguments[0] == "cleanup-tcp" || arguments[0] == "preview-tcp"))
+        return cleanupSockets(*uid, arguments.sliced(1), arguments[0] == "preview-tcp");
     if (arguments.size() == 3 && arguments.first() == QStringLiteral("ca-install"))
         return caInstall(*uid, arguments.at(1), arguments.at(2));
     if (arguments.size() == 3 && arguments.first() == QStringLiteral("ca-remove"))
         return caRemove(arguments.at(1), arguments.at(2));
     if (arguments == QStringList{QStringLiteral("down")}) return down(*uid);
     if (arguments == QStringList{QStringLiteral("status")}) return status(*uid);
-    if (arguments.size() == 2 && arguments.first() == QStringLiteral("up"))
-        return up(*uid, arguments.at(1));
+    if (!arguments.isEmpty() && arguments.first() == "exemptions") {
+        QStringList normalized; QString error;
+        if (!RoutingPlanner::normalizeExemptions(arguments.sliced(1), normalized, error)) {
+            QTextStream(stderr) << error << '\n'; return 2;
+        }
+        const Result result = run(QString::fromLatin1(nft_binary), {"-f", "-"},
+            RoutingPlanner::exemptionUpdate(*uid, normalized).toUtf8());
+        QTextStream(result.exit_code == 0 ? stdout : stderr) << result.output;
+        if (result.exit_code != 0)
+            QTextStream(stderr) << "No exceptions were changed. If routing was started by an older Skewer, disable and enable routing once.\n";
+        return result.exit_code == 0 ? 0 : 1;
+    }
+    if (arguments.size() >= 2 && arguments.first() == QStringLiteral("up"))
+        return up(*uid, arguments.at(1), arguments.sliced(2));
     QTextStream(stderr) << "usage: skewer-net-helper up NEXT_HOP | down | status | "
                            "ca-install SHA256 PEM | ca-remove SHA256 LOCAL_ANCHOR\n";
     return 2;

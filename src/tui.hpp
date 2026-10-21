@@ -4,7 +4,7 @@
 #include "cgroup_manager.hpp"
 #include "routing_controller.hpp"
 
-#include <QModelIndex>
+#include <QPersistentModelIndex>
 #include <QSet>
 
 class Tui {
@@ -12,9 +12,11 @@ public:
     int run();
 
 private:
+    friend class TuiTest;
     struct Row {
-        QModelIndex index;
+        QPersistentModelIndex index;
         int depth{};
+        QString stable_id;
     };
 
     void rebuildRows();
@@ -23,6 +25,7 @@ private:
     void toggleExpanded();
     void changeRouting(bool routed);
     void launch();
+    void shell();
     void configureRouting();
     void disableRouting();
     [[nodiscard]] QString prompt(const QString& label);

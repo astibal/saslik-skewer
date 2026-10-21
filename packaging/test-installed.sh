@@ -7,11 +7,12 @@ apt-get install -y --no-install-recommends /packages/skewer-linux-amd64.deb
 skewer --version
 test -x /usr/libexec/skewer-net-helper
 test -x /usr/libexec/skewer-nss-helper
+test -x /usr/libexec/skewer-session
 test -f /usr/share/polkit-1/actions/org.saslik.skewer.policy
 test -f /usr/share/icons/hicolor/scalable/apps/org.saslik.Skewer.svg
 # Package names differ across distributions, but the icon engine must exist.
 test -f /usr/lib/x86_64-linux-gnu/qt6/plugins/iconengines/libqsvgicon.so
-for binary in /usr/bin/skewer /usr/libexec/skewer-net-helper /usr/libexec/skewer-nss-helper; do
+for binary in /usr/bin/skewer /usr/libexec/skewer-net-helper /usr/libexec/skewer-nss-helper /usr/libexec/skewer-session; do
     dependencies=$(ldd "$binary")
     if [[ "$dependencies" == *'not found'* ]]; then
         printf '%s\n' "$dependencies"

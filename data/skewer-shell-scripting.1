@@ -1,0 +1,64 @@
+.TH SKEWER-SHELL-SCRIPTING 1
+.SH NAME
+skewer-shell-scripting \- working and scripting in a Skewer session
+.SH SYNOPSIS
+.B skewer shell
+.br
+.B skewer run -- PROGRAM [ARGUMENTS...]
+.br
+.B skewer status | env | check
+.RI [ --json ]
+.SH DESCRIPTION
+Skewer retains your normal shell and adds a routed cgroup, a process guard,
+session variables and, for Bash, a status marker. It is not a container.
+Closing the GUI does not disable routing or stop applications.
+.SH COMMANDS
+.B attach PID... [--cleanup|--no-cleanup] [--yes]
+attaches explicitly selected processes. Cleanup defaults to the shared GUI
+setting (off initially). Children are not implicitly selected by this command.
+.PP
+.B cleanup PID... [--dry-run] [--yes]
+closes existing TCP sockets outside Skewer for the specified attached processes.
+Requires privilege authorization. The helper verifies UID, process start time,
+current membership, socket ownership and kernel cookie. UDP and listeners are
+untouched. --dry-run only reports eligible sockets. Scripts require --yes for
+destructive cleanup; interactive sessions ask for confirmation.
+Transfers may be interrupted and applications are NOT guaranteed to reconnect.
+.PP
+.B status
+reports a fresh observation of the calling process cgroup, policy route
+and configured Saslik API. It does not read the prompt's cached status.
+.PP
+.B env
+lists public session variables. Output is informational, not shell source;
+do not eval it. Use --json for machine-readable output.
+.PP
+.B check
+performs the same control-plane checks and exits 0 for an active route
+(with API availability when configured), 1 for an unavailable or unknown
+state, and 2 for invalid arguments. --require-routed explicitly requests
+this default behavior. This is NOT an end-to-end traffic test.
+.SH EXAMPLE
+.nf
+#!/usr/bin/env bash
+set -euo pipefail
+skewer check --require-routed || exit 1
+curl https://example.com
+.fi
+.PP
+Launch the script with skewer run -- ./script.sh, or from skewer shell.
+A successful check does not guarantee the route will remain available.
+.SH ENVIRONMENT
+SKEWER_SESSION identifies a session. SKEWER_CGROUP is its original cgroup.
+SKEWER_GATEWAY and SKEWER_API_URL describe configuration at launch time.
+SKEWER_CA_FILE names the selected runtime CA, if configured.
+These variables are not live health indicators. No API credentials are exported.
+.SH LIMITATIONS
+Existing sockets retain their original routing association. The guard
+repairs the root process throughout its lifetime and newly discovered
+descendants for five seconds. Polling is not leak prevention: an application
+can create a socket before repair. IPv6 and destination exemptions may
+bypass the IPv4 route. The prompt is a cached control-plane indication,
+not proof of interception. Use an actual traffic test for that.
+.SH HELP
+man skewer-shell-scripting

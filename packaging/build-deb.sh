@@ -4,7 +4,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config \
-    qt6-base-dev libsystemd-dev libncurses-dev libnss3-dev libnspr4-dev dpkg-dev file ca-certificates libnss3-tools openssl
+    qt6-base-dev libsystemd-dev libncurses-dev libnss3-dev libnspr4-dev libssl-dev dpkg-dev file ca-certificates libnss3-tools openssl
 cmake -S /src -B /tmp/skewer-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr
 cmake --build /tmp/skewer-build --parallel 2

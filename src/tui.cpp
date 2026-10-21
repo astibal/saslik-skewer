@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QSettings>
+#include <QThread>
 
 #include <ncurses.h>
 
@@ -56,11 +57,12 @@ int Tui::run()
         case KEY_UP: case 'k': moveSelection(-1); break;
         case KEY_DOWN: case 'j': moveSelection(1); break;
         case KEY_RIGHT: case '\n': case ' ': toggleExpanded(); break;
-        case 's': changeRouting(true); break;
+        case 'a': case 'A': changeRouting(true); break;
         case 'd': changeRouting(false); break;
         case 'g': configureRouting(); break;
         case 'x': disableRouting(); break;
         case 'n': launch(); break;
+        case '!': shell(); break;
         case 'r': model_.refresh(); rebuildRows(); refresh.restart(); break;
         case KEY_RESIZE: break;
         case 'q': case 27: running = false; break;
@@ -75,13 +77,15 @@ void Tui::rebuildRows()
 {
     const QString selected_id = rows_.isEmpty() ? QString{}
         : rows_.at(std::clamp(selected_, 0, static_cast<int>(rows_.size()) - 1))
-              .index.data(ApplicationModel::StableIdRole).toString();
+              .stable_id;
     rows_.clear();
     const auto visit = [this](const auto& self, const QModelIndex& parent, int depth) -> void {
         for (int row = 0; row < model_.rowCount(parent); ++row) {
             const QModelIndex index = model_.index(row, 0, parent);
-            rows_.push_back({index, depth});
             const QString id = index.data(ApplicationModel::StableIdRole).toString();
+            // Model resets invalidate indexes; preserve selection by value,
+            // never by dereferencing a node from the previous snapshot.
+            rows_.push_back({QPersistentModelIndex(index), depth, id});
             if (expanded_.contains(id)) self(self, index, depth + 1);
         }
     };
@@ -141,7 +145,7 @@ void Tui::draw()
     const QByteArray status = clipped(status_, width - 4).toLocal8Bit();
     mvaddnstr(height - 3, 2, status.constData(), width - 4);
     mvaddnstr(height - 2, 2,
-              "Enter expand  S attach  D release  G gateway  X routing off  N launch  R refresh  Q quit", width - 4);
+              "Enter expand  A attach  D release  G gateway  X off  N launch  ! shell  R refresh  Q quit", width - 4);
     refresh();
 }
 
@@ -196,10 +200,17 @@ void Tui::changeRouting(bool routed)
         status_ = QStringLiteral("Select an application, not an individual helper process");
         return;
     }
+    const auto pids = selectedPids();
     const CgroupResult result = routed
-        ? cgroups_.route(selectedPids(), index.data().toString())
-        : cgroups_.release(selectedPids(), index.data().toString());
+        ? cgroups_.route(pids, index.data().toString())
+        : cgroups_.release(pids, index.data().toString());
     status_ = result.detail;
+    if (result.ok && routed && QSettings().value("connections/cleanupOnAttach",false).toBool()) {
+        def_prog_mode(); endwin();
+        QThread::msleep(500);
+        const auto cleaned = RoutingController().cleanupTcp(pids,RoutingController::Authorization::Terminal);
+        reset_prog_mode(); refresh(); status_ = cleaned.detail;
+    }
     if (result.ok) { model_.refresh(); rebuildRows(); }
 }
 
@@ -215,6 +226,27 @@ void Tui::launch()
     const QString program = invocation.takeFirst();
     status_ = QProcess::startDetached(program, invocation)
         ? QStringLiteral("Application launched") : QStringLiteral("Launch failed");
+}
+
+void Tui::shell()
+{
+    def_prog_mode();
+    endwin();
+    auto invocation = CgroupManager::routedLaunchPrefix("shell", true);
+    const auto program = invocation.takeFirst();
+    QProcess process;
+    process.setProcessChannelMode(QProcess::ForwardedChannels);
+    process.setInputChannelMode(QProcess::ForwardedInputChannel);
+    process.start(program, invocation);
+    if (!process.waitForStarted()) status_ = "Cannot start Skewer shell: " + process.errorString();
+    else {
+        process.waitForFinished(-1);
+        status_ = QString("Skewer shell exited (%1)").arg(process.exitCode());
+    }
+    reset_prog_mode();
+    refresh();
+    model_.refresh();
+    rebuildRows();
 }
 
 QString Tui::prompt(const QString& label)

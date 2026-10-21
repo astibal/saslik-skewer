@@ -12,6 +12,7 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Network Widgets Test Concurrent)
 find_package(PkgConfig REQUIRED)
+find_package(OpenSSL 3.0 REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 pkg_check_modules(NCURSESW REQUIRED IMPORTED_TARGET ncursesw)
 find_path(NSS_INCLUDE_DIR cert.h PATH_SUFFIXES nss REQUIRED)
@@ -24,10 +25,23 @@ target_link_libraries(skewer-nss-helper PRIVATE Qt6::Network ${NSS_LIBRARY} ${NS
 target_compile_options(skewer-nss-helper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer-nss-helper PRIVATE QT_NO_KEYWORDS)
 install(TARGETS skewer-nss-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+add_executable(skewer-session src/session_main.cpp src/session_guard.hpp src/session_status.cpp src/routing_plan.cpp src/pairing.cpp)
+target_link_libraries(skewer-session PRIVATE Qt6::Network PkgConfig::SYSTEMD)
+target_link_libraries(skewer-session PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+target_compile_options(skewer-session PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS skewer-session RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+configure_file(data/skewer.bashrc skewer.bashrc COPYONLY)
+install(FILES data/skewer.bashrc DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
+configure_file(data/skewer-prompt.bash skewer-prompt.bash COPYONLY)
+install(FILES data/skewer-prompt.bash DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 
 add_executable(skewer
     data/icons.qrc
     src/main.cpp
+    src/pairing.cpp
+    src/launcher.cpp
+    src/connections.cpp
+    src/session_status.cpp
     src/application_model.cpp
     src/application_model.hpp
     src/cgroup_manager.cpp
@@ -35,6 +49,7 @@ add_executable(skewer
     src/ca_store.cpp
     src/ca_store.hpp
     src/ca_panel.cpp src/ca_panel.hpp
+    src/runtime_trust.cpp src/runtime_trust.hpp
     src/desktop_catalog.cpp
     src/desktop_catalog.hpp
     src/main_window.cpp
@@ -51,12 +66,15 @@ add_executable(skewer
 
 add_executable(skewer-net-helper
     src/net_helper.cpp
+    src/socket_cleanup.cpp
     src/ca_store.cpp src/ca_store.hpp
     src/routing_plan.cpp
     src/routing_plan.hpp
 )
+add_dependencies(skewer skewer-session)
 
 target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets Qt6::Concurrent PkgConfig::SYSTEMD PkgConfig::NCURSESW)
+target_link_libraries(skewer PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer PRIVATE
     SKEWER_VERSION="${PROJECT_VERSION}"
@@ -66,6 +84,7 @@ target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer-net-helper PRIVATE SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 
 install(TARGETS skewer RUNTIME DESTINATION bin)
+install(FILES data/skewer-shell-scripting.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 install(TARGETS skewer-net-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 install(FILES data/org.saslik.Skewer.desktop DESTINATION share/applications)
 install(FILES data/org.saslik.Skewer.svg DESTINATION share/icons/hicolor/scalable/apps)
@@ -76,6 +95,34 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.saslik.skewer.policy
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(socket_cleanup_test tests/socket_cleanup_test.cpp src/socket_cleanup.cpp)
+    target_include_directories(socket_cleanup_test PRIVATE src)
+    target_link_libraries(socket_cleanup_test PRIVATE Qt6::Core)
+    add_test(NAME socket_cleanup COMMAND socket_cleanup_test)
+    add_executable(socket_cleanup_integration_test tests/socket_cleanup_integration_test.cpp src/socket_cleanup.cpp src/cgroup_manager.cpp)
+    target_include_directories(socket_cleanup_integration_test PRIVATE src)
+    target_link_libraries(socket_cleanup_integration_test PRIVATE Qt6::Network PkgConfig::SYSTEMD)
+    add_test(NAME socket_cleanup_integration COMMAND socket_cleanup_integration_test)
+    set_tests_properties(socket_cleanup_integration PROPERTIES TIMEOUT 15)
+    add_executable(launcher_test tests/launcher_test.cpp src/launcher.cpp src/desktop_catalog.cpp src/cgroup_manager.cpp)
+    target_include_directories(launcher_test PRIVATE src)
+    target_link_libraries(launcher_test PRIVATE Qt6::Widgets PkgConfig::SYSTEMD)
+    add_test(NAME launcher COMMAND launcher_test)
+    set_tests_properties(launcher PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_test(NAME session_cli COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/session_cli_test.sh $<TARGET_FILE:skewer>)
+    add_test(NAME shell_prompt COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/prompt_test.sh
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/skewer-prompt.bash)
+    add_executable(session_guard_test tests/session_guard_test.cpp)
+    target_include_directories(session_guard_test PRIVATE src)
+    target_link_libraries(session_guard_test PRIVATE Qt6::Core)
+    add_test(NAME session_guard COMMAND session_guard_test)
+    add_executable(session_integration_test tests/session_integration_test.cpp src/cgroup_manager.cpp)
+    target_include_directories(session_integration_test PRIVATE src)
+    target_link_libraries(session_integration_test PRIVATE Qt6::Core PkgConfig::SYSTEMD)
+    target_compile_definitions(session_integration_test PRIVATE SKEWER_TEST_BINARY="$<TARGET_FILE:skewer>")
+    add_dependencies(session_integration_test skewer)
+    add_test(NAME session_integration COMMAND session_integration_test)
+    set_tests_properties(session_integration PROPERTIES TIMEOUT 20)
     add_executable(cgroup_manager_test
         tests/cgroup_manager_test.cpp
         src/cgroup_manager.cpp
@@ -115,26 +162,40 @@ if(BUILD_TESTING)
         src/process_scanner.hpp
     )
     target_include_directories(application_model_test PRIVATE src)
-    target_link_libraries(application_model_test PRIVATE Qt6::Widgets Qt6::Test)
+    target_link_libraries(application_model_test PRIVATE Qt6::Widgets Qt6::Test Qt6::Concurrent)
     target_compile_options(application_model_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME application_model COMMAND application_model_test)
     set_tests_properties(application_model PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(saslik_status_test
         tests/saslik_status_test.cpp
         src/main_window.cpp src/main_window.hpp
+        src/launcher.cpp
+        src/connections.cpp
         src/ca_store.cpp src/ca_store.hpp
         src/ca_panel.cpp src/ca_panel.hpp
+        src/runtime_trust.cpp src/runtime_trust.hpp
         src/application_model.cpp src/application_model.hpp
         src/cgroup_manager.cpp src/cgroup_manager.hpp
         src/desktop_catalog.cpp src/process_scanner.cpp
         src/routing_controller.cpp src/routing_plan.cpp)
     target_include_directories(saslik_status_test PRIVATE src)
     target_link_libraries(saslik_status_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test PkgConfig::SYSTEMD)
+    target_sources(saslik_status_test PRIVATE src/pairing.cpp)
+    target_link_libraries(saslik_status_test PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     target_compile_definitions(saslik_status_test PRIVATE
         SKEWER_VERSION="${PROJECT_VERSION}"
         SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
     add_test(NAME saslik_status COMMAND saslik_status_test)
     set_tests_properties(saslik_status PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(tui_test tests/tui_test.cpp src/tui.cpp
+        src/application_model.cpp src/desktop_catalog.cpp src/process_scanner.cpp
+        src/cgroup_manager.cpp src/routing_controller.cpp src/routing_plan.cpp)
+    target_include_directories(tui_test PRIVATE src)
+    target_link_libraries(tui_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent PkgConfig::SYSTEMD PkgConfig::NCURSESW)
+    target_compile_definitions(tui_test PRIVATE
+        SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
+    add_test(NAME tui COMMAND tui_test)
+    set_tests_properties(tui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 set(CPACK_GENERATOR DEB)

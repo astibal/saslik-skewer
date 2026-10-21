@@ -11,9 +11,12 @@ QString number(quint32 value)
 }
 
 RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
-                                   const QString& interface_name, int cgroup_level)
+                                   const QString& interface_name, int cgroup_level,
+                                   const QStringList& exemptions)
 {
     RoutingPlan plan;
+    QStringList normalized;
+    if (!normalizeExemptions(exemptions, normalized, plan.error)) return plan;
     QHostAddress address;
     if (!address.setAddress(next_hop) || address.protocol() != QAbstractSocket::IPv4Protocol) {
         plan.error = QStringLiteral("Next hop must be an IPv4 address");
@@ -37,8 +40,10 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
     plan.nft_table = tableName(uid);
     plan.nft_rules = QStringLiteral(
         "table inet %1 {\n"
+        "  set bypass_v4 { type ipv4_addr; flags interval; auto-merge; }\n"
         "  chain output {\n"
         "    type route hook output priority mangle; policy accept;\n"
+        "    meta skuid %2 ip daddr @bypass_v4 return\n"
         "    meta skuid %2 ip daddr %3 return\n"
         // nft resolves this path relative to /sys/fs/cgroup, not the chosen
         // ancestor level. The level selects which socket ancestor to compare.
@@ -51,6 +56,7 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
         .arg(gateway)
         .arg(cgroup_level)
         .arg(mark_hex);
+    plan.nft_rules += exemptionUpdate(uid, normalized);
 
     plan.cleanup = {
         {QStringLiteral("nft"), {QStringLiteral("delete"), QStringLiteral("table"),
@@ -76,6 +82,37 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
     };
     plan.valid = true;
     return plan;
+}
+
+bool RoutingPlanner::normalizeExemptions(const QStringList& input, QStringList& output, QString& error)
+{
+    output.clear();
+    if (input.size() > 256) { error = "At most 256 destination exemptions are supported"; return false; }
+    static const QRegularExpression syntax("^[0-9.]+(?:/[0-9]{1,2})?$");
+    for (const auto& raw : input) {
+        const QString value = raw.trimmed();
+        QHostAddress address;
+        const auto parts = value.split('/');
+        const int bits = parts.size() == 2 ? parts[1].toInt() : 32;
+        if (!syntax.match(value).hasMatch() || bits > 32
+            || !address.setAddress(parts[0]) || address.protocol() != QAbstractSocket::IPv4Protocol) {
+            error = QString("Invalid IPv4 address or CIDR: %1").arg(value); return false;
+        }
+        const quint32 mask = bits == 0 ? 0 : (0xffffffffU << (32 - bits));
+        output << QHostAddress(address.toIPv4Address() & mask).toString() + '/' + QString::number(bits);
+    }
+    output.removeDuplicates();
+    return true;
+}
+
+QString RoutingPlanner::exemptionUpdate(uid_t uid, const QStringList& normalized)
+{
+    // Both commands are submitted in one nft transaction; never flush live
+    // exceptions separately from adding their replacements.
+    const QString target = "inet " + tableName(uid) + " bypass_v4";
+    QString script = "flush set " + target + '\n';
+    if (!normalized.isEmpty()) script += "add element " + target + " { " + normalized.join(", ") + " }\n";
+    return script;
 }
 
 QString RoutingPlanner::tableName(uid_t uid)

@@ -5,6 +5,40 @@ applications into a stable cgroup that can be routed through a Saslik lab.
 
 ## Current capabilities
 
+### Guarded shell and launcher
+
+`skewer shell` opens your normal interactive shell inside the routed cgroup;
+`skewer run -- PROGRAM ARGS...` runs a single command the same way. The GUI's
+Shell button and TUI's `!` key use that session layer too. `exit` returns from
+the shell without disabling routing or terminating its background applications.
+Routing must already be configured; cgroup membership alone is not connectivity.
+
+Every newly observed descendant receives a five-second correction window with
+a 10 ms target polling interval. The guard checks UID and process start time,
+then asks the user systemd manager to return escaped processes to the session
+scope. Slow systemd calls or a busy scheduler can extend the polling interval.
+It reads the known process subtree, not the whole machine. Short-lived parents,
+daemonization before discovery and handoffs to existing applications can evade
+detection. Already-open sockets are not repaired. This is not a security boundary.
+
+New sessions inherit your working directory and environment. Preparing a bundle
+in Trusted Environments selects it for subsequent shell/run and GUI/TUI launches;
+CA variables are set only in those sessions. Missing selected bundle files cause
+launch to fail, rather than silently launch with different trust. A normal Python
+venv can be activated inside the shell. `SKEWER_SESSION=1` identifies the session;
+shell rc files may override environment settings. Guard messages also go to
+`~/.local/share/skewer/session.log` (or the corresponding XDG data directory).
+
+The Bash prompt shows a cached status symbol: green `──∈` means the configured
+policy route matches the gateway and Saslik's API reports an available lab;
+red `─×∈` means a detected routing/API/lab failure; yellow `┄┄∈` means unknown,
+stale, or routing-only mode without API health verification. This is not an
+end-to-end traffic test. A separate background worker checks approximately every
+two seconds. The prompt uses only a local cache, expires results after six seconds,
+and updates when the next prompt is drawn, without disturbing typed commands.
+
+### Application management
+
 - groups processes by their systemd application scope;
 - reconstructs the process tree inside every application;
 - resolves names, icons and launch commands from freedesktop desktop entries;
@@ -18,11 +52,21 @@ applications into a stable cgroup that can be routed through a Saslik lab.
   directly reachable IPv4 next hop without changing unrelated host traffic.
 - downloads the active workspace CA and manages supported local NSS and system
   trust stores, including removal.
+- inventories the effective CA sources of fresh Python, Node.js and Java
+  processes and checks the selected workspace CA without modifying runtimes.
 
 Moving applications and configuring networking are deliberately separate.
 `Attached` means that an application is in the Skewer cgroup. `Routing active`
 means that nftables marking and the dedicated policy-routing table are also
 installed. No remote transport is provided yet.
+
+**Destination exemptions…** accepts up to 256 IPv4 addresses or CIDR ranges.
+They bypass Skewer marking for every attached application and follow the host's
+ordinary routing (which may itself include a VPN). The list is saved and used
+by GUI and TUI routing starts. Live changes replace the nftables set atomically;
+existing connections may break and need reconnecting. No DNS expansion or IPv6
+exceptions are provided. After upgrading an already active older ruleset,
+disable and enable routing once to create the exemption set.
 
 ## CA Trust
 
@@ -58,6 +102,16 @@ are not interpreted as chronological order. Missing or invalid links are shown
 as `current unknown`. A current revision is not proof that no older process is
 running. Symlink aliases are not scanned twice, and mutations always target the
 explicit real database path shown in the confirmation.
+
+The **Runtime Trust** tab is intentionally read-only. It reports Python's
+OpenSSL/certifi paths, Node's bundled roots and `NODE_EXTRA_CA_CERTS`, and the
+default Java `cacerts` selected by the installed JVM. These probes describe a
+fresh process launched in Skewer's environment; individual applications,
+virtual environments and build tools may override every one of those sources.
+For Python, requests, pip, curl and Node, Skewer can prepare user-owned managed
+PEM files and copy an explicit shell environment. It never edits `certifi` or
+language package directories, so a package update cannot silently erase the
+CA. Java remains inspection-only until a particular JDK truststore is selected.
 
 The next networking milestone is intentionally smaller: route traffic from the
 Skewer cgroup toward a configurable, directly reachable next-hop IP. A dynamic
@@ -138,3 +192,15 @@ the next-hop machine disappears; repeating enable or disable is safe.
 - Process movement uses the delegated user cgroup tree. Future system-wide
   network setup will be isolated in a narrow polkit-authorized helper.
 - A request must never move a process owned by another UID.
+# Shell scripting
+
+Inside `skewer shell`, use `skewer status`, `skewer env`, and `skewer check`.
+All three accept `--json`; `check` returns a nonzero status when the current
+process is not routed or the configured control-plane checks fail.
+These checks do not prove end-to-end interception and are not leak prevention.
+Session variables describe launch-time configuration, not live health.
+
+See `man skewer-shell-scripting` after installation, or
+`man ./data/skewer-shell-scripting.1` from the source checkout.
+Bash prints the manual reference on exit unless an existing user EXIT trap
+needs to be preserved. Startup remains quiet.

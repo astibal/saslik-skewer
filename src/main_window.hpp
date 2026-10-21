@@ -45,12 +45,13 @@ private slots:
     void activateRouting();
     void deactivateRouting();
     void updateRoutingStatus();
-    void repairRouting();
     void updateRoutingSource();
     void pollSaslik();
     void receiveSaslik(QNetworkReply* reply);
+    void applyDiscovery(const QByteArray& payload, bool request_ok);
 
 private:
+    void renderRoutingStatus(bool active, bool reachable);
     [[nodiscard]] QString currentNextHop() const;
     [[nodiscard]] bool usesSaslikUrl() const;
     void sendTrustReport();
@@ -83,11 +84,15 @@ private:
     QSet<QString> expanded_items_;
     QString selected_item_;
     bool restored_once_{};
+    int saved_tree_scroll_{};
+    int saved_tree_horizontal_scroll_{};
     bool routing_requested_{};
-    bool routing_repairing_{};
-    qint64 last_routing_repair_ms_{};
+    bool routing_check_pending_{};
+    bool trust_report_pending_{};
     bool discovery_request_pending_{};
     bool saslik_reachable_{};
+    bool saslik_disconnected_{};
+    quint64 saslik_epoch_{};
     bool discovery_online_{};
     QString discovery_gateway_;
     QString discovery_interface_;

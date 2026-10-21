@@ -7,14 +7,29 @@
 #include <QFont>
 #include <QHash>
 #include <QPalette>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <unistd.h>
 
 ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
 {
-    refresh_timer_.setInterval(2500);
-    connect(&refresh_timer_, &QTimer::timeout, this, &ApplicationModel::refresh);
+    refresh_timer_.setInterval(5000);
+    auto* scan = new QFutureWatcher<QVector<ProcessInfo>>(this);
+    connect(scan, &QFutureWatcher<QVector<ProcessInfo>>::finished, this, [this, scan] {
+        if (scan->property("revision").toULongLong() == process_revision_)
+            setProcesses(scan->result());
+    });
+    connect(&refresh_timer_, &QTimer::timeout, this, [this, scan] {
+        if (scan->isRunning()) return;
+        // A hidden GUI needs no process-tree refresh. TUI has no QWidget.
+        const auto windows = QApplication::topLevelWidgets();
+        if (!windows.isEmpty() && std::none_of(windows.begin(), windows.end(),
+                [](const QWidget* window) { return window->isVisible(); })) return;
+        scan->setProperty("revision", QVariant::fromValue(process_revision_));
+        scan->setFuture(QtConcurrent::run([] { return ProcessScanner().scan(getuid()); }));
+    });
     refresh_timer_.start();
     refresh();
 }
@@ -54,6 +69,39 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
 {
     Node* item = node(model_index);
     if (!item) return {};
+    if (model_index.column() == ConnectionsColumn && item->type != NodeType::Section
+        && (role == Qt::DisplayRole || role == Qt::ForegroundRole || role == Qt::ToolTipRole)) {
+        if (!item->connections_cached) {
+            QSet<int> pids;
+            const auto collect = [&pids](const auto& self, const Node& current) -> void {
+                if (current.type == NodeType::Process) pids.insert(current.process.pid);
+                for (const auto& child : current.children) self(self, *child);
+            };
+            collect(collect, *item);
+            int outside = 0, total = 0;
+            bool unknown = !connections_.complete || connections_.unreadable_pids.intersects(pids);
+            for (const auto& socket : connections_.rows) {
+                if (!socket.pids.intersects(pids)) continue;
+                ++total;
+                if (socket.group.isEmpty()) unknown = true;
+                else if (!socket.group.split('/').contains("skewer-routed.slice")) ++outside;
+            }
+            item->sockets_total = total;
+            item->sockets_outside = outside;
+            item->sockets_unknown = unknown;
+            item->connections_cached = true;
+        }
+        const int total = item->sockets_total;
+        const int outside = item->sockets_outside;
+        const bool unknown = item->sockets_unknown;
+        if (role == Qt::DisplayRole)
+            return outside ? tr("● %1 out").arg(outside) : unknown ? tr("? Unknown") : total ? tr("● All") : QStringLiteral("—");
+        if (role == Qt::ForegroundRole)
+            return QBrush(QColor(outside ? "#dda844" : unknown || !total ? "#999999" : "#48c988"));
+        if (role == Qt::ToolTipRole)
+            return tr("%1 observed sockets; %2 outside Skewer. %3\nSocket cgroup membership only, not proof of routing or interception. TCP and connected UDP, current network namespace.")
+                .arg(total).arg(outside).arg(unknown ? tr("Incomplete / unverified snapshot.") : tr("No known collection errors."));
+    }
     if (role == StableIdRole) return item->id;
     if (role == NodeTypeRole) return static_cast<int>(item->type);
     if (role == LaunchCommandRole) return item->launch_command;
@@ -109,6 +157,7 @@ QVariant ApplicationModel::headerData(int section, Qt::Orientation orientation, 
     case ProcessIdColumn: return tr("PID");
     case RoutingColumn: return tr("Routing");
     case CaColumn: return tr("CA trust · profiles");
+    case ConnectionsColumn: return tr("Conn.");
     case CommandColumn: return tr("Identity / command");
     default: return {};
     }
@@ -119,6 +168,21 @@ QStringList ApplicationModel::launcherSuggestions() const
     QStringList result = launch_commands_.keys();
     result.sort(Qt::CaseInsensitive);
     return result;
+}
+
+void ApplicationModel::setConnections(const ConnectionSnapshot& snapshot)
+{
+    if (connections_ == snapshot) return;
+    connections_ = snapshot;
+    const auto update = [this](const auto& self, const QModelIndex& parent) -> void {
+        for (int row=0; row<rowCount(parent); ++row) {
+            const auto cell = index(row, ConnectionsColumn, parent);
+            node(cell)->connections_cached = false;
+            emit dataChanged(cell, cell, {Qt::DisplayRole, Qt::ForegroundRole, Qt::ToolTipRole});
+            self(self, index(row, 0, parent));
+        }
+    };
+    update(update, {});
 }
 void ApplicationModel::setCaStatus(const QHash<QString, QString>& statuses, const QString& fingerprint)
 {
@@ -147,6 +211,7 @@ void ApplicationModel::refresh()
 
 void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
 {
+    ++process_revision_;
     QByteArray snapshot;
     for (const ProcessInfo& process : processes) {
         snapshot += QByteArray::number(process.pid) + ':'
@@ -184,11 +249,101 @@ void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
     groupInstances(*foreground);
     groupInstances(*background);
 
-    beginResetModel();
-    roots_.clear();
-    if (!foreground->children.empty()) roots_.push_back(std::move(foreground));
-    if (!background->children.empty()) roots_.push_back(std::move(background));
-    endResetModel();
+    std::vector<std::unique_ptr<Node>> desired;
+    if (!foreground->children.empty()) desired.push_back(std::move(foreground));
+    if (!background->children.empty()) desired.push_back(std::move(background));
+
+    // Index existing objects first. A process moving between applications must
+    // keep its persistent index, just like an unchanged process does.
+    QHash<QString, Node*> existing;
+    const auto inventory = [&existing](const auto& self, auto& items) -> void {
+        for (auto& item : items) {
+            existing.insert(item->id, item.get());
+            self(self, item->children);
+        }
+    };
+    inventory(inventory, roots_);
+    const auto modelIndex = [this](Node* item) -> QModelIndex {
+        if (!item) return {};
+        const auto& siblings = item->parent ? item->parent->children : roots_;
+        for (std::size_t i = 0; i < siblings.size(); ++i)
+            if (siblings[i].get() == item) return createIndex(int(i), 0, item);
+        return {};
+    };
+    QSet<QString> retained;
+    QSet<Node*> changedItems;
+    const auto processIds = [](const auto& self, const Node& item) -> QSet<int> {
+        QSet<int> result;
+        if (item.type == NodeType::Process) result.insert(item.process.pid);
+        for (const auto& child : item.children) result.unite(self(self, *child));
+        return result;
+    };
+    const auto reconcile = [&](const auto& self, auto& wanted, Node* parent) -> void {
+        auto& siblings = parent ? parent->children : roots_;
+        for (std::size_t row = 0; row < wanted.size(); ++row) {
+            Node& source = *wanted[row];
+            Node* item = existing.value(source.id, nullptr);
+            if (item) {
+                auto& old = item->parent ? item->parent->children : roots_;
+                const int from = modelIndex(item).row();
+                if (item->parent != parent || from != int(row)) {
+                    const int destination = (&old == &siblings && from < int(row))
+                        ? int(row) + 1 : int(row);
+                    beginMoveRows(modelIndex(item->parent), from, from,
+                                  modelIndex(parent), destination);
+                    auto owned = std::move(old[from]);
+                    old.erase(old.begin() + from);
+                    owned->parent = parent;
+                    siblings.insert(siblings.begin() + row, std::move(owned));
+                    endMoveRows();
+                }
+            } else {
+                beginInsertRows(modelIndex(parent), int(row), int(row));
+                auto added = std::make_unique<Node>();
+                added->id = source.id;
+                added->type = source.type;
+                added->parent = parent;
+                item = added.get();
+                siblings.insert(siblings.begin() + row, std::move(added));
+                endInsertRows();
+            }
+            retained.insert(source.id);
+            const bool changed = item->title != source.title || item->subtitle != source.subtitle
+                || item->launch_command != source.launch_command || item->routed != source.routed
+                || item->partially_routed != source.partially_routed || item->identity != source.identity
+                || item->process_count != source.process_count || item->icon.cacheKey() != source.icon.cacheKey()
+                || processIds(processIds, *item) != processIds(processIds, source);
+            item->title = source.title;
+            item->subtitle = source.subtitle;
+            item->launch_command = source.launch_command;
+            item->icon = source.icon;
+            item->routed = source.routed;
+            item->partially_routed = source.partially_routed;
+            item->identity = source.identity;
+            item->process_count = source.process_count;
+            item->process = source.process;
+            item->connections_cached = false;
+            self(self, source.children, item);
+            if (changed) changedItems.insert(item);
+        }
+    };
+    reconcile(reconcile, desired, nullptr);
+    // Remove obsolete containers only after their surviving descendants have
+    // moved to their new parents. Never invalidate unrelated rows wholesale.
+    const auto prune = [&](const auto& self, Node* parent) -> void {
+        auto& items = parent ? parent->children : roots_;
+        for (int row = int(items.size()) - 1; row >= 0; --row) {
+            if (!retained.contains(items[row]->id)) {
+                beginRemoveRows(modelIndex(parent), row, row);
+                items.erase(items.begin() + row);
+                endRemoveRows();
+            } else self(self, items[row].get());
+        }
+    };
+    prune(prune, nullptr);
+    for (Node* item : changedItems)
+        emit dataChanged(modelIndex(item), modelIndex(item).siblingAtColumn(ColumnCount - 1));
+    emit processesChanged();
     emit launcherSuggestionsChanged(launcherSuggestions());
 }
 

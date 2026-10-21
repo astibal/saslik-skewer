@@ -2,6 +2,7 @@
 
 #include "desktop_catalog.hpp"
 #include "process_scanner.hpp"
+#include "connections.hpp"
 
 #include <QAbstractItemModel>
 #include <QByteArray>
@@ -14,7 +15,7 @@ class ApplicationModel final : public QAbstractItemModel {
     Q_OBJECT
 
 public:
-    enum Column { NameColumn, ProcessIdColumn, RoutingColumn, CaColumn, CommandColumn, ColumnCount };
+    enum Column { NameColumn, ProcessIdColumn, RoutingColumn, CaColumn, ConnectionsColumn, CommandColumn, ColumnCount };
     enum Role {
         StableIdRole = Qt::UserRole + 1,
         NodeTypeRole,
@@ -41,9 +42,11 @@ public:
         const ProcessInfo& process, const QHash<pid_t, const ProcessInfo*>& processes);
 
 signals:
+    void processesChanged();
     void launcherSuggestionsChanged(const QStringList& suggestions);
 
 public slots:
+    void setConnections(const ConnectionSnapshot& snapshot);
     void refresh();
     void setProcesses(const QVector<ProcessInfo>& processes);
     void setCaStatus(const QHash<QString, QString>& statuses, const QString& fingerprint);
@@ -60,6 +63,11 @@ private:
         bool partially_routed{};
         QString identity;
         int process_count{};
+        // Computed once per socket snapshot, never once per paint role.
+        bool connections_cached{};
+        int sockets_total{};
+        int sockets_outside{};
+        bool sockets_unknown{};
         ProcessInfo process;
         Node* parent{};
         std::vector<std::unique_ptr<Node>> children;
@@ -80,7 +88,9 @@ private:
     QHash<QString, const DesktopEntry*> desktop_matches_;
     QHash<QString, QIcon> application_icons_;
     QByteArray snapshot_;
+    quint64 process_revision_{};
     QTimer refresh_timer_;
     QHash<QString, QString> ca_statuses_;
     QString ca_fingerprint_;
+    ConnectionSnapshot connections_;
 };

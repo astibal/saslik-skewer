@@ -1,11 +1,14 @@
 #include "desktop_catalog.hpp"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSet>
+#include <QDirIterator>
+#include <QLocale>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -37,19 +40,29 @@ void DesktopCatalog::reload()
     QStringList roots = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
     // A launcher started outside a desktop session may lack Snap's XDG path.
     roots << QStringLiteral("/var/lib/snapd/desktop/applications");
+    roots << QDir::homePath() + "/.local/share/flatpak/exports/share/applications"
+          << "/var/lib/flatpak/exports/share/applications";
     roots.removeDuplicates();
     for (const QString& root : roots) {
-        const auto files = QDir(root).entryInfoList({QStringLiteral("*.desktop")}, QDir::Files);
-        for (const QFileInfo& file : files) {
-            if (seen.contains(file.fileName())) continue;
+        QDirIterator files(root, {"*.desktop"}, QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QFileInfo file(files.next());
+            QString desktop_id = QDir(root).relativeFilePath(file.filePath()).replace('/', '-');
+            if (seen.contains(desktop_id)) continue;
+            seen.insert(desktop_id);
             QSettings settings(file.absoluteFilePath(), QSettings::IniFormat);
             settings.beginGroup(QStringLiteral("Desktop Entry"));
             if (settings.value(QStringLiteral("Type")).toString() != QStringLiteral("Application")
                 || settings.value(QStringLiteral("NoDisplay")).toBool()
                 || settings.value(QStringLiteral("Hidden")).toBool()) continue;
             DesktopEntry entry;
+            entry.source = root.contains("snapd") ? "Snap" : root.contains("flatpak") ? "Flatpak" : "System";
             entry.id = file.completeBaseName();
             entry.name = settings.value(QStringLiteral("Name")).toString();
+            for (const auto& locale : {QLocale().name().section('_', 0, 0), QLocale().name()}) {
+                const auto translated = settings.value("Name[" + locale + ']').toString();
+                if (!translated.isEmpty()) entry.name = translated;
+            }
             entry.generic_name = settings.value(QStringLiteral("GenericName")).toString();
             entry.icon_name = settings.value(QStringLiteral("Icon")).toString();
             entry.launch_command = cleanExec(settings.value(QStringLiteral("Exec")).toString());
@@ -57,9 +70,19 @@ void DesktopCatalog::reload()
             entry.match_id = normalized(entry.id);
             entry.match_binary = normalized(QFileInfo(entry.executable).fileName());
             entry.keywords = settings.value(QStringLiteral("Keywords")).toStringList();
+            // Desktop lists use semicolons, which QSettings treats as INI comments.
+            QFile desktop(file.absoluteFilePath());
+            if (desktop.open(QIODevice::ReadOnly)) {
+                bool main_group = false;
+                while (!desktop.atEnd()) {
+                    const QString line = QString::fromUtf8(desktop.readLine()).trimmed();
+                    if (line.startsWith('[')) main_group = line == "[Desktop Entry]";
+                    if (main_group && line.startsWith("Keywords="))
+                        entry.keywords = line.mid(9).split(';', Qt::SkipEmptyParts);
+                }
+            }
             entry.terminal = settings.value(QStringLiteral("Terminal")).toBool();
             if (entry.name.isEmpty() || entry.launch_command.isEmpty()) continue;
-            seen.insert(file.fileName());
             entries_.push_back(std::move(entry));
         }
     }

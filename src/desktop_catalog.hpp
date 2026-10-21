@@ -6,6 +6,7 @@
 
 struct DesktopEntry {
     QString id;
+    QString source;
     QString name;
     QString generic_name;
     QString icon_name;

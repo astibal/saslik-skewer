@@ -1,8 +1,22 @@
 #include "main_window.hpp"
+#include "launcher.hpp"
+#include "pairing.hpp"
+#include "connections.hpp"
+#include <QInputDialog>
+#include <QScrollBar>
+#include <QScrollArea>
+#include <QFutureWatcher>
+#include <QtConcurrent>
 
 #include "application_model.hpp"
 #include "ca_store.hpp"
 #include "ca_panel.hpp"
+#include "routing_plan.hpp"
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QRegularExpression>
+#include <QStandardPaths>
+#include "runtime_trust.hpp"
 #include <QTabWidget>
 
 #include <QApplication>
@@ -87,8 +101,14 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     auto* central = new QWidget(this);
     auto* tabs = new QTabWidget(this);
     auto* ca_panel = ca_panel_ = new CaTrustPanel(tabs);
+    auto* runtime_trust = new RuntimeTrustPanel(tabs);
     tabs->addTab(central, tr("Applications"));
     tabs->addTab(ca_panel, tr("CA Trust"));
+    tabs->addTab(runtime_trust, tr("Runtime Trust"));
+    connect(runtime_trust, &RuntimeTrustPanel::selectCertificateRequested, this,
+            [tabs, ca_panel] { tabs->setCurrentWidget(ca_panel); });
+    connect(ca_panel, &CaTrustPanel::certificateChanged,
+            runtime_trust, &RuntimeTrustPanel::setCertificate);
     auto* layout = new QVBoxLayout(central);
     layout->setContentsMargins(18, 18, 18, 14);
     layout->setSpacing(10);
@@ -113,6 +133,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     next_hop_ = new QLineEdit(routing_box);
     next_hop_->setPlaceholderText(tr("Directly reachable next-hop IPv4 address"));
     QSettings initial_settings;
+    saslik_disconnected_ = initial_settings.value("saslik/disconnected", false).toBool();
     next_hop_->setText(initial_settings.value(QStringLiteral("routing/nextHop")).toString());
     saslik_url_ = new QLineEdit(routing_box);
     saslik_url_->setPlaceholderText(tr("http://127.0.0.1:8765/api/skewer"));
@@ -131,28 +152,128 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     routing_layout->addWidget(routing_down_);
     routing_layout->addWidget(routing_status_);
     layout->addWidget(routing_box);
+    auto* pair_button = new QPushButton(tr("Pair with Saslik…"),central);
+    routing_layout->insertWidget(routing_layout->indexOf(routing_up_), pair_button);
+    const auto begin_pairing = [this,pair_button](const QString& address) {
+        if (address.isEmpty() || !pair_button->isEnabled()) return;
+        QUrl endpoint(address); endpoint.setFragment({});
+        if (endpoint.scheme()!="skewer" || endpoint.path()!="/pair") {
+            QMessageBox::warning(this,tr("Pairing"),tr("Invalid pairing address."));return;
+        }
+        pair_button->setEnabled(false);
+        auto* process = new QProcess(this);
+        connect(process,&QProcess::started,this,[process,address] {process->write(address.toUtf8()+'\n');process->closeWriteChannel();});
+        connect(process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,
+            [this,process,pair_button,endpoint](int code,QProcess::ExitStatus status) {
+                pair_button->setEnabled(true);
+                if (!code && status==QProcess::NormalExit) {
+                    saslik_disconnected_ = false;
+                    ++saslik_epoch_;
+                    QSettings().setValue("saslik/disconnected", false);
+                    if (auto* button = findChild<QPushButton*>("saslikConnection")) button->setText(tr("Disconnect"));
+                    saslik_url_->setText(endpoint.toString());
+                    QSettings().setValue("routing/saslikUrl",endpoint.toString());
+                    QSettings().setValue("routing/mode","saslik");
+                    routing_source_->setCurrentIndex(1);
+                    pollSaslik();
+                    QMessageBox::information(this,tr("Pairing"),tr("Paired using TLS 1.3 PSK. No plaintext fallback."));
+                } else QMessageBox::warning(this,tr("Pairing"),tr("Pairing failed. Check the invitation and endpoint. If confirmation was interrupted, retry the same address."));
+                process->deleteLater();
+            });
+        connect(process,&QProcess::errorOccurred,this,[process,pair_button](QProcess::ProcessError error) {
+            if (error==QProcess::FailedToStart) {pair_button->setEnabled(true);process->deleteLater();}
+        });
+        QTimer::singleShot(20000,process,[process] {if(process->state()!=QProcess::NotRunning)process->kill();});
+        process->start(QCoreApplication::applicationFilePath(),{"pair","-"});
+    };
+    connect(pair_button,&QPushButton::clicked,this,[this,begin_pairing] {
+        bool accepted = false;
+        const QString address = QInputDialog::getText(this,tr("Pair with Saslik"),
+            tr("Paste the skewer:// pairing address. It contains a secret; do not share it."),
+            QLineEdit::Password,{},&accepted);
+        if (accepted) begin_pairing(address);
+    });
+    connect(saslik_url_,&QLineEdit::textChanged,this,[this,begin_pairing](const QString& address) {
+        QUrl endpoint(address);
+        if (endpoint.scheme()!="skewer" || !endpoint.hasFragment()) return;
+        endpoint.setFragment({});
+        { QSignalBlocker blocker(saslik_url_); saslik_url_->setText(endpoint.toString()); }
+        // Consume the invitation before settings or discovery can see its secret fragment.
+        QTimer::singleShot(0,this,[begin_pairing,address] {begin_pairing(address);});
+    });
+    auto* exemptions = new QPushButton(tr("Destination exemptions…"), central);
+    exemptions->setObjectName("destinationExemptions");
+    connect(exemptions, &QPushButton::clicked, this, [this] {
+        QDialog dialog(this);
+        dialog.setWindowTitle(tr("Destination exemptions"));
+        dialog.resize(560, 360);
+        auto* content = new QVBoxLayout(&dialog);
+        auto* explanation = new QLabel(tr("These destinations bypass Skewer marking and use the host's normal routing, "
+            "for all attached applications. Enter IPv4 addresses or CIDR networks, one per line. "
+            "No DNS names. Existing connections may break when their route changes; reconnect them. "
+            "An empty list removes all exceptions. 0.0.0.0/0 bypasses everything. "
+            "IPv6 is not routed by Skewer."), &dialog);
+        explanation->setWordWrap(true); content->addWidget(explanation);
+        auto* editor = new QPlainTextEdit(&dialog);
+        editor->setPlaceholderText("203.0.113.7\n192.168.0.0/16");
+        editor->setPlainText(QSettings().value("routing/exemptions").toStringList().join('\n'));
+        content->addWidget(editor);
+        auto* error = new QLabel(&dialog); error->setWordWrap(true); error->setTextFormat(Qt::PlainText);
+        content->addWidget(error);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+        content->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, [&, this] {
+            QStringList normalized; QString detail;
+            const auto entries = editor->toPlainText().split(QRegularExpression("[\\s,]+"), Qt::SkipEmptyParts);
+            if (!RoutingPlanner::normalizeExemptions(entries, normalized, detail)) { error->setText(detail); return; }
+            if (routing_.active(currentNextHop())) {
+                const auto result = routing_.updateExemptions(normalized, RoutingController::Authorization::Desktop);
+                if (!result.ok) { error->setText(result.detail); return; }
+            }
+            QSettings().setValue("routing/exemptions", normalized);
+            action_status_->setText(tr("Saved %1 destination exemptions.").arg(normalized.size()));
+            dialog.accept();
+        });
+        dialog.exec();
+    });
     // Status requests are deliberately independent of discovery and routing.
     auto* info_toggle = new QToolButton(central);
     info_toggle->setText(tr("Saslik"));
     info_toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     info_toggle->setArrowType(Qt::RightArrow);
     info_toggle->setCheckable(true);
-    layout->addWidget(info_toggle);
+    auto* tools_row = new QHBoxLayout;
+    tools_row->addWidget(info_toggle);
+    tools_row->addStretch();
+    tools_row->addWidget(exemptions);
+    layout->addLayout(tools_row);
     auto* info = new QWidget(central);
     auto* info_layout = new QVBoxLayout(info);
     info_layout->setContentsMargins(8, 0, 8, 0);
     auto* info_url = new QLineEdit(info);
     info_url->setObjectName(QStringLiteral("saslikInfoUrl"));
-    info_url->setPlaceholderText(tr("Saslik URL, e.g. http://host:8765"));
+    info_url->setPlaceholderText(tr("Saslik URL: skewer://host:8766/pair or http://host:8765"));
     info_url->setText(settings.value(QStringLiteral("saslik/statusUrl"),
                                     saslik_url_->text()).toString());
     info_layout->addWidget(info_url);
     auto* info_text = new QLabel(tr("Enter the Saslik URL to load status."), info);
     info_text->setObjectName(QStringLiteral("saslikInfoText"));
     info_text->setTextFormat(Qt::PlainText);
-    info_text->setWordWrap(true);
+    info_text->setWordWrap(false);
+    info_text->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    info_text->setMargin(8);
     info_text->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    info_layout->addWidget(info_text);
+    auto* status_box = new QScrollArea(info);
+    status_box->setObjectName(QStringLiteral("saslikStatusBox"));
+    status_box->setWidgetResizable(true);
+    status_box->setFrameShape(QFrame::StyledPanel);
+    // The status owns its scrollbars; polling must never resize the window or
+    // push the process tree around when a response has more or fewer lines.
+    status_box->setFixedHeight(info_text->fontMetrics().lineSpacing() * 8 + 24);
+    status_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    status_box->setWidget(info_text);
+    info_layout->addWidget(status_box);
     auto* links = new QHBoxLayout;
     auto* open_lab = new QPushButton(tr("Open Saslik"), info);
     auto* open_spider = new QPushButton(tr("Spider"), info);
@@ -184,6 +305,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
         sendTrustReport();
     });
     struct StatusState {
+        bool paired_pending{};
         QPointer<QNetworkReply> pending;
         QString source;
         QString last_success;
@@ -193,6 +315,13 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     auto status = std::make_shared<StatusState>();
     connect(download_ca, &QPushButton::clicked, this, [tabs, ca_panel] { tabs->setCurrentWidget(ca_panel); });
     const auto poll_status = [=, this] {
+        if (saslik_disconnected_) {
+            if (status->pending) status->pending->abort();
+            info_text->setText(tr("Disconnected from Saslik. Pairing and known CAs are retained."));
+            for (auto* button : {open_lab, open_spider, download_ca}) button->setEnabled(false);
+            return;
+        }
+        const auto epoch = saslik_epoch_;
         const QString source = info_url->text().trimmed();
         if (source != status->source) {
             status->source = source;
@@ -203,9 +332,66 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
         }
         if (status->pending) return;
         QUrl base(source);
+        if (base.scheme() == "skewer") {
+            if (status->paired_pending) return;
+            if (base.host().isEmpty() || base.path() != "/pair" || base.hasFragment()) {
+                info_text->setText(tr("Use a paired skewer://host:port/pair address. Paste invitations into Pair with Saslik instead."));
+                return;
+            }
+            status->paired_pending = true;
+            // Keep the last result visible throughout a background refresh.
+            using Result = QPair<QJsonObject, QString>;
+            auto* check = new QFutureWatcher<Result>(info);
+            connect(check, &QFutureWatcher<Result>::finished, info, [=, this] {
+                status->paired_pending = false;
+                const auto result = check->result(); check->deleteLater();
+                if (epoch != saslik_epoch_ || saslik_disconnected_ || source != info_url->text().trimmed()) return;
+                if (!result.second.isEmpty()) {
+                    info_text->setText(tr("Authenticated connection unavailable: %1").arg(result.second));
+                    return;
+                }
+                const auto value = result.first;
+                if (!value["ca_pem"].toString().isEmpty())
+                    ca_panel->setRemoteCertificate(value["ca_pem"].toString().toUtf8());
+                const auto detail = value["lab_status"].toObject();
+                const auto proxy = detail["services"].toObject()["smithproxy"].toObject();
+                QStringList checks;
+                const auto e2e = detail["end_to_end"].toObject();
+                const auto check_values = e2e["checks"].toObject();
+                for (auto it = check_values.begin(); it != check_values.end(); ++it)
+                    checks << it.key() + ": " + it.value().toObject()["state"].toString(tr("unknown"));
+                info_text->setText(tr("Authenticated via TLS-PSK\nWorkspace: %1 · lab ingress: %2\nGateway: %3 · interface: %4\nCA: %5")
+                    .arg(value["workspace"].toString(), value["available"].toBool() ? tr("available") : tr("unavailable"),
+                         value["gateway"].toString(), value["host_interface"].toString(),
+                         value["ca_pem"].toString().isEmpty() ? value["ca_error"].toString(tr("not supplied by server")) : tr("downloaded; see CA Trust"))
+                    + tr("\nLab: %1 · Smithproxy: %2 · PID: %3\nInternet: %4%5\nUpdated: %6")
+                        .arg(detail["runtime_state"].toString(tr("unknown")), proxy["state"].toString(tr("unknown")),
+                             proxy["pid"].isDouble() ? QString::number(proxy["pid"].toInt()) : QStringLiteral("—"),
+                             checks.isEmpty() ? tr("not measured") : checks.join(" · "),
+                             e2e["stale"].toBool() ? tr(" (stale)") : QString{}, QDateTime::currentDateTime().toString(Qt::ISODate)));
+                QUrl web;
+                web.setScheme("http"); web.setHost(base.host()); web.setPort(value["ui_port"].toInt(-1)); web.setPath("/");
+                const auto set_web_link = [base](QPushButton* button, QUrl url) {
+                    if (QHostAddress(url.host()).isLoopback() || url.host() == "localhost") url.setHost(base.host());
+                    const bool valid = !url.host().isEmpty() && (url.scheme() == "http" || url.scheme() == "https");
+                    button->setProperty("targetUrl", valid ? url.toString() : QString{});
+                    button->setEnabled(valid); button->setToolTip(valid ? url.toDisplayString() : QString{});
+                };
+                set_web_link(open_lab, value["ui_port"].toInt() > 0 ? web : QUrl{});
+                const auto spider = detail["endpoints"].toObject()["spider_ui"].toString();
+                set_web_link(open_spider, spider.isEmpty() ? QUrl{} : web.resolved(QUrl(spider)));
+                download_ca->setEnabled(!value["ca_pem"].toString().isEmpty());
+            });
+            // Never downgrade a paired endpoint to the plaintext HTTP API.
+            check->setFuture(QtConcurrent::run([base]() -> Result {
+                try { return {pairedStatus(base), {}}; }
+                catch (const std::exception& error) { return {{}, QString::fromUtf8(error.what())}; }
+            }));
+            return;
+        }
         if (!base.isValid() || base.host().isEmpty()
             || (base.scheme() != "http" && base.scheme() != "https")) {
-            info_text->setText(tr("Enter a valid HTTP(S) Saslik URL."));
+            info_text->setText(tr("Enter a valid HTTP(S) or paired skewer:// Saslik URL."));
             return;
         }
         // Accept either the UI URL or the existing /api/skewer discovery URL.
@@ -219,7 +405,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
         connect(reply, &QNetworkReply::finished, info, [=, this] {
             status->pending.clear();
             reply->deleteLater();
-            if (source != info_url->text().trimmed()) return;
+            if (epoch != saslik_epoch_ || saslik_disconnected_ || source != info_url->text().trimmed()) return;
             QJsonParseError error;
             const auto document = QJsonDocument::fromJson(reply->readAll(), &error);
             const auto value = document.object();
@@ -278,6 +464,32 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
         if (expanded) poll_status();
     });
     status_timer->start();
+    auto* connection_button = new QPushButton(central);
+    connection_button->setObjectName("saslikConnection");
+    links->addWidget(connection_button);
+    const auto connection_label = [this, connection_button] {
+        connection_button->setText(saslik_disconnected_ ? tr("Reconnect") : tr("Disconnect"));
+    };
+    connection_label();
+    connect(connection_button, &QPushButton::clicked, this, [=, this] {
+        if (!saslik_disconnected_ && (routing_requested_ || routing_.active(currentNextHop()))) {
+            deactivateRouting();
+            if (routing_requested_ || routing_.active(currentNextHop())) return;
+        }
+        saslik_disconnected_ = !saslik_disconnected_;
+        ++saslik_epoch_;
+        QSettings().setValue("saslik/disconnected", saslik_disconnected_);
+        if (saslik_disconnected_) {
+            saslik_reachable_ = false;
+            discovery_online_ = false;
+            discovery_gateway_.clear();
+            discovery_warning_.clear();
+            ca_panel_->disconnectAndOfferRemoval();
+        } else pollSaslik();
+        connection_label();
+        poll_status();
+        updateRoutingStatus();
+    });
     QTimer::singleShot(0, info, poll_status);
     connect(routing_up_, &QPushButton::clicked, this, &MainWindow::activateRouting);
     connect(routing_down_, &QPushButton::clicked, this, &MainWindow::deactivateRouting);
@@ -302,7 +514,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     }
     updateRoutingSource();
     routing_watchdog_ = new QTimer(this);
-    routing_watchdog_->setInterval(2000);
+    routing_watchdog_->setInterval(5000);
     connect(routing_watchdog_, &QTimer::timeout, this, [this] {
         if (usesSaslikUrl()) pollSaslik();
         updateRoutingStatus();
@@ -312,6 +524,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     updateRoutingStatus();
 
     model_ = new ApplicationModel(this);
+    tabs->addTab(new ConnectionsPanel(model_, tabs), tr("Connections"));
     connect(ca_panel, &CaTrustPanel::caStatusChanged, model_, &ApplicationModel::setCaStatus);
     filtered_model_ = new QSortFilterProxyModel(this);
     filtered_model_->setSourceModel(model_);
@@ -325,15 +538,14 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     tree_->setUniformRowHeights(true);
     tree_->setSortingEnabled(true);
     tree_->sortByColumn(ApplicationModel::NameColumn, Qt::AscendingOrder);
-    tree_->header()->setSectionResizeMode(ApplicationModel::CaColumn, QHeaderView::ResizeToContents);
-    tree_->header()->setSectionResizeMode(ApplicationModel::NameColumn,
-                                          QHeaderView::ResizeToContents);
-    tree_->header()->setSectionResizeMode(ApplicationModel::ProcessIdColumn,
-                                          QHeaderView::ResizeToContents);
-    tree_->header()->setSectionResizeMode(ApplicationModel::RoutingColumn,
-                                          QHeaderView::ResizeToContents);
-    tree_->header()->setSectionResizeMode(ApplicationModel::CommandColumn,
-                                          QHeaderView::Stretch);
+    tree_->header()->setSectionResizeMode(QHeaderView::Interactive);
+    tree_->header()->setStretchLastSection(false);
+    tree_->setColumnWidth(ApplicationModel::NameColumn, 280);
+    tree_->setColumnWidth(ApplicationModel::ProcessIdColumn, 85);
+    tree_->setColumnWidth(ApplicationModel::RoutingColumn, 150);
+    tree_->setColumnWidth(ApplicationModel::CaColumn, 150);
+    tree_->setColumnWidth(ApplicationModel::CommandColumn, 500);
+    tree_->setColumnWidth(ApplicationModel::ConnectionsColumn, 90);
     layout->addWidget(tree_, 1);
 
     auto* actions = new QHBoxLayout;
@@ -356,30 +568,41 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
             this, &MainWindow::rememberExpandedItems);
     connect(model_, &QAbstractItemModel::modelReset,
             this, &MainWindow::restoreExpandedItems);
+    connect(model_, &ApplicationModel::processesChanged, this, &MainWindow::updateSelection);
+    tree_->expandToDepth(0);
 
     connect(search_, &QLineEdit::textChanged, filtered_model_,
             &QSortFilterProxyModel::setFilterFixedString);
 
+    layout->addWidget(new Launcher(central));
     auto* launcher = new QHBoxLayout;
-    command_ = new QLineEdit(central);
-    command_->setPlaceholderText(tr("Run an application through Skewer…"));
-    launcher_model_ = new QStringListModel(model_->launcherSuggestions(), this);
-    auto* completer = new QCompleter(launcher_model_, command_);
-    completer->setCaseSensitivity(Qt::CaseInsensitive);
-    completer->setFilterMode(Qt::MatchContains);
-    completer->setCompletionMode(QCompleter::PopupCompletion);
-    command_->setCompleter(completer);
-    auto* run = new QPushButton(tr("Run"), central);
-    auto* browse = new QPushButton(tr("Browse…"), central);
-    launcher->addWidget(command_, 1);
-    launcher->addWidget(browse);
-    launcher->addWidget(run);
+    auto* shell_button = new QPushButton(tr("Shell…"), central);
+    launcher->addWidget(shell_button);
+    connect(shell_button, &QPushButton::clicked, this, [this] {
+        const auto invocation = CgroupManager::routedLaunchPrefix("shell", true);
+        QStringList terminals{"xdg-terminal-exec", "x-terminal-emulator", "konsole", "gnome-terminal", "xfce4-terminal"};
+        const auto desktop = qEnvironmentVariable("XDG_CURRENT_DESKTOP");
+        // Prefer the desktop's native terminal over a generic dispatcher which
+        // can still be configured to use xterm on an otherwise KDE desktop.
+        if (desktop.contains("KDE", Qt::CaseInsensitive)) terminals.prepend("konsole");
+        else if (desktop.contains("GNOME", Qt::CaseInsensitive)) terminals.prepend("gnome-terminal");
+        else if (desktop.contains("XFCE", Qt::CaseInsensitive)) terminals.prepend("xfce4-terminal");
+        terminals.removeDuplicates();
+        for (const auto& name : terminals) {
+            const QString terminal = QStandardPaths::findExecutable(name);
+            if (terminal.isEmpty()) continue;
+            QStringList arguments;
+            if (name == "gnome-terminal") arguments << "--";
+            else if (name == "xfce4-terminal") arguments << "-x";
+            else if (name != "xdg-terminal-exec") arguments << "-e";
+            arguments.append(invocation);
+            if (QProcess::startDetached(terminal, arguments)) {
+                action_status_->setText(tr("Opening Skewer shell…")); return;
+            }
+        }
+        QMessageBox::information(this, tr("Skewer shell"), tr("No supported terminal could be started. Run skewer shell in your terminal."));
+    });
     layout->addLayout(launcher);
-    connect(run, &QPushButton::clicked, this, &MainWindow::launchCommand);
-    connect(browse, &QPushButton::clicked, this, &MainWindow::browseExecutable);
-    connect(command_, &QLineEdit::returnPressed, this, &MainWindow::launchCommand);
-    connect(model_, &ApplicationModel::launcherSuggestionsChanged,
-            this, &MainWindow::updateLauncherSuggestions);
 
     auto* note = new QLabel(
         tr("Attaching a running application only affects newly created sockets. "
@@ -442,6 +665,10 @@ void MainWindow::changeEvent(QEvent* event)
 
 void MainWindow::activateRouting()
 {
+    if (usesSaslikUrl() && saslik_disconnected_) {
+        action_status_->setText(tr("Reconnect to Saslik before enabling routing."));
+        return;
+    }
     if (usesSaslikUrl()) pollSaslik();
     const QString next_hop = currentNextHop();
     if (next_hop.isEmpty()) {
@@ -479,9 +706,28 @@ void MainWindow::deactivateRouting()
 
 void MainWindow::updateRoutingStatus()
 {
+    if (routing_check_pending_) return;
     const QString next_hop = currentNextHop();
-    const bool active = !next_hop.isEmpty() && routing_.active(next_hop);
-    const bool reachable = !next_hop.isEmpty() && routing_.nextHopReachable(next_hop);
+    routing_check_pending_ = true;
+    auto* check = new QFutureWatcher<QPair<bool, bool>>(this);
+    connect(check, &QFutureWatcher<QPair<bool, bool>>::finished, this, [this, check, next_hop] {
+        const auto result = check->result();
+        check->deleteLater();
+        routing_check_pending_ = false;
+        // Discard a result for a gateway the user has changed in the meantime.
+        if (next_hop != currentNextHop()) { updateRoutingStatus(); return; }
+        renderRoutingStatus(result.first, result.second);
+    });
+    check->setFuture(QtConcurrent::run([next_hop] {
+        RoutingController controller;
+        return qMakePair(!next_hop.isEmpty() && controller.active(next_hop),
+                         !next_hop.isEmpty() && controller.nextHopReachable(next_hop));
+    }));
+}
+
+void MainWindow::renderRoutingStatus(bool active, bool reachable)
+{
+    const QString next_hop = currentNextHop();
     QString text;
     QString color;
     if (active) {
@@ -492,7 +738,7 @@ void MainWindow::updateRoutingStatus()
         else if (usesSaslikUrl() && !saslik_reachable_) text = tr("● Waiting for Saslik…");
         else if (usesSaslikUrl() && !discovery_online_)
             text = tr("● Saslik connected · waiting for lab…");
-        else text = reachable ? tr("● Restoring routing…") : tr("● Gateway unavailable…");
+        else text = reachable ? tr("● Routing inactive · click Restore routing") : tr("● Gateway unavailable…");
         color = QStringLiteral("#e3b94f");
     } else {
         text = tr("○ Routing inactive");
@@ -511,31 +757,14 @@ void MainWindow::updateRoutingStatus()
     tray_->setToolTip(tooltip.join('\n'));
     routing_status_->setStyleSheet(QStringLiteral("color:%1").arg(color));
     routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
-    routing_up_->setEnabled(!routing_requested_ && !active);
+    routing_up_->setText(routing_requested_ && !active ? tr("Restore routing") : tr("Enable"));
+    routing_up_->setEnabled(!active);
     routing_down_->setEnabled(routing_requested_ || active);
     routing_source_->setEnabled(!routing_requested_ && !active);
     next_hop_->setEnabled(!routing_requested_ && !active && !usesSaslikUrl());
     saslik_url_->setEnabled(!routing_requested_ && !active && usesSaslikUrl());
 
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (routing_requested_ && discovery_warning_.isEmpty()
-        && (!usesSaslikUrl() || discovery_online_) && reachable && !active && !routing_repairing_
-        && now - last_routing_repair_ms_ >= 5000) {
-        last_routing_repair_ms_ = now;
-        QTimer::singleShot(0, this, &MainWindow::repairRouting);
-    }
-}
-
-void MainWindow::repairRouting()
-{
-    if (routing_repairing_) return;
-    routing_repairing_ = true;
-    const RoutingResult result = routing_.activate(currentNextHop(),
-        RoutingController::Authorization::Desktop);
-    routing_repairing_ = false;
-    if (result.ok) action_status_->setText(tr("Routing restored after Saslik reconnect."));
-    else action_status_->setText(tr("Routing restore failed: %1").arg(result.detail));
-    updateRoutingStatus();
+    // Polling is read-only: privilege elevation requires an explicit click.
 }
 
 bool MainWindow::usesSaslikUrl() const
@@ -550,6 +779,7 @@ QString MainWindow::currentNextHop() const
 
 void MainWindow::updateRoutingSource()
 {
+    if (ca_panel_) ca_panel_->setRemoteDisconnected();
     const bool saslik = usesSaslikUrl();
     if (!saslik) {
         saslik_reachable_ = false;
@@ -564,8 +794,26 @@ void MainWindow::updateRoutingSource()
 
 void MainWindow::pollSaslik()
 {
+    if (saslik_disconnected_) return;
     if (discovery_request_pending_) return;
     const QUrl url(saslik_url_->text().trimmed());
+    if (url.scheme()=="skewer" && !url.hasFragment()) {
+        discovery_request_pending_ = true;
+        auto* process = new QProcess(this);
+        const auto epoch = saslik_epoch_;
+        connect(process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,[this,process,url,epoch](int code,QProcess::ExitStatus status) {
+            discovery_request_pending_ = false;
+            if (epoch == saslik_epoch_ && url == QUrl(saslik_url_->text().trimmed()))
+                applyDiscovery(process->readAllStandardOutput(),code==0 && status==QProcess::NormalExit);
+            process->deleteLater();
+        });
+        connect(process,&QProcess::errorOccurred,this,[this,process](QProcess::ProcessError error) {
+            if(error==QProcess::FailedToStart){discovery_request_pending_=false;applyDiscovery({},false);process->deleteLater();}
+        });
+        QTimer::singleShot(10000,process,[process] {if(process->state()!=QProcess::NotRunning)process->kill();});
+        process->start(QCoreApplication::applicationFilePath(),{"remote-status",url.toString()});
+        return;
+    }
     if (!url.isValid() || (url.scheme() != QStringLiteral("http")
                            && url.scheme() != QStringLiteral("https"))) {
         saslik_reachable_ = false;
@@ -576,7 +824,7 @@ void MainWindow::pollSaslik()
     discovery_request_pending_ = true;
     QNetworkRequest request(url);
     request.setTransferTimeout(1800);
-    network_->get(request);
+    network_->get(request)->setProperty("saslikEpoch", QVariant::fromValue(saslik_epoch_));
 }
 
 void MainWindow::receiveSaslik(QNetworkReply* reply)
@@ -585,7 +833,16 @@ void MainWindow::receiveSaslik(QNetworkReply* reply)
     const QByteArray payload = reply->readAll();
     const bool request_ok = reply->error() == QNetworkReply::NoError;
     reply->deleteLater();
+    if (reply->property("saslikEpoch").toULongLong() != saslik_epoch_
+        || reply->url() != QUrl(saslik_url_->text().trimmed())) return;
+    applyDiscovery(payload,request_ok);
+}
+
+void MainWindow::applyDiscovery(const QByteArray& payload, bool request_ok)
+{
+    if (saslik_disconnected_) return;
     if (!request_ok) {
+        ca_panel_->setRemoteDisconnected();
         saslik_reachable_ = false;
         discovery_online_ = false;
         discovery_warning_.clear();
@@ -604,12 +861,17 @@ void MainWindow::receiveSaslik(QNetworkReply* reply)
         return;
     }
     saslik_reachable_ = true;
+    if (QUrl(saslik_url_->text().trimmed()).scheme() == "skewer") {
+        const auto pem = value["ca_pem"].toString().toUtf8();
+        if (!pem.isEmpty()) ca_panel_->setRemoteCertificate(pem);
+        else ca_panel_->setRemoteDisconnected();
+    }
     // Trust inventory belongs to the Saslik connection, not to the lab's
     // current routing state.  Keep reporting while the lab is stopped too.
     QUrl ca_source(saslik_url_->text().trimmed());
     ca_source.setPath(QStringLiteral("/api/ca"));
     ca_source.setQuery(QString{}); ca_source.setFragment(QString{});
-    ca_panel_->setSource(ca_source);
+    if (ca_source.scheme()=="http" || ca_source.scheme()=="https") ca_panel_->setSource(ca_source);
     if (!trust_report_.isEmpty()
         && QDateTime::currentMSecsSinceEpoch() - last_trust_report_ms_ >= 10000)
         sendTrustReport();
@@ -641,13 +903,32 @@ void MainWindow::receiveSaslik(QNetworkReply* reply)
 
 void MainWindow::sendTrustReport()
 {
+    if (saslik_disconnected_) return;
     QUrl target(saslik_url_->text().trimmed());
     if (trust_report_.isEmpty() || !target.isValid() || target.host().isEmpty()) return;
-    target.setPath(QStringLiteral("/api/skewer/report"));
-    target.setQuery(QString{}); target.setFragment(QString{});
     const QJsonObject report{{"version", 1}, {"hostname", QHostInfo::localHostName()},
                              {"skewer_version", QString::fromLatin1(SKEWER_VERSION)},
                              {"ca", trust_report_}};
+    if (target.scheme() == "skewer") {
+        if (trust_report_pending_) return;
+        trust_report_pending_ = true;
+        auto* job = new QFutureWatcher<QString>(this);
+        connect(job, &QFutureWatcher<QString>::finished, this, [this, job] {
+            trust_report_pending_ = false;
+            const auto error = job->result(); job->deleteLater();
+            if (error.isEmpty()) last_trust_report_ms_ = QDateTime::currentMSecsSinceEpoch();
+            else action_status_->setText(tr("CA report could not be sent: %1").arg(error));
+        });
+        job->setFuture(QtConcurrent::run([target, report] {
+            try {
+                const auto result = pairedRequest(target, {{"action", "report"}, {"report", report}});
+                return result["ok"].toBool() ? QString{} : QStringLiteral("Report rejected");
+            } catch (const std::exception& error) { return QString::fromUtf8(error.what()); }
+        }));
+        return;
+    }
+    target.setPath(QStringLiteral("/api/skewer/report"));
+    target.setQuery(QString{}); target.setFragment(QString{});
     QNetworkRequest request(target);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setTransferTimeout(10000);
@@ -678,6 +959,9 @@ void MainWindow::launchCommand()
 
 void MainWindow::rememberExpandedItems()
 {
+    tree_->setUpdatesEnabled(false);
+    saved_tree_scroll_ = tree_->verticalScrollBar()->value();
+    saved_tree_horizontal_scroll_ = tree_->horizontalScrollBar()->value();
     expanded_items_.clear();
     selected_item_ = tree_->currentIndex().data(ApplicationModel::StableIdRole).toString();
     const auto visit = [this](const auto& self, const QModelIndex& parent) -> void {
@@ -708,6 +992,12 @@ void MainWindow::restoreExpandedItems()
     };
     visit(visit, {});
     restored_once_ = true;
+    // Finish the reset, expansion and layout as one visible update. Restoring
+    // the current item must not scroll another section into view each poll.
+    tree_->doItemsLayout();
+    tree_->verticalScrollBar()->setValue(saved_tree_scroll_);
+    tree_->horizontalScrollBar()->setValue(saved_tree_horizontal_scroll_);
+    tree_->setUpdatesEnabled(true);
 }
 
 void MainWindow::updateLauncherSuggestions(const QStringList& suggestions)
@@ -752,7 +1042,20 @@ void MainWindow::routeSelection()
     const CgroupResult result = cgroups_.route(pids, index.data().toString());
     action_status_->setText(result.detail);
     if (!result.ok) QMessageBox::warning(this, tr("Skewer"), result.detail);
-    else model_->refresh();
+    else {
+        model_->refresh();
+        if (QSettings().value("connections/cleanupOnAttach", false).toBool()) {
+            QTimer::singleShot(500, this, [this,pids] {
+                auto* job = new QFutureWatcher<RoutingResult>(this);
+                connect(job,&QFutureWatcher<RoutingResult>::finished,this,[this,job] {
+                    action_status_->setText(job->result().detail); job->deleteLater();
+                });
+                job->setFuture(QtConcurrent::run([pids] {
+                    return RoutingController().cleanupTcp(pids,RoutingController::Authorization::Desktop);
+                }));
+            });
+        }
+    }
 }
 
 void MainWindow::releaseSelection()

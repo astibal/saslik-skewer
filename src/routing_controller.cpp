@@ -6,6 +6,8 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSettings>
+#include <QFile>
 
 #include <unistd.h>
 
@@ -40,12 +42,35 @@ RoutingResult RoutingController::activate(const QString& next_hop,
         {QStringLiteral("--user"), QStringLiteral("start"),
          QStringLiteral("skewer-routed.slice")}, 10000);
     if (!slice.ok) return {false, QStringLiteral("Cannot create Skewer cgroup: %1").arg(slice.detail)};
-    return invoke({QStringLiteral("up"), next_hop}, authorization);
+    QStringList arguments{QStringLiteral("up"), next_hop};
+    arguments.append(QSettings().value("routing/exemptions").toStringList());
+    return invoke(arguments, authorization);
+}
+
+RoutingResult RoutingController::updateExemptions(const QStringList& destinations, Authorization authorization) const
+{
+    QStringList arguments{QStringLiteral("exemptions")};
+    arguments.append(destinations);
+    return invoke(arguments, authorization);
 }
 
 RoutingResult RoutingController::deactivate(Authorization authorization) const
 {
     return invoke({QStringLiteral("down")}, authorization);
+}
+
+RoutingResult RoutingController::cleanupTcp(const QVector<pid_t>& pids, Authorization authorization, bool preview) const
+{
+    QStringList arguments{preview ? "preview-tcp" : "cleanup-tcp"};
+    for (pid_t pid : pids) {
+        QFile file(QString("/proc/%1/stat").arg(pid));
+        if (!file.open(QIODevice::ReadOnly)) return {false, "Process disappeared; refresh and retry."};
+        const auto data = file.readAll();
+        const auto fields = data.mid(data.lastIndexOf(')')+2).simplified().split(' ');
+        if (fields.size() <= 19) return {false, "Cannot verify process identity."};
+        arguments << QString::number(pid) + ':' + QString::fromLatin1(fields[19]);
+    }
+    return invoke(arguments,authorization);
 }
 
 bool RoutingController::active(const QString& next_hop) const

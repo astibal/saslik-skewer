@@ -1,6 +1,12 @@
 #include "cgroup_manager.hpp"
 
 #include <QDateTime>
+#include <QCoreApplication>
+#include <QDir>
+
+#ifndef SKEWER_INSTALLED_HELPER_PATH
+#define SKEWER_INSTALLED_HELPER_PATH "/usr/libexec/skewer-net-helper"
+#endif
 #include <QFileInfo>
 #include <QFile>
 #include <QRegularExpression>
@@ -54,14 +60,19 @@ CgroupResult CgroupManager::release(const QVector<pid_t>& pids,
     return moveToScope(pids, application_name, false);
 }
 
-QStringList CgroupManager::routedLaunchPrefix(const QString& application_name)
+QStringList CgroupManager::routedLaunchPrefix(const QString& application_name, bool shell)
 {
     const QString unit = QStringLiteral("skewer-routed-%1-%2")
         .arg(safeName(application_name))
         .arg(QDateTime::currentMSecsSinceEpoch());
+    QString helper = QCoreApplication::applicationDirPath() + "/skewer-session";
+    if (!QFileInfo(helper).isExecutable())
+        helper = QFileInfo(QString::fromLatin1(SKEWER_INSTALLED_HELPER_PATH)).dir().filePath("skewer-session");
     return {QStringLiteral("systemd-run"), QStringLiteral("--user"), QStringLiteral("--scope"),
             QStringLiteral("--quiet"), QStringLiteral("--slice=skewer-routed.slice"),
-            QStringLiteral("--unit=") + unit, QStringLiteral("--")};
+            QStringLiteral("--property=Delegate=yes"),
+            QStringLiteral("--unit=") + unit, QStringLiteral("--"), helper,
+            shell ? QStringLiteral("--shell") : QStringLiteral("--")};
 }
 
 CgroupResult CgroupManager::moveToScope(const QVector<pid_t>& pids,

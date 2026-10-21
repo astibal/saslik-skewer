@@ -25,7 +25,10 @@ class RoutingPlanner {
 public:
     [[nodiscard]] static RoutingPlan create(uid_t uid, const QString& next_hop,
                                             const QString& interface_name,
-                                            int cgroup_level = 5);
+                                            int cgroup_level = 5,
+                                            const QStringList& exemptions = {});
+    static bool normalizeExemptions(const QStringList& input, QStringList& output, QString& error);
+    static QString exemptionUpdate(uid_t uid, const QStringList& normalized);
     [[nodiscard]] static QString tableName(uid_t uid);
     [[nodiscard]] static quint32 mark(uid_t uid);
     [[nodiscard]] static quint32 routeTable(uid_t uid);

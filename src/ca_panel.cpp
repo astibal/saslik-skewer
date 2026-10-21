@@ -7,6 +7,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QBuffer>
 #include <QDir>
 #include <QFutureWatcher>
@@ -97,6 +100,14 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
     source_row->addWidget(source_, 1);
     for (auto* button : {fetch_, load_, save_}) source_row->addWidget(button);
     source_layout->addLayout(source_row);
+    known_certificates_ = new QComboBox(source_box);
+    known_certificates_->setObjectName("knownCertificates");
+    known_certificates_->setToolTip(tr("Remembered public CAs. Unused means not currently advertised by a connected Saslik; it does not mean removed from trust stores."));
+    source_layout->addWidget(known_certificates_);
+    connect(known_certificates_, &QComboBox::activated, this, [this](int index) {
+        const auto key = known_certificates_->itemData(index).toString();
+        loadCertificate(QSettings().value("knownCa/" + key).toByteArray());
+    });
     certificate_info_ = new QLabel(tr("No CA selected. You can open a previously saved CA for offline removal."), source_box);
     certificate_info_->setWordWrap(true); certificate_info_->setTextFormat(Qt::PlainText);
     certificate_info_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -134,8 +145,10 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
     table_->setIconSize(QSize(24, 24));
     table_->verticalHeader()->setMinimumSectionSize(0);
     table_->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setStretchLastSection(true);
+    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    table_->horizontalHeader()->setStretchLastSection(false);
+    const int widths[] = {240, 130, 140, 180, 400};
+    for (int col = 0; col < 5; ++col) table_->setColumnWidth(col, widths[col]);
     layout->addWidget(table_, 1);
     auto* actions = new QHBoxLayout;
     scan_ = new QPushButton(tr("Scan stores"), this);
@@ -202,23 +215,80 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
         busy(true); status_->setText(tr("Fetching CA; trust will not be changed."));
         QNetworkRequest request(url); request.setTransferTimeout(10000);
         auto* reply = network->get(request);
+        const auto epoch = remote_epoch_;
         connect(reply, &QNetworkReply::readyRead, reply, [reply] { if (reply->bytesAvailable() > 65536) reply->abort(); });
-        connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        connect(reply, &QNetworkReply::finished, this, [this, reply, epoch] {
             busy(false); reply->deleteLater();
-            if (reply->error() != QNetworkReply::NoError) { status_->setText(tr("CA download failed: %1").arg(reply->errorString())); return; }
-            loadCertificate(reply->readAll());
+            if (epoch != remote_epoch_) return;
+            if (reply->error() != QNetworkReply::NoError) { setRemoteDisconnected(); status_->setText(tr("CA download failed: %1").arg(reply->errorString())); return; }
+            setRemoteCertificate(reply->readAll());
         });
     });
     busy(false);
+    refreshKnownCertificates();
+    QTimer::singleShot(0, this, [this] {
+        if (certificate_.isNull() && known_certificates_->count())
+            loadCertificate(QSettings().value("knownCa/" + known_certificates_->currentData().toString()).toByteArray());
+    });
+}
+void CaTrustPanel::refreshKnownCertificates()
+{
+    QSignalBlocker blocker(known_certificates_);
+    const auto selected = certificate_.digest(QCryptographicHash::Sha256).toHex();
+    known_certificates_->clear();
+    QSettings settings;
+    settings.beginGroup("knownCa");
+    for (const auto& key : settings.childKeys()) {
+        const auto cert = CaStoreManager::parse(settings.value(key).toByteArray());
+        if (cert.isNull()) continue;
+        const auto label = tr("%1 · %2 · %3").arg(cert.subjectInfo(QSslCertificate::CommonName).join(", "),
+            key.left(12), key == active_fingerprint_ ? tr("active") : tr("unused"));
+        known_certificates_->addItem(label, key);
+        if (key == selected) known_certificates_->setCurrentIndex(known_certificates_->count() - 1);
+    }
+}
+void CaTrustPanel::setRemoteDisconnected()
+{
+    ++remote_epoch_;
+    if (active_fingerprint_.isEmpty()) return;
+    active_fingerprint_.clear();
+    refreshKnownCertificates();
+}
+void CaTrustPanel::disconnectAndOfferRemoval()
+{
+    // Capture the remote CA, not whichever historical certificate is selected.
+    const auto fingerprint = active_fingerprint_.isEmpty() ? last_remote_fingerprint_ : active_fingerprint_;
+    const auto pem = fingerprint.isEmpty() ? QByteArray{}
+        : QSettings().value("knownCa/" + fingerprint).toByteArray();
+    setRemoteDisconnected();
+    if (pem.isEmpty()) return;
+    if (QMessageBox::question(this, tr("Remove disconnected lab CA?"),
+            tr("Scan all supported stores for this lab's CA and offer removal? "
+               "You will confirm the exact fingerprint and stores before any changes. "
+               "Known CA history will be kept; unsupported or inaccessible stores cannot be guaranteed."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes)
+        removeWhenIdle(pem);
+}
+void CaTrustPanel::removeWhenIdle(const QByteArray& pem)
+{
+    if (working_) {
+        QTimer::singleShot(200, this, [this, pem] { removeWhenIdle(pem); });
+        return;
+    }
+    loadCertificate(pem, true);
 }
 void CaTrustPanel::setSource(const QUrl& url)
 {
     // Never replace a certificate already selected for an operation.
-    if (!working_ && source_->text().isEmpty() && url.isValid()) {
+    if (!working_ && url.isValid() && !url.host().isEmpty()
+        && (source_->text() != url.toString() || active_fingerprint_.isEmpty())) {
         source_->setText(url.toString());
         // Discovery and scanning are read-only.  Populate the Saslik report
         // without requiring the user to open this tab or grant trust.
-        QTimer::singleShot(0, fetch_, &QPushButton::click);
+        const auto epoch = remote_epoch_;
+        QTimer::singleShot(0, this, [this, epoch] {
+            if (epoch == remote_epoch_) fetch_->click();
+        });
     }
 }
 void CaTrustPanel::busy(bool value)
@@ -229,6 +299,7 @@ void CaTrustPanel::busy(bool value)
     save_->setEnabled(!value && !certificate_.isNull());
     scan_->setEnabled(!value && !certificate_.isNull()); remove_all_->setEnabled(scan_->isEnabled());
     table_->setEnabled(!value); selectionChanged();
+    known_certificates_->setEnabled(!value);
 }
 void CaTrustPanel::selectionChanged()
 {
@@ -259,15 +330,36 @@ void CaTrustPanel::applyFilters()
     }
     selectionChanged();
 }
-void CaTrustPanel::loadCertificate(const QByteArray& pem)
+void CaTrustPanel::loadCertificate(const QByteArray& pem, bool remove_all)
 {
     const auto cert = CaStoreManager::parse(pem);
     if (cert.isNull()) { status_->setText(tr("Expected exactly one PEM CA certificate with CA basic constraints. Previous selection unchanged.")); return; }
     certificate_ = cert; stores_.clear(); table_->setRowCount(0);
+    // Public certificate history is retained independently of trust-store
+    // installation, pairing credentials and the current connection lifetime.
+    QSettings().setValue("knownCa/" + QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex()), cert.toPem());
+    refreshKnownCertificates();
+    emit certificateChanged(cert.toPem());
     certificate_info_->setText(tr("CA: %1\nSHA-256: %2\nValid: %3 — %4")
         .arg(cert.subjectInfo(QSslCertificate::CommonName).join(", "), CaStoreManager(cert).fingerprint(),
              cert.effectiveDate().toString(Qt::ISODate), cert.expiryDate().toString(Qt::ISODate)));
-    scan();
+    scan(remove_all);
+}
+void CaTrustPanel::setRemoteCertificate(const QByteArray& pem)
+{
+    // A scan or trust operation must finish against the certificate it started
+    // with. Discovery will retry on its next poll; identical CAs need no rescan.
+    if (working_) return;
+    const auto certificate = CaStoreManager::parse(pem);
+    if (certificate.isNull()) {
+        status_->setText(tr("Saslik did not supply a valid CA certificate. Previous selection unchanged."));
+        return;
+    }
+    const auto fingerprint = QString::fromLatin1(certificate.digest(QCryptographicHash::Sha256).toHex());
+    if (fingerprint == active_fingerprint_) return;
+    active_fingerprint_ = fingerprint;
+    last_remote_fingerprint_ = fingerprint;
+    loadCertificate(certificate.toPem());
 }
 void CaTrustPanel::scan(bool remove_all)
 {

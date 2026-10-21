@@ -18,7 +18,7 @@ public:
     [[nodiscard]] CgroupResult release(const QVector<pid_t>& pids,
                                        const QString& application_name) const;
 
-    [[nodiscard]] static QStringList routedLaunchPrefix(const QString& application_name);
+    [[nodiscard]] static QStringList routedLaunchPrefix(const QString& application_name, bool shell = false);
 
 private:
     [[nodiscard]] CgroupResult moveToScope(const QVector<pid_t>& pids,

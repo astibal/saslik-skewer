@@ -4,6 +4,8 @@
 
 #include <QAbstractItemModelTester>
 #include <QApplication>
+#include <QPersistentModelIndex>
+#include <QSignalSpy>
 
 #include <iostream>
 #include <unistd.h>
@@ -87,5 +89,59 @@ int main(int argc, char** argv)
             || candidate.data(ApplicationModel::PartiallyRoutedRole).toBool()) return 9;
     }
     if (!found) return 10;
+    const auto section_index = model.index(0,0);
+    const auto badge = model.index(0, ApplicationModel::ConnectionsColumn, section_index);
+    const auto pids = badge.data(ApplicationModel::ProcessIdsRole).toList();
+    if (pids.isEmpty()) return 11;
+    ConnectionSnapshot sockets;
+    sockets.complete = true;
+    sockets.rows.push_back({"tcp", "ESTAB", "127.0.0.1:1", "127.0.0.1:2", "/other.scope", "123", {pids.first().toInt()}});
+    model.setConnections(sockets);
+    if (!badge.data().toString().contains("1 out")) return 12;
+    // Repeated paints must reuse the same snapshot; an unchanged poll must not
+    // invalidate the view. A changed socket group below must invalidate it.
+    int updates = 0;
+    QObject::connect(&model, &QAbstractItemModel::dataChanged, [&updates] { ++updates; });
+    model.setConnections(sockets);
+    if (updates != 0 || !badge.data().toString().contains("1 out")) return 15;
+    sockets.rows[0].group = "/skewer-routed.slice/test.scope";
+    model.setConnections(sockets);
+    if (!badge.data().toString().contains("All")) return 13;
+    sockets.unreadable_pids.insert(99999999);
+    model.setConnections(sockets);
+    if (!badge.data().toString().contains("All")) return 16;
+    sockets.unreadable_pids.insert(pids.first().toInt());
+    model.setConnections(sockets);
+    if (!badge.data().toString().contains("Unknown")) return 17;
+    sockets.unreadable_pids.clear();
+    sockets.complete = false;
+    model.setConnections(sockets);
+    if (!badge.data().toString().contains("Unknown")) return 14;
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    const auto findPid = [&](const auto& self, int pid, const QModelIndex& parent) -> QModelIndex {
+        for (int row = 0; row < model.rowCount(parent); ++row) {
+            auto current = model.index(row, 0, parent);
+            if (current.data(ApplicationModel::StableIdRole).toString() == QString("pid:%1").arg(pid))
+                return current;
+            auto child = self(self, pid, current);
+            if (child.isValid()) return child;
+        }
+        return {};
+    };
+    model.setProcesses({first, helper});
+    QPersistentModelIndex kept(findPid(findPid, first.pid, {}));
+    QPersistentModelIndex keptChild(findPid(findPid, helper.pid, {}));
+    model.setProcesses({first, helper, second, unrelated});
+    if (!kept.isValid() || !keptChild.isValid()) return 18;
+    // Moving to a different scope changes application grouping, not PID identity.
+    first.cgroup = "/skewer-routed.slice/moved.scope";
+    helper.cgroup = first.cgroup;
+    first.name = "renamed-app";
+    model.setProcesses({first, helper, unrelated});
+    if (!kept.isValid() || !keptChild.isValid() || kept.data().toString() != first.name) return 19;
+    model.setProcesses({first, unrelated});
+    if (!kept.isValid() || keptChild.isValid() || resets.count()) return 20;
+    model.setProcesses({});
+    if (kept.isValid() || model.rowCount() || resets.count()) return 21;
     return 0;
 }
