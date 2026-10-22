@@ -6,6 +6,10 @@
 
 #include <QApplication>
 #include <QIcon>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QLockFile>
+#include <QStandardPaths>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
@@ -125,10 +129,6 @@ int main(int argc, char* argv[])
     QApplication::setDesktopFileName(QStringLiteral("org.saslik.Skewer"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/skewer.svg")));
 
-    if (tui) {
-        Tui interface;
-        return interface.run();
-    }
     if (launcher_only) {
         Launcher launcher;
         launcher.setWindowTitle("Skewer Launcher");
@@ -143,7 +143,49 @@ int main(int argc, char* argv[])
             break;
         }
     }
+    const QString runtime = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    QDir().mkpath(runtime);
+    const QString socket_path = runtime + QStringLiteral("/skewer-gui.sock");
+    QLockFile instance_lock(runtime + QStringLiteral("/skewer.lock"));
+    instance_lock.setStaleLockTime(0);
+    if (!instance_lock.tryLock(100)) {
+        QLocalSocket peer;
+        peer.connectToServer(socket_path);
+        if (!peer.waitForConnected(1500)) {
+            QTextStream(stderr) << "Skewer is already running in another frontend.\n";
+            return 1;
+        }
+        peer.write(connect_url.toUtf8());
+        peer.waitForBytesWritten(1000);
+        peer.disconnectFromServer();
+        return 0;
+    }
+    if (tui) {
+        Tui interface;
+        return interface.run();
+    }
+    QLocalServer::removeServer(socket_path);
+    QLocalServer instance_server;
+    if (!instance_server.listen(socket_path)) {
+        QTextStream(stderr) << "Cannot create Skewer single-instance endpoint: "
+                            << instance_server.errorString() << '\n';
+        return 1;
+    }
     MainWindow window(connect_url);
+    QObject::connect(&instance_server, &QLocalServer::newConnection, &window, [&] {
+        while (auto* peer = instance_server.nextPendingConnection()) {
+            QObject::connect(peer, &QLocalSocket::readyRead, &window, [&window, peer] {
+                window.openConnectUrl(QString::fromUtf8(peer->readAll()));
+                window.showNormal();
+                window.raise();
+                window.activateWindow();
+            });
+            QObject::connect(peer, &QLocalSocket::disconnected, peer, &QObject::deleteLater);
+            window.showNormal();
+            window.raise();
+            window.activateWindow();
+        }
+    });
     window.show();
     return application.exec();
 }

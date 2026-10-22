@@ -504,19 +504,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
             this, &MainWindow::updateRoutingSource);
     network_ = new QNetworkAccessManager(this);
     connect(network_, &QNetworkAccessManager::finished, this, &MainWindow::receiveSaslik);
-    if (!connect_url.isEmpty()) {
-        const QUrl url(connect_url);
-        const QString discovery = QUrlQuery(url).queryItemValue(QStringLiteral("discovery"));
-        if (url.scheme() == QStringLiteral("skewer") && !discovery.isEmpty()) {
-            routing_source_->setCurrentIndex(1);
-            saslik_url_->setText(discovery);
-            if (info_url->text().isEmpty()) info_url->setText(discovery);
-            routing_requested_ = true;
-            initial_settings.setValue(QStringLiteral("routing/mode"), QStringLiteral("saslik"));
-            initial_settings.setValue(QStringLiteral("routing/saslikUrl"), discovery);
-            initial_settings.setValue(QStringLiteral("routing/requested"), true);
-        }
-    }
+    openConnectUrl(connect_url);
     updateRoutingSource();
     routing_watchdog_ = new QTimer(this);
     routing_watchdog_->setInterval(5000);
@@ -623,6 +611,23 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
         "QLabel#actionStatus { color: palette(window-text); }"
         "QLabel#routingStatus { color: palette(window-text); min-width: 58px; }"
         "QTreeView { font-size: 10pt; }"));
+}
+
+void MainWindow::openConnectUrl(const QString& connect_url)
+{
+    if (connect_url.isEmpty()) return;
+    const QUrl url(connect_url);
+    const QString discovery = QUrlQuery(url).queryItemValue(QStringLiteral("discovery"));
+    if (url.scheme() != QStringLiteral("skewer") || discovery.isEmpty()) return;
+    routing_source_->setCurrentIndex(1);
+    saslik_url_->setText(discovery);
+    if (auto* info = findChild<QLineEdit*>(QStringLiteral("saslikInfoUrl")); info && info->text().isEmpty())
+        info->setText(discovery);
+    routing_requested_ = true;
+    QSettings settings;
+    settings.setValue(QStringLiteral("routing/mode"), QStringLiteral("saslik"));
+    settings.setValue(QStringLiteral("routing/saslikUrl"), discovery);
+    settings.setValue(QStringLiteral("routing/requested"), true);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)

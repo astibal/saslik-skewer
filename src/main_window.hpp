@@ -28,6 +28,7 @@ class MainWindow final : public QMainWindow {
 
 public:
     explicit MainWindow(const QString& connect_url = {}, QWidget* parent = nullptr);
+    void openConnectUrl(const QString& connect_url);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
