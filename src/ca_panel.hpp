@@ -5,7 +5,7 @@
 #include <QUrl>
 class QLabel;
 class QLineEdit;
-class QTableWidget;
+class QTreeWidget;
 class QPushButton;
 class QProgressBar;
 class QCheckBox;
@@ -42,7 +42,7 @@ private:
     QLabel* certificate_info_{};
     QLabel* status_{};
     QProgressBar* progress_{};
-    QTableWidget* table_{};
+    QTreeWidget* table_{};
     QCheckBox *applicable_{}, *current_snap_{};
     QPushButton *fetch_{}, *load_{}, *save_{}, *scan_{}, *install_{}, *remove_{}, *remove_all_{};
     bool working_{};

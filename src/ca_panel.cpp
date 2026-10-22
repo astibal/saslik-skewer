@@ -29,7 +29,7 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QStyle>
-#include <QTableWidget>
+#include <QTreeWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -130,9 +130,10 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
     layout->addLayout(filters);
     connect(applicable_, &QCheckBox::toggled, this, &CaTrustPanel::applyFilters);
     connect(current_snap_, &QCheckBox::toggled, this, &CaTrustPanel::applyFilters);
-    table_ = new QTableWidget(0, 5, this);
+    table_ = new QTreeWidget(this);
+    table_->setColumnCount(5);
     table_->setObjectName("caStores");
-    table_->setHorizontalHeaderLabels({tr("Application / profile"), tr("Store type"), tr("Snap revision"), tr("CA state"), tr("Exact location")});
+    table_->setHeaderLabels({tr("Application / profile"), tr("Store type"), tr("Snap revision"), tr("CA state"), tr("Exact location")});
     table_->setSortingEnabled(true);
     table_->sortItems(0, Qt::AscendingOrder);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -143,10 +144,9 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
     table_->setWordWrap(false);
     table_->setTextElideMode(Qt::ElideRight);
     table_->setIconSize(QSize(24, 24));
-    table_->verticalHeader()->setMinimumSectionSize(0);
-    table_->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    table_->horizontalHeader()->setStretchLastSection(false);
+    table_->setUniformRowHeights(true);
+    table_->header()->setSectionResizeMode(QHeaderView::Interactive);
+    table_->header()->setStretchLastSection(false);
     const int widths[] = {240, 130, 140, 180, 400};
     for (int col = 0; col < 5; ++col) table_->setColumnWidth(col, widths[col]);
     layout->addWidget(table_, 1);
@@ -183,7 +183,7 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
     app_text->setTextFormat(Qt::PlainText); app_text->setWordWrap(true); app_text->hide();
     apps_layout->addWidget(app_text);
     connect(apps, &QGroupBox::toggled, app_text, &QWidget::setVisible); layout->addWidget(apps);
-    connect(table_, &QTableWidget::itemSelectionChanged, this, [this] { selectionChanged(); });
+    connect(table_, &QTreeWidget::itemSelectionChanged, this, [this] { selectionChanged(); });
     connect(scan_, &QPushButton::clicked, this, [this] { scan(); });
     connect(remove_all_, &QPushButton::clicked, this, [this] { scan(true); });
     connect(install_, &QPushButton::clicked, this, [this] {
@@ -310,31 +310,38 @@ void CaTrustPanel::selectionChanged()
 }
 int CaTrustPanel::selectedStore() const
 {
-    const int row = table_->currentRow();
-    if (row < 0 || table_->isRowHidden(row)) return -1;
-    const auto* item = table_->item(row, 0);
-    if (!item) return -1;
-    const int index = item->data(Qt::UserRole).toInt();
+    const auto* item = table_->currentItem();
+    if (!item || item->isHidden() || !item->data(0, Qt::UserRole).isValid()) return -1;
+    for (auto* parent = item->parent(); parent; parent = parent->parent())
+        if (parent->isHidden()) return -1;
+    const int index = item->data(0, Qt::UserRole).toInt();
     return index >= 0 && index < stores_.size() ? index : -1;
 }
 void CaTrustPanel::applyFilters()
 {
-    for (int row = 0; row < table_->rowCount(); ++row) {
-        const auto* item = table_->item(row, 0);
-        if (!item) continue;
-        const auto& store = stores_.at(item->data(Qt::UserRole).toInt());
+    const auto filter = [&](const auto& self, QTreeWidgetItem* item) -> bool {
+        if (!item->data(0, Qt::UserRole).isValid()) {
+            bool visible = false;
+            for (int i = 0; i < item->childCount(); ++i) visible = self(self, item->child(i)) || visible;
+            item->setHidden(!visible);
+            return visible;
+        }
+        const auto& store = stores_.at(item->data(0, Qt::UserRole).toInt());
         const bool applicable = store.available || !store.matches.isEmpty();
         const bool current = store.snap_name.isEmpty() || store.snap_state == "current" || store.snap_revision == "common";
-        table_->setRowHidden(row, (applicable_->isChecked() && !applicable)
-            || (current_snap_->isChecked() && !current));
-    }
+        const bool visible = !(applicable_->isChecked() && !applicable)
+            && !(current_snap_->isChecked() && !current);
+        item->setHidden(!visible);
+        return visible;
+    };
+    for (int row = 0; row < table_->topLevelItemCount(); ++row) filter(filter, table_->topLevelItem(row));
     selectionChanged();
 }
 void CaTrustPanel::loadCertificate(const QByteArray& pem, bool remove_all)
 {
     const auto cert = CaStoreManager::parse(pem);
     if (cert.isNull()) { status_->setText(tr("Expected exactly one PEM CA certificate with CA basic constraints. Previous selection unchanged.")); return; }
-    certificate_ = cert; stores_.clear(); table_->setRowCount(0);
+    certificate_ = cert; stores_.clear(); table_->clear();
     // Public certificate history is retained independently of trust-store
     // installation, pairing credentials and the current connection lifetime.
     QSettings().setValue("knownCa/" + QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex()), cert.toPem());
@@ -370,7 +377,7 @@ void CaTrustPanel::scan(bool remove_all)
     connect(watcher, &QFutureWatcher<QVector<CaStore>>::finished, this, [this, watcher, remove_all] {
         table_->setSortingEnabled(false);
         table_->clearSelection();
-        stores_ = watcher->result(); watcher->deleteLater(); table_->setRowCount(stores_.size());
+        stores_ = watcher->result(); watcher->deleteLater(); table_->clear();
         const DesktopCatalog catalog;
         int inaccessible = 0; QVector<CaStore> matches;
         for (int row = 0; row < stores_.size(); ++row) {
@@ -401,20 +408,7 @@ void CaTrustPanel::scan(bool remove_all)
             else if (!store.system && store.label.endsWith("/nssdb")) store.label.chop(6);
             if (!store.available) ++inaccessible;
             if (!store.matches.isEmpty()) matches << store;
-            for (int col = 0; col < 5; ++col) {
-                auto* item = new QTableWidgetItem(col == 0 ? store.label
-                    : col == 1 ? (store.system ? tr("System") : tr("NSS"))
-                    : col == 2 ? (store.snap_name.isEmpty() ? QStringLiteral("—")
-                        : store.snap_revision + " · " + store.snap_state)
-                    : col == 3 ? store.detail : store.path);
-                if (store.installed && store.available) item->setForeground(QColor("#41b879"));
-                if (col == 0) { item->setIcon(icon); item->setData(Qt::UserRole, row); }
-                item->setToolTip(store.path + '\n' + store.detail); table_->setItem(row, col, item);
-            }
         }
-        table_->resizeRowsToContents();
-        table_->setSortingEnabled(true);
-        applyFilters();
         // Map only known per-application profile locations. Generic Electron
         // and shared NSS stores are deliberately not guessed as app ownership.
         QHash<QString, QString> app_statuses;
@@ -449,6 +443,8 @@ void CaTrustPanel::scan(bool remove_all)
         QJsonArray reported_stores;
         QJsonArray reported_applications;
         QSet<QString> reported_ids;
+        QHash<QString, QTreeWidgetItem*> families, variants;
+        QHash<QTreeWidgetItem*, QPair<int, int>> counts;
         const auto desktopFor = [&catalog](const QString& name,
                                            bool prefer_snap = false) -> const DesktopEntry* {
             const DesktopEntry* best = nullptr;
@@ -504,6 +500,39 @@ void CaTrustPanel::scan(bool remove_all)
                     {"alias", application_alias}, {"recognized", application_recognized},
                     {"icon", iconDataUrl(application_icon)}});
             }
+            // The local tree and remote report share this exact identity mapping.
+            auto* family = families.value(application_id);
+            if (!family) {
+                family = new QTreeWidgetItem(table_, {application_alias});
+                family->setIcon(0, application_icon);
+                family->setExpanded(true);
+                families.insert(application_id, family);
+            }
+            const QString variant = store.system ? tr("System") : !store.snap_name.isEmpty()
+                ? tr("Snap · %1 · %2").arg(store.snap_revision, store.snap_state)
+                : store.path.contains("/.var/app/") ? tr("Flatpak") : tr("Native");
+            const QString variant_key = application_id + '\n' + variant;
+            auto* branch = variants.value(variant_key);
+            if (!branch) {
+                branch = new QTreeWidgetItem(family, {variant});
+                branch->setExpanded(true);
+                variants.insert(variant_key, branch);
+            }
+            auto* leaf = new QTreeWidgetItem(branch, {QFileInfo(store.path).fileName(),
+                store.system ? tr("System") : tr("NSS"), store.snap_revision,
+                store.detail, store.path});
+            leaf->setData(0, Qt::UserRole, int(&store - stores_.constData()));
+            for (int col = 0; col < 5; ++col) {
+                leaf->setToolTip(col, store.path + '\n' + store.detail);
+                if (store.installed && store.available) leaf->setForeground(col, QColor("#41b879"));
+            }
+            for (auto* group : {branch, family}) {
+                // Match Saslik: retained Snap revisions do not enter totals.
+                if (!store.snap_state.startsWith("retained")) {
+                    ++counts[group].second;
+                    counts[group].first += store.installed;
+                }
+            }
             QJsonObject item{{"key", store.key}, {"label", store.label}, {"path", store.path},
                 {"system", store.system}, {"available", store.available},
                 {"installed", store.installed}, {"detail", store.detail},
@@ -518,6 +547,10 @@ void CaTrustPanel::scan(bool remove_all)
             }
             reported_stores.append(item);
         }
+        for (auto it = counts.cbegin(); it != counts.cend(); ++it)
+            it.key()->setText(3, tr("Trusted %1/%2").arg(it.value().first).arg(it.value().second));
+        table_->setSortingEnabled(true);
+        applyFilters();
         emit trustReportReady(QJsonObject{
             {"fingerprint", CaStoreManager(certificate_).fingerprint()},
             {"applications", reported_applications},

@@ -16,6 +16,7 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QTreeView>
+#include <QTreeWidget>
 #include <QScrollArea>
 
 int main(int argc, char** argv)
@@ -61,7 +62,7 @@ int main(int argc, char** argv)
     close_to_tray->setChecked(true);
     const auto* current = window.findChild<QCheckBox*>("caOnlyCurrentSnap");
     const auto* applicable = window.findChild<QCheckBox*>("caOnlyApplicable");
-    const auto* stores = window.findChild<QTableWidget*>("caStores");
+    const auto* stores = window.findChild<QTreeWidget*>("caStores");
     const auto* runtime_stores = window.findChild<QTableWidget*>("runtimeTrustTable");
     const auto* runtime_prepare = window.findChild<QPushButton*>("runtimeTrustPrepare");
     const auto* runtime_copy = window.findChild<QPushButton*>("runtimeTrustCopyEnvironment");
