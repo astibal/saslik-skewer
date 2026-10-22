@@ -117,10 +117,15 @@ int main(int argc, char** argv)
     if (updates != 0 || !badge.data().toString().contains("1 out")) return 15;
     sockets.rows[0].group = "/skewer-routed.slice/test.scope";
     model.setConnections(sockets);
-    if (!badge.data().toString().contains("All")) return 13;
+    model.setRoutingState(false, true);
+    if (!badge.data().toString().contains("Dropped")) return 30;
+    model.setRoutingState(false, false);
+    if (!badge.data().toString().contains("Unprotected")) return 31;
+    model.setRoutingState(true, true);
+    if (!badge.data().toString().contains("In slice")) return 13;
     sockets.unreadable_pids.insert(99999999);
     model.setConnections(sockets);
-    if (!badge.data().toString().contains("All")) return 16;
+    if (!badge.data().toString().contains("In slice")) return 16;
     sockets.unreadable_pids.insert(pids.first().toInt());
     model.setConnections(sockets);
     if (!badge.data().toString().contains("Unknown")) return 17;
@@ -153,7 +158,9 @@ int main(int argc, char** argv)
     model.setProcesses({first, unrelated});
     if (!kept.isValid() || keptChild.isValid() || resets.count()) return 20;
     model.setProcesses({});
-    if (kept.isValid() || model.rowCount() || resets.count()) return 21;
+    if (kept.isValid() || model.rowCount() != 1 || resets.count()
+        || model.index(0, 0).data(ApplicationModel::StableIdRole).toString() != "section:interfaces"
+        || !model.index(0, 0).data(ApplicationModel::ProcessIdsRole).toList().isEmpty()) return 21;
     ProcessInfo shell = first;
     shell.pid = 501; shell.name = "bash"; shell.executable = "/bin/bash";
     shell.cgroup = "/app-shell.scope"; shell.arguments = {"bash"};

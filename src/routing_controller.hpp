@@ -13,6 +13,8 @@ struct RoutingResult {
 class RoutingController {
 public:
     enum class Authorization { Desktop, Terminal };
+    [[nodiscard]] RoutingResult interfaceChange(const QString& name, int index, const QString& gateway,
+                                                bool attach, Authorization authorization) const;
     [[nodiscard]] RoutingResult cleanupTcp(const QVector<pid_t>& pids, Authorization authorization, bool preview = false) const;
 
     [[nodiscard]] RoutingResult activate(const QString& next_hop,

@@ -1,4 +1,5 @@
 #include "cgroup_manager.hpp"
+#include "routing_guard.hpp"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -28,6 +29,7 @@ bool waitForCgroup(qint64 pid, const QString& needle)
 int main(int argc, char** argv)
 {
     QCoreApplication application(argc, argv);
+    if (!RoutingGuard::installed(getuid())) return 77;
     CgroupManager manager;
     if (manager.route({1}, QStringLiteral("forbidden")).ok) {
         std::cerr << "PID 1 must never be accepted\n";

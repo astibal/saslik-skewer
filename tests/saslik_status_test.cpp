@@ -1,4 +1,7 @@
 #include "main_window.hpp"
+#include "interface_routing.hpp"
+#include "application_model.hpp"
+#include "routing_guard.hpp"
 
 #include <QApplication>
 #include <QAction>
@@ -47,14 +50,30 @@ int main(int argc, char** argv)
         QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
     });
     MainWindow window;
+    auto* connections = window.findChild<QTableWidget*>("connectionsTable");
+    auto* show_cgroup = window.findChild<QCheckBox*>("connectionsShowCgroup");
+    if (!connections || !show_cgroup || !connections->isColumnHidden(6)
+        || connections->horizontalHeader()->visualIndex(7) != 0
+        || connections->horizontalHeaderItem(7)->text() != "Application") return 31;
+    show_cgroup->setChecked(true);
+    if (connections->isColumnHidden(6) || !QSettings().value("connections/showCgroup").toBool()) return 32;
+    show_cgroup->setChecked(false);
     const auto* tree = window.findChild<QTreeView*>();
     if (!tree) return 20;
     for (int col = 0; col < tree->model()->columnCount(); ++col)
         if (tree->header()->sectionResizeMode(col) != QHeaderView::Interactive) return 21;
     const auto* tray = window.findChild<QSystemTrayIcon*>("skewerTray");
-    for (int attempt = 0; tray && attempt < 50 && !tray->toolTip().contains("Routing inactive"); ++attempt)
+    // QSettings is isolated, but root-owned interface selections survive GUI
+    // restarts. Never clear the user's live routing merely to run a UI test.
+    const auto live_interfaces = InterfaceRouting::state(getuid());
+    auto* application_model = window.findChild<ApplicationModel*>();
+    const QString expected_routing = application_model && application_model->hasAttachedProcesses()
+        ? (RoutingGuard::installed(getuid()) ? "Dropped" : "Unprotected")
+        : live_interfaces["selections"].toObject().isEmpty()
+        ? "Routing inactive" : "Interface ingress configured via " + live_interfaces["gateway"].toString();
+    for (int attempt = 0; tray && attempt < 50 && !tray->toolTip().contains(expected_routing); ++attempt)
         QTest::qWait(20);
-    if (!tray || !tray->toolTip().contains("Routing inactive")) return 11;
+    if (!tray || !tray->toolTip().contains(expected_routing)) return 11;
     auto* close_to_tray = window.findChild<QAction*>("closeToTray");
     if (!close_to_tray || !close_to_tray->isCheckable() || !close_to_tray->isChecked()) return 8;
     close_to_tray->setChecked(false);
@@ -127,6 +146,27 @@ int main(int argc, char** argv)
                    << QSettings().value("saslik/disconnected") << connection->text();
         return 26;
     }
+    // Missing process routing must take priority over configured interface ingress.
+    ProcessInfo attached;
+    attached.pid = 98765432;
+    attached.name = "guard-test";
+    attached.cgroup = "/skewer-routed.slice/test.scope";
+    application_model->setProcesses({attached});
+    QMetaObject::invokeMethod(&window, "updateRoutingStatus");
+    auto* alarm = window.findChild<QTimer*>("routingAlarm");
+    for (int i = 0; i < 40 && (!alarm || !alarm->isActive()); ++i) {
+        QTest::qWait(20);
+        alarm = window.findChild<QTimer*>("routingAlarm");
+    }
+    if (!alarm || !alarm->isActive()) return 40;
+    auto* routing_label = window.findChild<QLabel*>("routingStatus");
+    if (!routing_label || !(routing_label->text().contains("Dropped")
+        || routing_label->text().contains("Unprotected"))) return 41;
+    const QString previous_color = routing_label->styleSheet();
+    QMetaObject::invokeMethod(alarm, "timeout");
+    const QString first_color = routing_label->styleSheet();
+    QMetaObject::invokeMethod(alarm, "timeout");
+    if (first_color == previous_color && routing_label->styleSheet() == previous_color) return 42;
     // Without a tray host, closing must not strand an invisible application.
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         window.show();

@@ -127,7 +127,9 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
             const auto parent = model->index(section,0);
             for (int row=0; row<model->rowCount(parent); ++row) {
                 const auto item = model->index(row,0,parent);
-                application->addItem(item.data().toString(), item.data(ApplicationModel::ProcessIdsRole));
+                if (item.data(ApplicationModel::NodeTypeRole).toInt() != int(ApplicationModel::NodeType::Application)) continue;
+                application->addItem(qvariant_cast<QIcon>(item.data(Qt::DecorationRole)),
+                    item.data().toString(), item.data(ApplicationModel::ProcessIdsRole));
                 const int index = application->count()-1;
                 const auto id = item.data(ApplicationModel::StableIdRole).toString();
                 application->setItemData(index,id,Qt::UserRole+1);
@@ -137,17 +139,29 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
     };
     refresh_applications();
     connect(model, &ApplicationModel::processesChanged, this, refresh_applications);
-    filter->setPlaceholderText(tr("Filter PID, destination or cgroup…"));
+    filter->setPlaceholderText(tr("Filter application, PID, destination or cgroup…"));
     layout->addWidget(filter);
     auto* note = new QLabel(tr("Socket cgroup membership, not proof of traffic passing through Saslik. Current user, current network namespace."));
     note->setWordWrap(true); layout->addWidget(note);
-    auto* table = new QTableWidget(0, 7);
-    table->setHorizontalHeaderLabels({tr("PID"), tr("Protocol"), tr("Destination"), tr("State"), tr("Group"), tr("Local"), tr("Socket cgroup")});
+    auto* table = new QTableWidget(0, 8);
+    table->setObjectName("connectionsTable");
+    table->setHorizontalHeaderLabels({tr("PID"), tr("Protocol"), tr("Destination"), tr("State"), tr("Routing"), tr("Local"), tr("Socket cgroup"), tr("Application")});
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     table->horizontalHeader()->setStretchLastSection(false);
     const int widths[] = {100, 85, 230, 120, 120, 230, 450};
     for (int col = 0; col < 7; ++col) table->setColumnWidth(col, widths[col]);
+    table->setColumnWidth(7, 220);
+    table->horizontalHeader()->moveSection(7, 0);
+    auto* show_cgroup = new QCheckBox(tr("Show socket cgroup"), this);
+    show_cgroup->setObjectName("connectionsShowCgroup");
+    show_cgroup->setChecked(QSettings().value("connections/showCgroup", false).toBool());
+    table->setColumnHidden(6, !show_cgroup->isChecked());
+    connect(show_cgroup, &QCheckBox::toggled, this, [table](bool show) {
+        table->setColumnHidden(6, !show);
+        QSettings().setValue("connections/showCgroup", show);
+    });
+    layout->addWidget(show_cgroup);
     layout->addWidget(table);
     auto* watcher = new QFutureWatcher<ConnectionSnapshot>(this);
     auto* timer = new QTimer(this);
@@ -170,6 +184,25 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
         // Badges need snapshots even when this tab is hidden, but thousands of
         // table items do not. Render the detail view only while it is visible.
         if (!isVisible()) return;
+        struct Owner { QString name; QIcon icon; int members; };
+        QHash<int, Owner> owners;
+        // Map once per snapshot, not once per socket. Prefer the specific app
+        // over a containing shell/group when both views include the same PID.
+        const auto collect = [&](const auto& self, const QModelIndex& parent) -> void {
+            for (int i = 0; i < model->rowCount(parent); ++i) {
+                const auto item = model->index(i, 0, parent);
+                if (item.data(ApplicationModel::NodeTypeRole).toInt() == int(ApplicationModel::NodeType::Application)) {
+                    const auto members = item.data(ApplicationModel::ProcessIdsRole).toList();
+                    const Owner owner{item.data().toString(), qvariant_cast<QIcon>(item.data(Qt::DecorationRole)), int(members.size())};
+                    for (const auto& value : members) {
+                        const int pid = value.toInt();
+                        if (!owners.contains(pid) || owner.members < owners.value(pid).members) owners.insert(pid, owner);
+                    }
+                }
+                self(self, item);
+            }
+        };
+        collect(collect, {});
         note->setText(snapshot.error.isEmpty()
             ? tr("Socket membership only — not proof of interception. TCP and connected UDP; current user and network namespace.") : snapshot.error);
         const int scroll = table->verticalScrollBar()->value();
@@ -180,10 +213,23 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
         for (const auto& socket : snapshot.rows) {
             QStringList pids; for (int pid : socket.pids) pids << QString::number(pid);
             pids.sort();
+            QStringList names;
+            QIcon icon;
+            for (const auto& pid : pids) {
+                if (!owners.contains(pid.toInt())) continue;
+                const auto owner = owners.value(pid.toInt());
+                if (!names.contains(owner.name)) names << owner.name;
+                if (icon.isNull()) icon = owner.icon;
+            }
+            names.sort();
             const bool routed = socket.group.split('/').contains("skewer-routed.slice");
             const QStringList cells{pids.join(","), socket.protocol, socket.remote, socket.state,
-                socket.group.isEmpty() ? "?" : routed ? tr("● Skewer") : tr("● Outside"), socket.local, socket.group};
+                socket.group.isEmpty() ? "?" : routed ? tr("● Skewer") : tr("● Outside"), socket.local, socket.group,
+                names.isEmpty() ? tr("Unknown application") : names.join(", ")};
             for (int col=0; col<cells.size(); ++col) table->setItem(row,col,new QTableWidgetItem(cells[col]));
+            if (names.size() == 1) table->item(row,7)->setIcon(icon);
+            table->item(row,7)->setToolTip(tr("Socket owners: %1\nPID: %2\nSocket cgroup: %3")
+                .arg(names.join(", "), pids.join(", "), socket.group));
             table->item(row,0)->setData(Qt::UserRole, socket.inode);
             table->item(row,4)->setForeground(QColor(socket.group.isEmpty() ? "#999999" : routed ? "#48c988" : "#dda844"));
             if (socket.inode == selected) table->setCurrentCell(row,0);

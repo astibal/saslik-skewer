@@ -1,4 +1,5 @@
 #include "cgroup_manager.hpp"
+#include "routing_guard.hpp"
 #include "session_guard.hpp"
 #include <QCoreApplication>
 #include <QFile>
@@ -19,6 +20,7 @@ static bool routed()
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
+    if (!RoutingGuard::installed(getuid())) return 77;
     const auto args = app.arguments();
     if (args.contains("--escape")) {
         if (!routed() || qEnvironmentVariable("SKEWER_SESSION") != "1") return 2;

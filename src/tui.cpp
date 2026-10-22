@@ -1,4 +1,5 @@
 #include "tui.hpp"
+#include "routing_guard.hpp"
 
 #include <QElapsedTimer>
 #include <QProcess>
@@ -101,17 +102,23 @@ void Tui::rebuildRows()
 
 void Tui::draw()
 {
+    const bool protected_slice = RoutingGuard::installed(getuid());
+    model_.setRoutingState(routing_active_, protected_slice);
     erase();
     int height = 0, width = 0;
     getmaxyx(stdscr, height, width);
     attron(A_BOLD | COLOR_PAIR(1));
     mvaddnstr(0, 2, "SKEWER", width - 4);
     attroff(A_BOLD | COLOR_PAIR(1));
-    const QString routing_state = routing_active_
-        ? QStringLiteral("routing ACTIVE") : QStringLiteral("routing inactive");
+    const bool alarm = !routing_active_ && model_.hasAttachedProcesses();
+    const QString routing_state = routing_active_ ? QStringLiteral("routing ACTIVE")
+        : alarm ? (protected_slice ? QStringLiteral("Dropped") : QStringLiteral("Unprotected"))
+                : QStringLiteral("routing inactive");
     const QByteArray heading = QStringLiteral("Application selection for Saslik routing · %1")
         .arg(routing_state).toLocal8Bit();
+    if (alarm) attron(A_BOLD | A_BLINK);
     mvaddnstr(1, 2, heading.constData(), width - 4);
+    if (alarm) attroff(A_BOLD | A_BLINK);
     mvhline(2, 0, ACS_HLINE, width);
     const int visible = std::max(0, height - 7);
     const int offset = std::clamp(selected_ - visible / 2, 0,
@@ -196,6 +203,21 @@ void Tui::changeRouting(bool routed)
     const QModelIndex index = rows_.at(selected_).index;
     const auto type = static_cast<ApplicationModel::NodeType>(
         index.data(ApplicationModel::NodeTypeRole).toInt());
+    if (type == ApplicationModel::NodeType::Interface) {
+        if (routed && index.data(ApplicationModel::PartiallyRoutedRole).toBool()) {
+            status_ = "Already selected through its bridge; release the bridge first";
+            return;
+        }
+        if (routed && prompt("IPv4; host bridge gateway required; other gateway MACs/IPv6 blocked; guest CA unknown. Type ATTACH") != "ATTACH") return;
+        def_prog_mode(); endwin();
+        const auto result = routing_.interfaceChange(index.data(ApplicationModel::InterfaceNameRole).toString(),
+            index.data(ApplicationModel::InterfaceIndexRole).toInt(), routing_next_hop_, routed,
+            RoutingController::Authorization::Terminal);
+        reset_prog_mode(); refresh();
+        status_ = result.detail;
+        model_.refresh(); rebuildRows();
+        return;
+    }
     if (type != ApplicationModel::NodeType::Application) {
         status_ = QStringLiteral("Select an application, not an individual helper process");
         return;

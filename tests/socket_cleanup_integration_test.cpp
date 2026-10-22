@@ -1,5 +1,6 @@
 #include "socket_cleanup.hpp"
 #include "cgroup_manager.hpp"
+#include "routing_guard.hpp"
 #include <QCoreApplication>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -10,6 +11,7 @@
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc,argv);
+    if (!RoutingGuard::installed(getuid())) return 77;
     QTcpServer server;
     if (!server.listen(QHostAddress::LocalHost)) return 1;
     QTcpSocket client;

@@ -7,6 +7,7 @@
 #include <QAbstractItemModel>
 #include <QByteArray>
 #include <QTimer>
+#include <QMap>
 
 #include <memory>
 #include <vector>
@@ -22,9 +23,10 @@ public:
         LaunchCommandRole,
         ProcessIdsRole,
         RoutedRole,
-        PartiallyRoutedRole
+        PartiallyRoutedRole,
+        InterfaceNameRole, InterfaceIndexRole
     };
-    enum class NodeType { Section, Application, Process };
+    enum class NodeType { Section, Application, Process, Interface };
 
     explicit ApplicationModel(QObject* parent = nullptr);
     [[nodiscard]] QModelIndex index(int row, int column,
@@ -37,6 +39,8 @@ public:
     [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation,
                                       int role) const override;
     [[nodiscard]] QStringList launcherSuggestions() const;
+    bool hasAttachedProcesses() const;
+    void setRoutingState(bool active, bool protected_slice);
     [[nodiscard]] QString resolveLaunchCommand(const QString& text) const;
     [[nodiscard]] static QString applicationKey(
         const ProcessInfo& process, const QHash<pid_t, const ProcessInfo*>& processes);
@@ -68,6 +72,7 @@ private:
         bool connections_cached{};
         int sockets_total{};
         int sockets_outside{};
+        int sockets_inside{};
         bool sockets_unknown{};
         ProcessInfo process;
         Node* parent{};
@@ -92,7 +97,11 @@ private:
     QByteArray snapshot_;
     quint64 process_revision_{};
     QTimer refresh_timer_;
+    QTimer vm_timer_;
+    QMap<QString, QString> discovered_vms_;
     QHash<QString, QString> ca_statuses_;
     QString ca_fingerprint_;
     ConnectionSnapshot connections_;
+    bool routing_active_{};
+    bool routing_protected_{};
 };

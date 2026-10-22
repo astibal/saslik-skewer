@@ -1,4 +1,5 @@
 #include "session_guard.hpp"
+#include "routing_guard.hpp"
 #include "session_status.hpp"
 #include <QTemporaryDir>
 #include <QCoreApplication>
@@ -194,6 +195,8 @@ int main(int argc, char** argv)
     if (command.isEmpty()) { report("no command provided"); return 2; }
     const auto root = inspect(getpid());
     if (!root || !routedGroup(root->group)) { report("refusing to launch outside skewer-routed.slice"); return 1; }
+    QString protection_error;
+    if (!RoutingGuard::ensure(protection_error)) { report(protection_error); return 1; }
     const QString bundle = QSettings().value("runtimeTrust/activeBundle").toString();
     const QString ca = QSettings().value("runtimeTrust/activeCa").toString();
     if (!bundle.isEmpty()) {

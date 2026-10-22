@@ -38,6 +38,7 @@ install(FILES data/skewer-prompt.bash DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 add_executable(skewer
     data/icons.qrc
     src/main.cpp
+    src/tuntom_client.cpp
     src/pairing.cpp
     src/launcher.cpp
     src/connections.cpp
@@ -66,6 +67,7 @@ add_executable(skewer
 
 add_executable(skewer-net-helper
     src/net_helper.cpp
+    src/tuntom_process.cpp
     src/socket_cleanup.cpp
     src/ca_store.cpp src/ca_store.hpp
     src/routing_plan.cpp
@@ -142,6 +144,28 @@ if(BUILD_TESTING)
     target_link_libraries(routing_plan_test PRIVATE Qt6::Core Qt6::Network)
     target_compile_options(routing_plan_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME routing_plan COMMAND routing_plan_test)
+    set_tests_properties(cgroup_manager session_integration socket_cleanup_integration
+        PROPERTIES SKIP_RETURN_CODE 77)
+    add_executable(interface_routing_test tests/interface_routing_test.cpp)
+    target_include_directories(interface_routing_test PRIVATE src)
+    target_link_libraries(interface_routing_test PRIVATE Qt6::Core)
+    target_compile_options(interface_routing_test PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME interface_routing COMMAND interface_routing_test)
+    add_executable(trust_tree_test tests/trust_tree_test.cpp)
+    target_include_directories(trust_tree_test PRIVATE src)
+    target_link_libraries(trust_tree_test PRIVATE Qt6::Widgets)
+    add_test(NAME trust_tree COMMAND trust_tree_test)
+    set_tests_properties(trust_tree PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_dependencies(interface_routing_test skewer-net-helper)
+    find_program(SKEWER_TEST_PYTHON python3)
+    if(SKEWER_TEST_PYTHON)
+        add_test(NAME routing_guard_packets COMMAND ${SKEWER_TEST_PYTHON}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/routing_guard_packet_test.py $<TARGET_FILE:routing_plan_test>)
+        set_tests_properties(routing_guard_packets PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+        add_test(NAME interface_packets COMMAND ${SKEWER_TEST_PYTHON}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/interface_packet_test.py $<TARGET_FILE:interface_routing_test>)
+        set_tests_properties(interface_packets PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+    endif()
 
     add_executable(ca_store_test tests/ca_store_test.cpp src/ca_store.cpp src/ca_store.hpp)
     target_include_directories(ca_store_test PRIVATE src)
@@ -196,6 +220,16 @@ if(BUILD_TESTING)
         SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
     add_test(NAME tui COMMAND tui_test)
     set_tests_properties(tui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(tuntom_session_test tests/tuntom_session_test.cpp)
+    target_include_directories(tuntom_session_test PRIVATE src)
+    target_link_libraries(tuntom_session_test PRIVATE Qt6::Network)
+    add_test(NAME tuntom_session COMMAND tuntom_session_test)
+    add_executable(tuntom_control_test tests/tuntom_control_test.cpp src/pairing.cpp)
+    target_include_directories(tuntom_control_test PRIVATE src)
+    target_link_libraries(tuntom_control_test PRIVATE Qt6::Network OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 set(CPACK_GENERATOR DEB)

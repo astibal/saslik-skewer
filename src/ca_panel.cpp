@@ -1,4 +1,5 @@
 #include "ca_panel.hpp"
+#include "trust_tree_update.hpp"
 #include "desktop_catalog.hpp"
 #include "process_scanner.hpp"
 #include <unistd.h>
@@ -27,6 +28,7 @@
 #include <QProgressBar>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScrollBar>
 #include <QSet>
 #include <QStyle>
 #include <QTreeWidget>
@@ -298,7 +300,8 @@ void CaTrustPanel::busy(bool value)
     source_->setEnabled(!value); fetch_->setEnabled(!value); load_->setEnabled(!value);
     save_->setEnabled(!value && !certificate_.isNull());
     scan_->setEnabled(!value && !certificate_.isNull()); remove_all_->setEnabled(scan_->isEnabled());
-    table_->setEnabled(!value); selectionChanged();
+    // Keep the last snapshot readable while scanning; mutation buttons remain disabled.
+    selectionChanged();
     known_certificates_->setEnabled(!value);
 }
 void CaTrustPanel::selectionChanged()
@@ -341,7 +344,11 @@ void CaTrustPanel::loadCertificate(const QByteArray& pem, bool remove_all)
 {
     const auto cert = CaStoreManager::parse(pem);
     if (cert.isNull()) { status_->setText(tr("Expected exactly one PEM CA certificate with CA basic constraints. Previous selection unchanged.")); return; }
-    certificate_ = cert; stores_.clear(); table_->clear();
+    if (certificate_ != cert) {
+        stores_.clear(); table_->clear();
+        emit caStatusChanged({}, CaStoreManager(cert).fingerprint());
+    }
+    certificate_ = cert;
     // Public certificate history is retained independently of trust-store
     // installation, pairing credentials and the current connection lifetime.
     QSettings().setValue("knownCa/" + QString::fromLatin1(cert.digest(QCryptographicHash::Sha256).toHex()), cert.toPem());
@@ -372,12 +379,14 @@ void CaTrustPanel::scan(bool remove_all)
 {
     if (working_ || certificate_.isNull()) return;
     busy(true); status_->setText(tr("Scanning supported stores… no trust changes."));
-    emit caStatusChanged({}, CaStoreManager(certificate_).fingerprint());
     auto* watcher = new QFutureWatcher<QVector<CaStore>>(this);
     connect(watcher, &QFutureWatcher<QVector<CaStore>>::finished, this, [this, watcher, remove_all] {
+        const QSignalBlocker signal_blocker(table_);
+        const int scroll = table_->verticalScrollBar()->value();
+        table_->setUpdatesEnabled(false);
         table_->setSortingEnabled(false);
-        table_->clearSelection();
-        stores_ = watcher->result(); watcher->deleteLater(); table_->clear();
+        TrustTreeUpdate update(table_);
+        stores_ = watcher->result(); watcher->deleteLater();
         const DesktopCatalog catalog;
         int inaccessible = 0; QVector<CaStore> matches;
         for (int row = 0; row < stores_.size(); ++row) {
@@ -503,9 +512,10 @@ void CaTrustPanel::scan(bool remove_all)
             // The local tree and remote report share this exact identity mapping.
             auto* family = families.value(application_id);
             if (!family) {
-                family = new QTreeWidgetItem(table_, {application_alias});
+                family = update.get("app:" + application_id);
+                family->setText(0, application_alias);
+                family->setText(3, {});
                 family->setIcon(0, application_icon);
-                family->setExpanded(true);
                 families.insert(application_id, family);
             }
             const QString variant = store.system ? tr("System") : !store.snap_name.isEmpty()
@@ -514,17 +524,19 @@ void CaTrustPanel::scan(bool remove_all)
             const QString variant_key = application_id + '\n' + variant;
             auto* branch = variants.value(variant_key);
             if (!branch) {
-                branch = new QTreeWidgetItem(family, {variant});
-                branch->setExpanded(true);
+                branch = update.get("variant:" + variant_key, family);
+                branch->setText(0, variant);
+                branch->setText(3, {});
                 variants.insert(variant_key, branch);
             }
-            auto* leaf = new QTreeWidgetItem(branch, {QFileInfo(store.path).fileName(),
-                store.system ? tr("System") : tr("NSS"), store.snap_revision,
-                store.detail, store.path});
+            auto* leaf = update.get("store:" + store.key + '\n' + store.path, branch);
+            const QStringList columns{QFileInfo(store.path).fileName(),
+                store.system ? tr("System") : tr("NSS"), store.snap_revision, store.detail, store.path};
             leaf->setData(0, Qt::UserRole, int(&store - stores_.constData()));
             for (int col = 0; col < 5; ++col) {
+                leaf->setText(col, columns[col]);
                 leaf->setToolTip(col, store.path + '\n' + store.detail);
-                if (store.installed && store.available) leaf->setForeground(col, QColor("#41b879"));
+                leaf->setForeground(col, store.installed && store.available ? QBrush(QColor("#41b879")) : QBrush{});
             }
             for (auto* group : {branch, family}) {
                 // Match Saslik: retained Snap revisions do not enter totals.
@@ -549,8 +561,11 @@ void CaTrustPanel::scan(bool remove_all)
         }
         for (auto it = counts.cbegin(); it != counts.cend(); ++it)
             it.key()->setText(3, tr("Trusted %1/%2").arg(it.value().first).arg(it.value().second));
+        update.finish();
         table_->setSortingEnabled(true);
         applyFilters();
+        table_->verticalScrollBar()->setValue(scroll);
+        table_->setUpdatesEnabled(true);
         emit trustReportReady(QJsonObject{
             {"fingerprint", CaStoreManager(certificate_).fingerprint()},
             {"applications", reported_applications},

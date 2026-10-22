@@ -118,7 +118,8 @@ void save(const QString& path,const QJsonObject& value)
 }
 }
 
-QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request)
+namespace {
+Credentials loadCredentials(const QUrl& endpoint)
 {
     if (endpoint.scheme()!="skewer" || endpoint.host().isEmpty() || endpoint.port()<1
         || endpoint.hasFragment() || endpoint.hasQuery() || !endpoint.userInfo().isEmpty() || endpoint.path()!="/pair")
@@ -126,7 +127,38 @@ QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request)
     QFile file(statePath(endpoint));
     if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("No pairing for this endpoint");
     const auto value=QJsonDocument::fromJson(file.readAll()).object();
-    return exchange(endpoint,{value["identity"].toString().toUtf8(),QByteArray::fromBase64(value["psk"].toString().toLatin1(),QByteArray::Base64UrlEncoding)},request);
+    return {value["identity"].toString().toUtf8(),QByteArray::fromBase64(value["psk"].toString().toLatin1(),QByteArray::Base64UrlEncoding|QByteArray::AbortOnBase64DecodingErrors)};
+}
+}
+
+QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request)
+{
+    return exchange(endpoint, loadCredentials(endpoint), request);
+}
+
+PairedTunnel openPairedTunnel(const QUrl& endpoint)
+{
+    // Authenticate and derive from the same credential snapshot, even if a
+    // concurrent pairing operation replaces the file while this call runs.
+    const auto credentials = loadCredentials(endpoint);
+    const auto response = exchange(endpoint, credentials, {{"action", "tunnel-open"}});
+    const auto tunnel = Tuntom::endpointFromResponse(response);
+    return {tunnel, Tuntom::deriveKey(credentials.key, tunnel.context.toLatin1())};
+}
+
+void heartbeatPairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel)
+{
+    const auto renewed = Tuntom::endpointFromResponse(pairedRequest(endpoint,
+        {{"action", "tunnel-heartbeat"}, {"context", tunnel.context}}));
+    if (renewed.context != tunnel.context || renewed.id != tunnel.id
+        || renewed.serverAddress != tunnel.serverAddress || renewed.clientAddress != tunnel.clientAddress)
+        throw std::runtime_error("Tunnel endpoint changed during renewal");
+}
+
+void closePairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel)
+{
+    const auto response = pairedRequest(endpoint, {{"action", "tunnel-close"}, {"context", tunnel.context}});
+    if (!response.value("ok").toBool()) throw std::runtime_error("Tunnel close rejected");
 }
 
 QJsonObject pairedStatus(const QUrl& endpoint)

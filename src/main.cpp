@@ -56,6 +56,11 @@ static int connectionCommand(const QStringList& arguments)
 
 int main(int argc, char* argv[])
 {
+    if (argc >= 2 && std::strcmp(argv[1], "tunnel") == 0) {
+        QCoreApplication application(argc, argv);
+        application.setOrganizationName("Saslik"); application.setApplicationName("Skewer");
+        return tuntomClientCommand(application.arguments());
+    }
     if (argc >= 2 && (std::strcmp(argv[1],"pair")==0 || std::strcmp(argv[1],"remote-status")==0)) {
         QCoreApplication application(argc,argv);
         application.setOrganizationName("Saslik");application.setApplicationName("Skewer");

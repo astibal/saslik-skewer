@@ -1,6 +1,11 @@
 #include "routing_plan.hpp"
+#include "routing_guard.hpp"
 #include "ca_store.hpp"
 #include "socket_cleanup.hpp"
+#include "tuntom_process.hpp"
+#include "interface_routing.hpp"
+#include <QLockFile>
+#include <QNetworkInterface>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -112,9 +117,67 @@ void cleanup(const RoutingPlan& plan)
     for (const auto& command : plan.cleanup) execute(command, ignored);
 }
 
+bool setGuard(uid_t uid, int level, QString& error, const QString& gateway = {},
+              const QString& interface = {}, const QStringList& exemptions = {},
+              const QString& local_control = {}, quint16 local_control_port = 0)
+{
+    QStringList normalized;
+    if (!RoutingPlanner::normalizeExemptions(exemptions, normalized, error)) return false;
+    const QString table = QString("skewer_guard_%1").arg(uid);
+    QString rules;
+    if (run(nft_binary, {"list", "table", "inet", table}).exit_code == 0)
+        rules = "delete table inet " + table + '\n';
+    rules += RoutingPlanner::guardRules(uid, level, gateway, interface, normalized,
+                                       local_control, local_control_port);
+    const auto applied = run(nft_binary, {"-f", "-"}, rules.toUtf8());
+    if (applied.exit_code) { error = QString::fromLocal8Bit(applied.output); return false; }
+    QSaveFile receipt(RoutingGuard::path(uid));
+    const auto identity = RoutingGuard::identity(uid);
+    if (identity.isEmpty() || !receipt.open(QIODevice::WriteOnly)) { error = "Cannot save protection receipt"; return false; }
+    receipt.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+    if (receipt.write(identity) != identity.size() || !receipt.commit()) { error = "Cannot save protection receipt"; return false; }
+    return true;
+}
+
+int ensureGuard(uid_t uid)
+{
+    QLockFile lock("/run/skewer-interface-routing.lock");
+    if (!lock.tryLock(0)) return 1;
+    if (RoutingGuard::installed(uid)
+        && run(nft_binary, {"list", "table", "inet", QString("skewer_guard_%1").arg(uid)}).exit_code == 0) return 0;
+    QString error;
+    const int level = cgroupLevel(uid, error);
+    if (!level || !setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
+    return 0;
+}
+
 int up(uid_t uid, const QString& next_hop, const QStringList& exemptions)
 {
-    QString error;
+    QLockFile lock("/run/skewer-interface-routing.lock");
+    if (!lock.tryLock(0)) return 1;
+    QString error, local_control;
+    quint16 local_control_port = 0;
+    QStringList destinations;
+    for (const auto& value : exemptions) {
+        if (!value.startsWith("--local-control=")) { destinations << value; continue; }
+        const auto endpoint = value.sliced(16);
+        const int separator = endpoint.lastIndexOf(':');
+        QHostAddress address(endpoint.first(separator));
+        bool port_ok = false;
+        const int port = endpoint.sliced(separator + 1).toInt(&port_ok);
+        if (separator < 1 || !address.isLoopback() || !port_ok || port < 1 || port > 65535) {
+            QTextStream(stderr) << "skewer-net-helper: invalid local control endpoint\n";
+            return 2;
+        }
+        local_control = address.toString(); local_control_port = quint16(port);
+    }
+    const auto interface_state = InterfaceRouting::state(uid);
+    QStringList active_exemptions;
+    for (const auto& value : interface_state["exemptions"].toArray()) active_exemptions << value.toString();
+    if (!interface_state.isEmpty() && (interface_state["gateway"].toString() != next_hop || active_exemptions != destinations)) {
+        QTextStream(stderr) << "Release interfaces before changing the gateway or exemptions\n";
+        return 2;
+    }
     const QString interface_name = interfaceFor(next_hop, error);
     if (interface_name.isEmpty()) {
         QTextStream(stderr) << "skewer-net-helper: " << error << '\n';
@@ -125,11 +188,14 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions)
         QTextStream(stderr) << "skewer-net-helper: " << error << '\n';
         return 2;
     }
-    const RoutingPlan plan = RoutingPlanner::create(uid, next_hop, interface_name, level, exemptions);
+    const RoutingPlan plan = RoutingPlanner::create(uid, next_hop, interface_name, level, destinations,
+                                                     local_control, local_control_port);
     if (!plan.valid) {
         QTextStream(stderr) << "skewer-net-helper: " << plan.error << '\n';
         return 2;
     }
+    // Block first, then rebuild routing. Failure leaves the guard closed.
+    if (!setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
     cleanup(plan);
     for (const auto& command : plan.prepare) {
         if (!execute(command, error)) {
@@ -147,13 +213,162 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions)
                             << QString::fromLocal8Bit(nft.output).trimmed() << '\n';
         return 1;
     }
+    if (!setGuard(uid, level, error, next_hop, interface_name, destinations,
+                  local_control, local_control_port)) {
+        QString ignored;
+        setGuard(uid, level, ignored);
+        cleanup(plan);
+        QTextStream(stderr) << error << '\n'; return 1;
+    }
     QTextStream(stdout) << "active: cgroup traffic -> " << next_hop
                         << " via " << interface_name << '\n';
     return 0;
 }
 
+int interfacesDown(uid_t uid, bool prepared = false)
+{
+    const QString table = InterfaceRouting::table(uid);
+    QString removal;
+    for (const auto& family : {"inet", "bridge"}) {
+        const auto exists = run(nft_binary, {"list", "table", family, table});
+        if (exists.exit_code == 0) removal += QString("delete table %1 %2\n").arg(family, table);
+    }
+    if (!prepared && removal.isEmpty() && InterfaceRouting::state(uid).isEmpty()) return 0;
+    // Remove both hooks atomically before dismantling their policy routes.
+    if (!removal.isEmpty() && run(nft_binary, {"-f", "-"}, removal.toUtf8()).exit_code) return 1;
+    const QString tag = QString("0x%1").arg(InterfaceRouting::mark(uid), 0, 16);
+    run(ip_binary, {"-4", "rule", "del", "pref", QString::number(InterfaceRouting::priority(uid)),
+        "fwmark", tag, "lookup", QString::number(InterfaceRouting::routingTable(uid))});
+    run(ip_binary, {"-4", "rule", "del", "pref", QString::number(InterfaceRouting::priority(uid)+1),
+        "fwmark", tag, "unreachable"});
+    run(ip_binary, {"-4", "route", "flush", "table", QString::number(InterfaceRouting::routingTable(uid))});
+    QFile::remove(InterfaceRouting::statePath(uid));
+    return 0;
+}
+
+int interfaceChange(uid_t uid, const QStringList& args)
+{
+    // /run is root-owned: neither the state file nor this lock is client input.
+    QLockFile lock("/run/skewer-interface-routing.lock");
+    if (!lock.tryLock(0)) { QTextStream(stderr) << "Interface operation already in progress\n"; return 1; }
+    const bool attach = args[0] == "interface-attach";
+    const auto previous = InterfaceRouting::state(uid);
+    auto selections = previous["selections"].toObject();
+    const QString name = args[1];
+    bool valid_index = false;
+    const int index = args[2].toInt(&valid_index);
+    if (!valid_index || index <= 0 || !QRegularExpression("^[A-Za-z0-9_.:-]{1,15}$").match(name).hasMatch()) return 2;
+    const QString key = name + ':' + QString::number(index);
+    QString gateway = previous["gateway"].toString(), uplink, error;
+    if (attach) {
+        QHostAddress address(args[3]);
+        if (address.protocol() != QAbstractSocket::IPv4Protocol || address.isLoopback()
+            || address.isMulticast() || address.isNull()) return 2;
+        if (!selections.isEmpty() && gateway != address.toString()) {
+            QTextStream(stderr) << "Release interfaces before changing Saslik gateway\n"; return 2;
+        }
+        gateway = address.toString();
+        uplink = interfaceFor(gateway, error);
+        const auto ports = InterfaceRouting::resolve(InterfaceRouting::links(), name, index, uplink, error);
+        if (uplink.isEmpty() || ports.isEmpty()) { QTextStream(stderr) << error << '\n'; return 2; }
+        QFile forwarding("/proc/sys/net/ipv4/ip_forward");
+        if (!forwarding.open(QIODevice::ReadOnly) || forwarding.readAll().trimmed() != "1") {
+            QTextStream(stderr) << "IPv4 forwarding is disabled. Enable it explicitly before attaching an interface.\n"; return 2;
+        }
+        QJsonArray chosen;
+        for (const auto& port : ports) {
+            // A lower device of a VLAN/bond uplink is also a potential loop.
+            if (QFileInfo::exists("/sys/class/net/" + uplink + "/lower_" + port.name)) {
+                QTextStream(stderr) << "Interface is a lower device of Saslik's uplink\n"; return 2;
+            }
+            for (auto it = selections.begin(); it != selections.end(); ++it)
+                if (it.key() != key) for (const auto& value : it.value().toArray())
+                    if (value.toObject()["index"].toInt() == port.index) {
+                        QTextStream(stderr) << "Port is already selected by another interface/bridge\n"; return 2;
+                    }
+            chosen.append(QJsonObject{{"name", port.name}, {"index", port.index}, {"master", port.master}});
+        }
+        selections[key] = chosen;
+    } else {
+        selections.remove(key);
+        if (selections.isEmpty()) return interfacesDown(uid);
+        uplink = previous["uplink"].toString();
+    }
+    QStringList exemptions;
+    if (attach) {
+        if (!RoutingPlanner::normalizeExemptions(args.sliced(4), exemptions, error)) {
+            QTextStream(stderr) << error << '\n'; return 2;
+        }
+    } else for (const auto& value : previous["exemptions"].toArray()) exemptions << value.toString();
+    QStringList local;
+    for (const auto& address : QNetworkInterface::allAddresses())
+        if (address.protocol() == QAbstractSocket::IPv4Protocol) local << address.toString();
+    QJsonArray ports;
+    for (auto it = selections.begin(); it != selections.end(); ++it)
+        for (const auto& value : it.value().toArray()) {
+            auto port = value.toObject();
+            if (!port["master"].toString().isEmpty()) {
+                const QString address = InterfaceRouting::bridgeAddress(port["master"].toString());
+                if (address.isEmpty()) {
+                    QTextStream(stderr) << "Cannot determine bridge gateway MAC; release disappeared selections first\n";
+                    return 2;
+                }
+                port["bridge_mac"] = address;
+            }
+            ports.append(port);
+        }
+    const QString rules = InterfaceRouting::rules(uid, ports, gateway, local, exemptions, !previous.isEmpty());
+    auto result = run(nft_binary, {"-c", "-f", "-"}, rules.toUtf8());
+    if (result.exit_code) { QTextStream(stderr) << "Rules unsupported; nothing changed: " << result.output; return 1; }
+    const QString route_table = QString::number(InterfaceRouting::routingTable(uid));
+    const QString priority = QString::number(InterfaceRouting::priority(uid));
+    const QString tag = QString("0x%1").arg(InterfaceRouting::mark(uid), 0, 16);
+    if (previous.isEmpty()) {
+        // Never flush or reuse somebody else's policy-routing slot.
+        const auto routes = run(ip_binary, {"-4", "route", "show", "table", route_table});
+        if (!routes.output.trimmed().isEmpty() && !routes.output.contains("FIB table does not exist")) {
+            QTextStream(stderr) << "Interface routing table is already occupied\n"; return 1;
+        }
+        for (int offset : {0, 1}) {
+            const auto existing = run(ip_binary, {"-4", "rule", "show", "pref", QString::number(InterfaceRouting::priority(uid)+offset)});
+            if (existing.exit_code || !existing.output.trimmed().isEmpty()) {
+                QTextStream(stderr) << "Interface routing priority is already occupied\n"; return 1;
+            }
+        }
+        const QVector<QStringList> commands{
+            {"-4", "route", "add", gateway + "/32", "dev", uplink, "scope", "link", "table", route_table},
+            {"-4", "route", "add", "default", "via", gateway, "dev", uplink, "table", route_table},
+            // A missing route must not silently fall back to the main table.
+            {"-4", "rule", "add", "pref", QString::number(InterfaceRouting::priority(uid)+1), "fwmark", tag, "unreachable"},
+            {"-4", "rule", "add", "pref", priority, "fwmark", tag, "lookup", route_table}};
+        for (const auto& command : commands) if (run(ip_binary, command).exit_code) {
+            interfacesDown(uid, true); QTextStream(stderr) << "Cannot prepare interface routing\n"; return 1;
+        }
+    }
+    result = run(nft_binary, {"-f", "-"}, rules.toUtf8());
+    if (result.exit_code) {
+        if (previous.isEmpty()) interfacesDown(uid, true);
+        QTextStream(stderr) << result.output; return 1;
+    }
+    QJsonArray bypass; for (const auto& value : exemptions) bypass.append(value);
+    QSaveFile file(InterfaceRouting::statePath(uid));
+    if (!file.open(QIODevice::WriteOnly)) { interfacesDown(uid); return 1; }
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+    const auto data = QJsonDocument(QJsonObject{{"selections", selections}, {"gateway", gateway},
+        {"uplink", uplink}, {"exemptions", bypass}}).toJson();
+    if (file.write(data) != data.size() || !file.commit()) { interfacesDown(uid); return 1; }
+    QTextStream(stdout) << (attach ? "Interface ingress attached" : "Interface ingress released") << '\n';
+    return 0;
+}
+
 int down(uid_t uid)
 {
+    QLockFile lock("/run/skewer-interface-routing.lock");
+    if (!lock.tryLock(0)) return 1;
+    QString error;
+    const int level = cgroupLevel(uid, error);
+    if (level && !setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
+    if (interfacesDown(uid)) return 1;
     // The cleanup identifiers depend only on UID. Placeholder values are never
     // installed and merely let the shared planner produce the cleanup commands.
     const RoutingPlan plan = RoutingPlanner::create(uid, QStringLiteral("192.0.2.1"),
@@ -295,6 +510,11 @@ int main(int argc, char* argv[])
         return 2;
     }
     const QStringList arguments = application.arguments().sliced(1);
+    if (arguments == QStringList{"guard"}) return ensureGuard(*uid);
+    if (arguments == QStringList{"tunnel-session"}) return tuntomService(*uid);
+    if (arguments == QStringList{"tunnel-worker"}) return tuntomProcess(*uid);
+    if ((arguments.size() >= 4 && arguments[0] == "interface-attach")
+        || (arguments.size() == 3 && arguments[0] == "interface-release")) return interfaceChange(*uid, arguments);
     if (!arguments.isEmpty() && (arguments[0] == "cleanup-tcp" || arguments[0] == "preview-tcp"))
         return cleanupSockets(*uid, arguments.sliced(1), arguments[0] == "preview-tcp");
     if (arguments.size() == 3 && arguments.first() == QStringLiteral("ca-install"))
@@ -304,12 +524,23 @@ int main(int argc, char* argv[])
     if (arguments == QStringList{QStringLiteral("down")}) return down(*uid);
     if (arguments == QStringList{QStringLiteral("status")}) return status(*uid);
     if (!arguments.isEmpty() && arguments.first() == "exemptions") {
+        QLockFile lock("/run/skewer-interface-routing.lock");
+        if (!lock.tryLock(0)) return 1;
+        if (!InterfaceRouting::state(*uid).isEmpty()) {
+            QTextStream(stderr) << "Release interfaces before changing destination exemptions\n";
+            return 2;
+        }
         QStringList normalized; QString error;
         if (!RoutingPlanner::normalizeExemptions(arguments.sliced(1), normalized, error)) {
             QTextStream(stderr) << error << '\n'; return 2;
         }
-        const Result result = run(QString::fromLatin1(nft_binary), {"-f", "-"},
-            RoutingPlanner::exemptionUpdate(*uid, normalized).toUtf8());
+        QString rules = RoutingPlanner::exemptionUpdate(*uid, normalized);
+        const QString guard_table = QString("skewer_guard_%1").arg(*uid);
+        if (run(nft_binary, {"list", "table", "inet", guard_table}).exit_code == 0) {
+            rules += "flush set inet " + guard_table + " bypass_v4\n";
+            if (!normalized.isEmpty()) rules += "add element inet " + guard_table + " bypass_v4 { " + normalized.join(", ") + " }\n";
+        }
+        const Result result = run(QString::fromLatin1(nft_binary), {"-f", "-"}, rules.toUtf8());
         QTextStream(result.exit_code == 0 ? stdout : stderr) << result.output;
         if (result.exit_code != 0)
             QTextStream(stderr) << "No exceptions were changed. If routing was started by an older Skewer, disable and enable routing once.\n";

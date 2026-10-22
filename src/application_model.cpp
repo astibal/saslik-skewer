@@ -1,4 +1,6 @@
 #include "application_model.hpp"
+#include "interface_routing.hpp"
+#include "vm_discovery.hpp"
 
 #include <QApplication>
 #include <QBrush>
@@ -39,6 +41,20 @@ ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
         scan->setFuture(QtConcurrent::run([] { return ProcessScanner().scan(getuid()); }));
     });
     refresh_timer_.start();
+    auto* vm_scan = new QFutureWatcher<QMap<QString, QString>>(this);
+    connect(vm_scan, &QFutureWatcher<QMap<QString, QString>>::finished, this, [this, vm_scan] {
+        const auto found = vm_scan->result();
+        if (discovered_vms_ == found) return;
+        discovered_vms_ = found;
+        refresh();
+    });
+    const auto query_vms = [vm_scan] {
+        if (!vm_scan->isRunning()) vm_scan->setFuture(QtConcurrent::run(VmDiscovery::query));
+    };
+    vm_timer_.setInterval(30000);
+    connect(&vm_timer_, &QTimer::timeout, this, query_vms);
+    vm_timer_.start();
+    QTimer::singleShot(0, this, query_vms);
     refresh();
 }
 
@@ -82,7 +98,7 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
     if (item->application_reference && role == Qt::ToolTipRole)
         return tr("Actual child process (PPID %1). Also shown in Applications; this is not another instance.")
             .arg(item->process.parent_pid);
-    if (model_index.column() == ConnectionsColumn && item->type != NodeType::Section
+    if (model_index.column() == ConnectionsColumn && item->type != NodeType::Section && item->type != NodeType::Interface
         && (role == Qt::DisplayRole || role == Qt::ForegroundRole || role == Qt::ToolTipRole)) {
         if (!item->connections_cached) {
             QSet<int> pids;
@@ -91,24 +107,35 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
                 for (const auto& child : current.children) self(self, *child);
             };
             collect(collect, *item);
-            int outside = 0, total = 0;
+            int outside = 0, inside = 0, total = 0;
             bool unknown = !connections_.complete || connections_.unreadable_pids.intersects(pids);
             for (const auto& socket : connections_.rows) {
                 if (!socket.pids.intersects(pids)) continue;
                 ++total;
                 if (socket.group.isEmpty()) unknown = true;
                 else if (!socket.group.split('/').contains("skewer-routed.slice")) ++outside;
+                else ++inside;
             }
             item->sockets_total = total;
             item->sockets_outside = outside;
+            item->sockets_inside = inside;
             item->sockets_unknown = unknown;
             item->connections_cached = true;
         }
         const int total = item->sockets_total;
         const int outside = item->sockets_outside;
         const bool unknown = item->sockets_unknown;
+        if (!routing_active_ && (item->routed || item->partially_routed || item->sockets_inside)) {
+            if (role == Qt::DisplayRole)
+                return routing_protected_ ? tr("● Dropped") : tr("● Unprotected");
+            if (role == Qt::ForegroundRole) return QBrush(QColor("#f05b66"));
+            return tr("Routing is unavailable. %1\n%2 old sockets remain outside the slice and are not covered by its protection.")
+                .arg(routing_protected_ ? tr("Sockets belonging to the guarded slice cannot fall back to direct routing.")
+                                       : tr("Fail-closed protection has not been installed. Restore routing."))
+                .arg(outside);
+        }
         if (role == Qt::DisplayRole)
-            return outside ? tr("● %1 out").arg(outside) : unknown ? tr("? Unknown") : total ? tr("● All") : QStringLiteral("—");
+            return outside ? tr("● %1 out").arg(outside) : unknown ? tr("? Unknown") : total ? tr("● In slice") : QStringLiteral("—");
         if (role == Qt::ForegroundRole)
             return QBrush(QColor(outside ? "#dda844" : unknown || !total ? "#999999" : "#48c988"));
         if (role == Qt::ToolTipRole)
@@ -116,6 +143,8 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
                 .arg(total).arg(outside).arg(unknown ? tr("Incomplete / unverified snapshot.") : tr("No known collection errors."));
     }
     if (role == StableIdRole) return item->id;
+    if (role == InterfaceNameRole && item->type == NodeType::Interface) return item->identity;
+    if (role == InterfaceIndexRole && item->type == NodeType::Interface) return item->process.pid;
     if (role == NodeTypeRole) return static_cast<int>(item->type);
     if (role == LaunchCommandRole) return item->launch_command;
     if (role == RoutedRole) return item->routed;
@@ -134,6 +163,11 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
         return pids;
     }
     if (role == Qt::DisplayRole) {
+        if (item->type == NodeType::Interface) {
+            if (model_index.column() == CaColumn) return tr("Guest trust unknown");
+            if (model_index.column() == ConnectionsColumn) return QStringLiteral("—");
+            if (model_index.column() == RoutingColumn) return item->routed ? tr("● Attached") : item->partially_routed ? tr("● Via bridge") : QString{};
+        }
         if (model_index.column() == CaColumn && item->type == NodeType::Application)
             return ca_fingerprint_.isEmpty() ? QStringLiteral("-")
                 : ca_statuses_.value(item->identity, QStringLiteral("-"));
@@ -187,6 +221,32 @@ QStringList ApplicationModel::launcherSuggestions() const
     return result;
 }
 
+bool ApplicationModel::hasAttachedProcesses() const
+{
+    const auto attached = [](const auto& self, const Node& item) -> bool {
+        if (item.type != NodeType::Interface && (item.routed || item.partially_routed)) return true;
+        for (const auto& child : item.children) if (self(self, *child)) return true;
+        return false;
+    };
+    for (const auto& root : roots_) if (attached(attached, *root)) return true;
+    return false;
+}
+
+void ApplicationModel::setRoutingState(bool active, bool protected_slice)
+{
+    if (routing_active_ == active && routing_protected_ == protected_slice) return;
+    routing_active_ = active;
+    routing_protected_ = protected_slice;
+    const auto update = [this](const auto& self, const QModelIndex& parent) -> void {
+        for (int row = 0; row < rowCount(parent); ++row) {
+            const auto cell = index(row, ConnectionsColumn, parent);
+            emit dataChanged(cell, cell, {Qt::DisplayRole, Qt::ForegroundRole, Qt::ToolTipRole});
+            self(self, index(row, 0, parent));
+        }
+    };
+    update(update, {});
+}
+
 void ApplicationModel::setConnections(const ConnectionSnapshot& snapshot)
 {
     if (connections_ == snapshot) return;
@@ -230,6 +290,16 @@ void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
 {
     ++process_revision_;
     QByteArray snapshot;
+    const auto links = InterfaceRouting::links();
+    const auto interface_state = InterfaceRouting::state(getuid());
+    auto virtual_machines = InterfaceRouting::virtualMachines();
+    for (auto it = discovered_vms_.begin(); it != discovered_vms_.end(); ++it)
+        virtual_machines.insert(it.key(), it.value());
+    for (auto it = virtual_machines.begin(); it != virtual_machines.end(); ++it)
+        snapshot += it.key().toUtf8() + '=' + it.value().toUtf8() + '\n';
+    snapshot += QJsonDocument(interface_state).toJson(QJsonDocument::Compact);
+    for (const auto& link : links)
+        snapshot += link.name.toUtf8() + ':' + link.master.toUtf8() + ':' + QByteArray::number(link.index) + '\n';
     for (const ProcessInfo& process : processes) {
         snapshot += QByteArray::number(process.pid) + ':'
             + QByteArray::number(process.parent_pid) + ':'
@@ -337,6 +407,57 @@ void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
     std::vector<std::unique_ptr<Node>> desired;
     if (!foreground->children.empty()) desired.push_back(std::move(foreground));
     if (!background->children.empty()) desired.push_back(std::move(background));
+    auto interfaces = std::make_unique<Node>();
+    interfaces->type = NodeType::Section;
+    interfaces->id = "section:interfaces";
+    interfaces->title = tr("Interfaces");
+    const auto selections = interface_state["selections"].toObject();
+    QHash<QString, Node*> bridges;
+    const auto makeInterface = [&](const InterfaceRouting::Link& link, Node* parent) {
+        auto item = std::make_unique<Node>();
+        item->type = NodeType::Interface;
+        item->id = QString("interface:%1:%2").arg(link.name).arg(link.index);
+        item->identity = link.name;
+        item->process.pid = link.index;
+        item->title = link.name;
+        if (virtual_machines.contains(link.name)) item->title = virtual_machines.value(link.name) + " · " + link.name;
+        item->icon = QIcon::fromTheme(link.bridge ? "network-workgroup" : "network-wired");
+        item->parent = parent;
+        item->routed = selections.contains(link.name + ':' + QString::number(link.index));
+        item->subtitle = link.bridge ? tr("Bridge · Attach selects current ports")
+            : link.master.isEmpty() ? tr("Interface · incoming IPv4 traffic") : tr("Bridge port · %1 · host bridge gateway required").arg(link.master);
+        for (auto it = selections.begin(); it != selections.end(); ++it)
+            for (const auto& value : it.value().toArray())
+                if (value.toObject()["index"].toInt() == link.index && !item->routed) {
+                    item->partially_routed = true;
+                    item->subtitle += tr(" · attached through %1").arg(it.key().section(':', 0, 0));
+                }
+        return item;
+    };
+    for (const auto& link : links) if (link.bridge) {
+        auto item = makeInterface(link, interfaces.get());
+        bridges.insert(link.name, item.get());
+        interfaces->children.push_back(std::move(item));
+    }
+    for (const auto& link : links) if (!link.bridge) {
+        Node* parent = bridges.value(link.master, interfaces.get());
+        parent->children.push_back(makeInterface(link, parent));
+    }
+    // Retain configured selections after hot-unplug so Release stays available.
+    for (auto it = selections.begin(); it != selections.end(); ++it) {
+        const int separator = it.key().lastIndexOf(':');
+        const QString name = it.key().left(separator);
+        const int number = it.key().mid(separator + 1).toInt();
+        const bool present = std::any_of(links.begin(), links.end(), [&](const auto& link) {
+            return link.name == name && link.index == number;
+        });
+        if (!present) {
+            auto item = makeInterface({name, {}, number, false}, interfaces.get());
+            item->subtitle = tr("Interface disappeared · Release removes the saved routing rules");
+            interfaces->children.push_back(std::move(item));
+        }
+    }
+    desired.push_back(std::move(interfaces));
 
     // Index existing objects first. A process moving between applications must
     // keep its persistent index, just like an unchanged process does.

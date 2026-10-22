@@ -1,4 +1,5 @@
 #include "routing_controller.hpp"
+#include "routing_guard.hpp"
 
 #include "routing_plan.hpp"
 
@@ -7,7 +8,12 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QHostAddress>
+#include <QUrl>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 
 #include <unistd.h>
 
@@ -43,8 +49,23 @@ RoutingResult RoutingController::activate(const QString& next_hop,
          QStringLiteral("skewer-routed.slice")}, 10000);
     if (!slice.ok) return {false, QStringLiteral("Cannot create Skewer cgroup: %1").arg(slice.detail)};
     QStringList arguments{QStringLiteral("up"), next_hop};
+    const QUrl control(QSettings().value("routing/saslikUrl").toString());
+    QHostAddress control_address(control.host());
+    if (control.scheme() == "skewer" && control_address.isLoopback() && control.port() > 0)
+        arguments << QString("--local-control=%1:%2").arg(control_address.toString()).arg(control.port());
     arguments.append(QSettings().value("routing/exemptions").toStringList());
     return invoke(arguments, authorization);
+}
+
+RoutingResult RoutingController::interfaceChange(const QString& name, int index, const QString& gateway,
+                                                bool attach, Authorization authorization) const
+{
+    QStringList args{attach ? "interface-attach" : "interface-release", name, QString::number(index)};
+    if (attach) {
+        args << gateway;
+        args.append(QSettings().value("routing/exemptions").toStringList());
+    }
+    return invoke(args, authorization);
 }
 
 RoutingResult RoutingController::updateExemptions(const QStringList& destinations, Authorization authorization) const
@@ -75,12 +96,23 @@ RoutingResult RoutingController::cleanupTcp(const QVector<pid_t>& pids, Authoriz
 
 bool RoutingController::active(const QString& next_hop) const
 {
+    if (!RoutingGuard::installed(getuid())) return false;
     const RoutingResult rule = run(QStringLiteral("/usr/sbin/ip"),
-        {QStringLiteral("-4"), QStringLiteral("rule"), QStringLiteral("show"),
+        {QStringLiteral("-4"), QStringLiteral("-j"), QStringLiteral("rule"), QStringLiteral("show"),
          QStringLiteral("pref"),
          QString::number(RoutingPlanner::rulePriority(getuid()))}, 3000);
     if (!rule.ok || rule.detail.isEmpty() || rule.detail == QStringLiteral("Command failed"))
         return false;
+    bool matching_rule = false;
+    for (const auto& item : QJsonDocument::fromJson(rule.detail.toUtf8()).array()) {
+        const auto entry = item.toObject();
+        bool valid = false;
+        const auto mark = entry["fwmark"].toString().toUInt(&valid, 0);
+        if (valid && mark == RoutingPlanner::mark(getuid())
+            && entry["table"].toVariant().toUInt() == RoutingPlanner::routeTable(getuid()))
+            matching_rule = true;
+    }
+    if (!matching_rule) return false;
 
     const RoutingResult route = run(QStringLiteral("/usr/sbin/ip"),
         {QStringLiteral("-4"), QStringLiteral("route"), QStringLiteral("show"),

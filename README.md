@@ -174,6 +174,23 @@ forces the desktop interface.
 
 ## Routing
 
+### Experimental tuntom transport (`tuntom-integration`)
+
+`skewer tunnel skewer://HOST:PORT/pair` starts a foreground diagnostic tunnel
+using an existing TLS-PSK pairing. It does **not** change application routing or
+enable automatic tunneling yet. Ctrl-C closes the client and requests server
+cleanup; an interrupted control connection is covered by lease expiry.
+
+The privileged helper uses a transient systemd service, a root-owned executable
+at `/usr/libexec/saslik/tuntom`, and the `tuntom` runtime account. The transport
+key travels over stdin, never argv. The helper rejects conflicting interfaces
+and overlapping subnets. `verified` requires fresh confirmed-session statistics
+and a successful ping through the TUN; `prepared` only means the interface exists.
+
+Both endpoints need the tuntom transport installed. Packaging, automatic route
+selection, and the GUI controls are still pending. Do not interpret a successful
+diagnostic tunnel as evidence that existing application connections use it.
+
 Enter an IPv4 address that is directly reachable on one of the host's links.
 Enabling routing creates one nftables output table and one policy-routing table
 for the invoking UID. Packets from other users and processes outside
@@ -183,6 +200,49 @@ excluded to prevent recursive routing.
 The graphical interface authorizes the narrow `skewer-net-helper` through
 polkit. The TUI invokes the same helper through `sudo`. Disable routing before
 the next-hop machine disappears; repeating enable or disable is safe.
+
+## Interface ingress (IPv4)
+
+The **Interfaces** root in Applications lists host interfaces, with bridge ports
+nested beneath their bridge. Attach/Release also work in the TUI (`A` / `D`).
+Selecting a whole bridge attaches its **current** ports; new ports are not
+silently adopted. A disappeared selection remains visible until released.
+Readable local libvirt runtime metadata supplies VM names when available;
+Skewer never requests hypervisor credentials just to populate this list.
+When `virsh` is available, a background lookup also queries explicit local
+read-only libvirt sockets every 30 seconds. Each command has a timeout and the
+lookup has a three-second command budget. No read/write socket fallback,
+sudo, or daemon autostart is used. Exact domain XML interface targets determine
+the VM name; `vnetN` by itself is not treated as proof of VM ownership.
+
+This is ingress policy routing, **not** moving interfaces into a cgroup. Bridge
+ports mark frames addressed to their host bridge gateway, retaining normal
+bridge-local delivery into IPv4. They do not force broute onto unnumbered TAP
+devices, where reverse-path validation can drop traffic. Non-exempt traffic
+addressed to an external gateway MAC is currently blocked, not transparently
+rerouted. Standalone interfaces use IPv4 prerouting marks. Rules use both the interface name and index. Per-user
+interface tables are separate from application/cgroup routing. Closing the UI
+does not remove them; Release removes a selection, and Disable removes both
+interface and application routing.
+
+- Saslik must be an on-link IPv4 next hop. Shared uplink bridges and unsupported
+  master types are refused rather than guessed. Tunneling remains future work.
+- IPv4 forwarding must already be enabled. Existing firewall policy, bridges,
+  NAT and return routes are not rewritten. The remote side must have a valid
+  return path to the guest; an existing forwarding firewall can still block it.
+- IPv6 is blocked on selected ingress. Bridge frames other than IPv4 and ARP
+  are blocked too (including VLAN-tagged traffic). DHCP, host-local addresses,
+  multicast and configured destination exemptions are not redirected.
+- Release interfaces before changing the gateway or destination exemptions.
+- **Attached describes installed selection, not verified interception.** Guest
+  CA trust is unknown: install the CA inside the guest separately. Neither
+  guest processes nor their certificate stores are visible from the host.
+
+`interface_routing` tests selection and rule generation. `interface_packets`
+creates disposable user/network/mount namespaces, tests actual forwarded
+packets on a real TAP and a standalone interface, with `rp_filter=2`, a
+libvirt-style forwarding filter, and a return packet to the guest. It never modifies host
+networking. It is explicitly skipped when user namespaces/tools are unavailable.
 
 ## Design rules
 
@@ -204,3 +264,20 @@ See `man skewer-shell-scripting` after installation, or
 `man ./data/skewer-shell-scripting.1` from the source checkout.
 Bash prints the manual reference on exit unless an existing user EXIT trap
 needs to be preserved. Startup remains quiet.
+
+## Fail-closed process routing
+
+Before attaching or launching a process, Skewer installs a persistent output
+guard for its routed cgroup. Disabling routing leaves that guard in place:
+attached sockets are dropped instead of falling back to the host's default
+route. Restoring routing allows IPv4 only through the configured next hop;
+explicit destination exceptions apply only while routing is enabled. IPv6 is
+blocked. The GUI displays **Dropped** and a red blinking routing status when
+attached applications have no routing; **Unprotected** means the guard has not
+yet been installed (for example, after upgrading a running older version).
+
+This protects sockets created in the routed slice, not old sockets created
+before Attach. Release also does not change an existing socket's cgroup;
+reconnect or restart the application when necessary. A privileged external
+firewall flush is outside this guarantee. Closing Skewer does not remove the
+guard. Installation requires authorization, but status polling never does.

@@ -1,4 +1,6 @@
 #include "main_window.hpp"
+#include "routing_guard.hpp"
+#include "interface_routing.hpp"
 #include "launcher.hpp"
 #include "pairing.hpp"
 #include "connections.hpp"
@@ -227,6 +229,9 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
             QStringList normalized; QString detail;
             const auto entries = editor->toPlainText().split(QRegularExpression("[\\s,]+"), Qt::SkipEmptyParts);
             if (!RoutingPlanner::normalizeExemptions(entries, normalized, detail)) { error->setText(detail); return; }
+            if (!InterfaceRouting::state(getuid()).isEmpty()) {
+                error->setText(tr("Release interfaces before changing destination exemptions.")); return;
+            }
             if (routing_.active(currentNextHop())) {
                 const auto result = routing_.updateExemptions(normalized, RoutingController::Authorization::Desktop);
                 if (!result.ok) { error->setText(result.detail); return; }
@@ -727,12 +732,39 @@ void MainWindow::updateRoutingStatus()
 
 void MainWindow::renderRoutingStatus(bool active, bool reachable)
 {
+    const bool protected_slice = RoutingGuard::installed(getuid());
+    model_->setRoutingState(active, protected_slice);
+    const bool alarm = !active && model_->hasAttachedProcesses();
+    auto* blink = findChild<QTimer*>("routingAlarm");
+    if (!blink) {
+        blink = new QTimer(this);
+        blink->setObjectName("routingAlarm");
+        blink->setInterval(600);
+        connect(blink, &QTimer::timeout, this, [this, blink] {
+            const bool bright = !blink->property("bright").toBool();
+            blink->setProperty("bright", bright);
+            const QString color = bright ? "#ff5364" : "#b83e4b";
+            routing_status_->setStyleSheet("color:" + color);
+            routing_status_bar_->setStyleSheet("color:" + color + "; padding:0 6px");
+        });
+    }
+    if (alarm && !blink->isActive()) blink->start();
+    if (!alarm) blink->stop();
     const QString next_hop = currentNextHop();
+    const auto interface_state = InterfaceRouting::state(getuid());
+    const bool interfaces_attached = !interface_state["selections"].toObject().isEmpty();
     QString text;
     QString color;
     if (active) {
         text = tr("● Routing active via %1").arg(next_hop);
         color = QStringLiteral("#63dc94");
+    } else if (alarm) {
+        text = protected_slice ? tr("● Dropped · process routing unavailable")
+                               : tr("● Unprotected · restore process routing");
+        color = QStringLiteral("#ff5364");
+    } else if (interfaces_attached) {
+        text = tr("● Interface ingress configured via %1").arg(interface_state["gateway"].toString());
+        color = QStringLiteral("#e3b94f");
     } else if (routing_requested_) {
         if (!discovery_warning_.isEmpty()) text = tr("● %1").arg(discovery_warning_);
         else if (usesSaslikUrl() && !saslik_reachable_) text = tr("● Waiting for Saslik…");
@@ -759,10 +791,10 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
     routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
     routing_up_->setText(routing_requested_ && !active ? tr("Restore routing") : tr("Enable"));
     routing_up_->setEnabled(!active);
-    routing_down_->setEnabled(routing_requested_ || active);
-    routing_source_->setEnabled(!routing_requested_ && !active);
-    next_hop_->setEnabled(!routing_requested_ && !active && !usesSaslikUrl());
-    saslik_url_->setEnabled(!routing_requested_ && !active && usesSaslikUrl());
+    routing_down_->setEnabled(routing_requested_ || active || interfaces_attached);
+    routing_source_->setEnabled(!routing_requested_ && !active && !interfaces_attached);
+    next_hop_->setEnabled(!routing_requested_ && !active && !interfaces_attached && !usesSaslikUrl());
+    saslik_url_->setEnabled(!routing_requested_ && !active && !interfaces_attached && usesSaslikUrl());
 
     // Polling is read-only: privilege elevation requires an explicit click.
 }
@@ -1011,6 +1043,14 @@ void MainWindow::updateSelection()
     const auto type = static_cast<ApplicationModel::NodeType>(
         index.data(ApplicationModel::NodeTypeRole).toInt());
     const bool application = index.isValid() && type == ApplicationModel::NodeType::Application;
+    if (index.isValid() && type == ApplicationModel::NodeType::Interface) {
+        const bool attached = index.data(ApplicationModel::RoutedRole).toBool();
+        route_button_->setEnabled(!attached && !index.data(ApplicationModel::PartiallyRoutedRole).toBool()
+            && index.data(ApplicationModel::InterfaceNameRole).toString() != "lo");
+        release_button_->setEnabled(attached);
+        action_status_->setText(tr("Interface ingress only. CA trust inside guests is unknown; no certificates are installed there."));
+        return;
+    }
     const bool routed = application && index.data(ApplicationModel::RoutedRole).toBool();
     const bool partial = index.data(ApplicationModel::PartiallyRoutedRole).toBool();
     route_button_->setEnabled(application && (!routed || partial));
@@ -1036,6 +1076,23 @@ void MainWindow::browseExecutable()
 void MainWindow::routeSelection()
 {
     const QModelIndex index = tree_->currentIndex().siblingAtColumn(0);
+    if (index.data(ApplicationModel::NodeTypeRole).toInt() == int(ApplicationModel::NodeType::Interface)) {
+        const QString name = index.data(ApplicationModel::InterfaceNameRole).toString();
+        const int number = index.data(ApplicationModel::InterfaceIndexRole).toInt();
+        if (currentNextHop().isEmpty() || (usesSaslikUrl() && saslik_disconnected_)) {
+            QMessageBox::information(this, tr("Interface routing"), tr("Select a reachable Saslik gateway first.")); return;
+        }
+        if (QMessageBox::warning(this, tr("Route interface ingress"),
+            tr("Route incoming IPv4 on %1 via %2? A bridge selects its CURRENT ports only.\n"
+               "Bridge traffic must use the host bridge as its gateway; other gateway MACs are blocked.\n"
+               "IPv6 and non-IP bridge traffic except ARP are blocked. DHCP and host-local traffic stay local.\n"
+               "Return routes and forwarding/firewall must already permit traffic. No SNAT or guest CA installation.\n"
+               "Changing paths can interrupt existing connections. Guest CA trust is unknown.").arg(name, currentNextHop()),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) return;
+        const auto result = routing_.interfaceChange(name, number, currentNextHop(), true, RoutingController::Authorization::Desktop);
+        if (!result.ok) QMessageBox::warning(this, tr("Interface routing"), result.detail);
+        model_->refresh(); updateRoutingStatus(); action_status_->setText(result.detail); return;
+    }
     QVector<pid_t> pids;
     for (const QVariant& value : index.data(ApplicationModel::ProcessIdsRole).toList())
         pids.push_back(value.toInt());
@@ -1061,6 +1118,12 @@ void MainWindow::routeSelection()
 void MainWindow::releaseSelection()
 {
     const QModelIndex index = tree_->currentIndex().siblingAtColumn(0);
+    if (index.data(ApplicationModel::NodeTypeRole).toInt() == int(ApplicationModel::NodeType::Interface)) {
+        const auto result = routing_.interfaceChange(index.data(ApplicationModel::InterfaceNameRole).toString(),
+            index.data(ApplicationModel::InterfaceIndexRole).toInt(), {}, false, RoutingController::Authorization::Desktop);
+        if (!result.ok) QMessageBox::warning(this, tr("Interface routing"), result.detail);
+        model_->refresh(); action_status_->setText(result.detail); return;
+    }
     QVector<pid_t> pids;
     for (const QVariant& value : index.data(ApplicationModel::ProcessIdsRole).toList())
         pids.push_back(value.toInt());

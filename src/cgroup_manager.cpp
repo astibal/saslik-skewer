@@ -1,4 +1,5 @@
 #include "cgroup_manager.hpp"
+#include "routing_guard.hpp"
 
 #include <QDateTime>
 #include <QCoreApplication>
@@ -97,6 +98,10 @@ CgroupResult CgroupManager::moveToScope(const QVector<pid_t>& pids,
     }
     if (validated.isEmpty())
         return {false, QStringLiteral("No live processes owned by the current user"), {}};
+    if (routed) {
+        QString error;
+        if (!RoutingGuard::ensure(error)) return {false, error, {}};
+    }
     sd_bus* raw_bus = nullptr;
     int result = sd_bus_open_user(&raw_bus);
     BusPointer bus(raw_bus, &sd_bus_unref);

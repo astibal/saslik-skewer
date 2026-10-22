@@ -23,10 +23,15 @@ struct RoutingPlan {
 
 class RoutingPlanner {
 public:
+    static QString guardRules(uid_t uid, int level, const QString& gateway = {},
+                              const QString& interface = {}, const QStringList& exemptions = {},
+                              const QString& local_control = {}, quint16 local_control_port = 0);
     [[nodiscard]] static RoutingPlan create(uid_t uid, const QString& next_hop,
                                             const QString& interface_name,
                                             int cgroup_level = 5,
-                                            const QStringList& exemptions = {});
+                                            const QStringList& exemptions = {},
+                                            const QString& local_control = {},
+                                            quint16 local_control_port = 0);
     static bool normalizeExemptions(const QStringList& input, QStringList& output, QString& error);
     static QString exemptionUpdate(uid_t uid, const QStringList& normalized);
     [[nodiscard]] static QString tableName(uid_t uid);

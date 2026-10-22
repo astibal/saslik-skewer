@@ -12,7 +12,8 @@ QString number(quint32 value)
 
 RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
                                    const QString& interface_name, int cgroup_level,
-                                   const QStringList& exemptions)
+                                   const QStringList& exemptions,
+                                   const QString& local_control, quint16 local_control_port)
 {
     RoutingPlan plan;
     QStringList normalized;
@@ -56,6 +57,16 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
         .arg(gateway)
         .arg(cgroup_level)
         .arg(mark_hex);
+    const QString uid_match = "    meta skuid " + QString::number(uid);
+    plan.nft_rules.replace(uid_match + " ip daddr " + gateway + " return\n",
+        uid_match + " ip daddr 127.0.0.53 udp dport 53 return\n"
+        + uid_match + " ip daddr 127.0.0.53 tcp dport 53 return\n"
+        + uid_match + " ip daddr " + gateway + " return\n");
+    if (!local_control.isEmpty() && local_control_port)
+        plan.nft_rules.replace(uid_match + " ip daddr " + gateway + " return\n",
+            uid_match + " ip daddr " + local_control
+            + " tcp dport " + QString::number(local_control_port) + " return\n"
+            + uid_match + " ip daddr " + gateway + " return\n");
     plan.nft_rules += exemptionUpdate(uid, normalized);
 
     plan.cleanup = {
@@ -63,6 +74,8 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
                                  QStringLiteral("inet"), plan.nft_table}, true},
         {QStringLiteral("ip"), {QStringLiteral("-4"), QStringLiteral("rule"),
                                 QStringLiteral("del"), QStringLiteral("pref"), number(priority)}, true},
+        {QStringLiteral("ip"), {QStringLiteral("-4"), QStringLiteral("rule"),
+                                QStringLiteral("del"), QStringLiteral("pref"), number(priority + 1)}, true},
         {QStringLiteral("ip"), {QStringLiteral("-4"), QStringLiteral("route"),
                                 QStringLiteral("flush"), QStringLiteral("table"), number(route_table)}, true},
     };
@@ -79,9 +92,44 @@ RoutingPlan RoutingPlanner::create(uid_t uid, const QString& next_hop,
                                 QStringLiteral("add"), QStringLiteral("pref"), number(priority),
                                 QStringLiteral("fwmark"), mark_hex + QStringLiteral("/0xffffffff"),
                                 QStringLiteral("lookup"), number(route_table)}, false},
+        // Never let a marked socket fall through to the host's main table if
+        // the dedicated route disappears between health checks.
+        {QStringLiteral("ip"), {QStringLiteral("-4"), QStringLiteral("rule"),
+                                QStringLiteral("add"), QStringLiteral("pref"), number(priority + 1),
+                                QStringLiteral("fwmark"), mark_hex + QStringLiteral("/0xffffffff"),
+                                QStringLiteral("unreachable")}, false},
     };
     plan.valid = true;
     return plan;
+}
+
+QString RoutingPlanner::guardRules(uid_t uid, int level, const QString& gateway,
+                                  const QString&, const QStringList& exemptions,
+                                  const QString& local_control, quint16 local_control_port)
+{
+    const QString table = QString("skewer_guard_%1").arg(uid);
+    QString rules = "table inet " + table + " {\n"
+        "set bypass_v4 { type ipv4_addr; flags interval; auto-merge; }\n"
+        "chain guarded {\n";
+    if (!gateway.isEmpty()) {
+        rules += "ip daddr @bypass_v4 return\nip daddr " + gateway + " return\n";
+        // Desktop applications normally resolve through systemd-resolved's
+        // loopback stub. Permit only DNS to that exact local endpoint.
+        rules += "ip daddr 127.0.0.53 udp dport 53 return\n";
+        rules += "ip daddr 127.0.0.53 tcp dport 53 return\n";
+        if (!local_control.isEmpty() && local_control_port)
+            rules += "ip daddr " + local_control + " tcp dport " + QString::number(local_control_port) + " return\n";
+        // Policy rerouting happens after the output filter hooks. The old
+        // oif/next-hop is therefore not meaningful here. The immediately
+        // following unreachable policy rule provides the fail-closed check.
+        rules += QString("meta nfproto ipv4 meta mark 0x%1 return\n").arg(mark(uid), 0, 16);
+    }
+    rules += "counter drop\n}\nchain output { type filter hook output priority 100; policy accept;\n";
+    rules += QString("socket cgroupv2 level %1 \"user.slice/user-%2.slice/user@%2.service/skewer.slice/skewer-routed.slice\" jump guarded\n}\n}\n")
+        .arg(level).arg(uid);
+    if (!exemptions.isEmpty() && !gateway.isEmpty())
+        rules += "add element inet " + table + " bypass_v4 { " + exemptions.join(", ") + " }\n";
+    return rules;
 }
 
 bool RoutingPlanner::normalizeExemptions(const QStringList& input, QStringList& output, QString& error)

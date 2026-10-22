@@ -1,5 +1,6 @@
 #include "session_status.hpp"
 #include "session_guard.hpp"
+#include "routing_guard.hpp"
 #include "routing_plan.hpp"
 #include "pairing.hpp"
 #include <QDateTime>
@@ -41,6 +42,7 @@ Snapshot sample(pid_t shell_pid)
     if (!cgroup.open(QIODevice::ReadOnly) || !routedGroup(QString::fromUtf8(cgroup.readAll()).trimmed()))
         return {"offline", "shell-outside-routed-cgroup"};
     QSettings settings;
+    if (!RoutingGuard::installed(getuid())) return {"offline", "routing-guard-missing"};
     const bool api = settings.value("routing/mode").toString() == "saslik";
     QString gateway = settings.value("routing/nextHop").toString();
     if (api) {
