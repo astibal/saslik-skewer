@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 #include "routing_guard.hpp"
+#include "privileged_session.hpp"
 #include "interface_routing.hpp"
 #include "launcher.hpp"
 #include "pairing.hpp"
@@ -794,8 +795,15 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
     tray_->setToolTip(tooltip.join('\n'));
     routing_status_->setStyleSheet(QStringLiteral("color:%1").arg(color));
     routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
-    routing_up_->setText(routing_requested_ && !active ? tr("Restore routing") : tr("Enable"));
-    routing_up_->setEnabled(!active);
+    // Existing kernel routes may outlive the previous GUI's privileged session.
+    // Re-authorize explicitly; read-only startup polling must not show dialogs.
+    const bool maintained = PrivilegedSession::client().running()
+        && QFile::exists(QString("/run/skewer-route-intent-%1.json").arg(getuid()));
+    routing_up_->setText(active && !maintained ? tr("Maintain routing")
+        : routing_requested_ && !active ? tr("Restore routing") : tr("Enable"));
+    routing_up_->setEnabled(!active || !maintained);
+    routing_up_->setToolTip(tr("Authorize a persistent helper for this Skewer session. "
+        "Missing routes will be restored without asking for the password again."));
     routing_down_->setEnabled(routing_requested_ || active || interfaces_attached);
     routing_source_->setEnabled(!routing_requested_ && !active && !interfaces_attached);
     next_hop_->setEnabled(!routing_requested_ && !active && !interfaces_attached && !usesSaslikUrl());

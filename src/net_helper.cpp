@@ -1,5 +1,6 @@
 #include "routing_plan.hpp"
 #include "routing_guard.hpp"
+#include "helper_protocol.hpp"
 #include "ca_store.hpp"
 #include "socket_cleanup.hpp"
 #include "tuntom_process.hpp"
@@ -17,6 +18,11 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QTextStream>
+#include <QTemporaryFile>
+#include <QElapsedTimer>
+#include <poll.h>
+#include <signal.h>
+#include <functional>
 
 #include <optional>
 #include <unistd.h>
@@ -151,10 +157,41 @@ int ensureGuard(uid_t uid)
     return 0;
 }
 
-int up(uid_t uid, const QString& next_hop, const QStringList& exemptions)
+QString intentPath(uid_t uid) { return QString("/run/skewer-route-intent-%1.json").arg(uid); }
+
+QByteArray readIntent(uid_t uid)
+{
+    const int fd = ::open(intentPath(uid).toLocal8Bit().constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return {};
+    struct stat metadata{};
+    QFile file;
+    if (::fstat(fd, &metadata) || !S_ISREG(metadata.st_mode) || metadata.st_uid != 0
+        || (metadata.st_mode & 0022) || metadata.st_size > 32768
+        || !file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+        ::close(fd);
+        return {};
+    }
+    return file.readAll();
+}
+
+bool writeIntent(uid_t uid, const QString& gateway, const QStringList& exemptions)
+{
+    QSaveFile file(intentPath(uid));
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    const auto data = QJsonDocument(QJsonObject{{"gateway", gateway},
+        {"exemptions", QJsonArray::fromStringList(exemptions)}}).toJson(QJsonDocument::Compact);
+    return file.write(data) == data.size() && file.commit();
+}
+
+int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
+       const QByteArray& expected_intent = {})
 {
     QLockFile lock("/run/skewer-interface-routing.lock");
     if (!lock.tryLock(0)) return 1;
+    // A concurrent Disable or another client changing the gateway wins over a
+    // stale watchdog snapshot. Compare under the same lock as kernel updates.
+    if (!expected_intent.isEmpty() && readIntent(uid) != expected_intent) return 0;
     QString error, local_control;
     quint16 local_control_port = 0;
     QStringList destinations;
@@ -219,6 +256,14 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions)
         setGuard(uid, level, ignored);
         cleanup(plan);
         QTextStream(stderr) << error << '\n'; return 1;
+    }
+    if (!writeIntent(uid, next_hop, exemptions)) {
+        QString ignored;
+        setGuard(uid, level, ignored);
+        cleanup(plan);
+        QFile::remove(intentPath(uid));
+        QTextStream(stderr) << "Cannot save desired routing; traffic remains blocked\n";
+        return 1;
     }
     QTextStream(stdout) << "active: cgroup traffic -> " << next_hop
                         << " via " << interface_name << '\n';
@@ -365,6 +410,8 @@ int down(uid_t uid)
 {
     QLockFile lock("/run/skewer-interface-routing.lock");
     if (!lock.tryLock(0)) return 1;
+    // Explicit Disable cancels reconciliation, including in other GUI instances.
+    if (QFile::exists(intentPath(uid)) && !QFile::remove(intentPath(uid))) return 1;
     QString error;
     const int level = cgroupLevel(uid, error);
     if (level && !setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
@@ -497,19 +544,8 @@ int caRemove(const QString& identity, const QString& path)
 }
 }
 
-int main(int argc, char* argv[])
+int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
 {
-    QCoreApplication application(argc, argv);
-    if (geteuid() != 0) {
-        QTextStream(stderr) << "skewer-net-helper: must run as root through pkexec or sudo\n";
-        return 2;
-    }
-    const auto uid = invokingUid();
-    if (!uid) {
-        QTextStream(stderr) << "skewer-net-helper: cannot identify the invoking desktop user\n";
-        return 2;
-    }
-    const QStringList arguments = application.arguments().sliced(1);
     if (arguments == QStringList{"guard"}) return ensureGuard(*uid);
     if (arguments == QStringList{"tunnel-session"}) return tuntomService(*uid);
     if (arguments == QStringList{"tunnel-worker"}) return tuntomProcess(*uid);
@@ -542,6 +578,17 @@ int main(int argc, char* argv[])
         }
         const Result result = run(QString::fromLatin1(nft_binary), {"-f", "-"}, rules.toUtf8());
         QTextStream(result.exit_code == 0 ? stdout : stderr) << result.output;
+        if (result.exit_code == 0) {
+            const auto desired = QJsonDocument::fromJson(readIntent(*uid)).object();
+            QStringList saved = normalized;
+            for (const auto& value : desired["exemptions"].toArray())
+                if (value.toString().startsWith("--local-control=")) saved << value.toString();
+            if (!desired.isEmpty() && !writeIntent(*uid, desired["gateway"].toString(), saved)) {
+                QFile::remove(intentPath(*uid));
+                QTextStream(stderr) << "Cannot save updated routing intent; automatic restoration stopped\n";
+                return 1;
+            }
+        }
         if (result.exit_code != 0)
             QTextStream(stderr) << "No exceptions were changed. If routing was started by an older Skewer, disable and enable routing once.\n";
         return result.exit_code == 0 ? 0 : 1;
@@ -551,4 +598,151 @@ int main(int argc, char* argv[])
     QTextStream(stderr) << "usage: skewer-net-helper up NEXT_HOP | down | status | "
                            "ca-install SHA256 PEM | ca-remove SHA256 LOCAL_ANCHOR\n";
     return 2;
+}
+
+namespace {
+Result captured(const std::function<int()>& operation)
+{
+    // Keep protocol stdout separate from existing operations' diagnostics.
+    QTemporaryFile output;
+    if (!output.open()) return {1, "Cannot capture helper output"};
+    const int saved_out = ::dup(STDOUT_FILENO);
+    const int saved_err = ::dup(STDERR_FILENO);
+    if (saved_out < 0 || saved_err < 0) {
+        if (saved_out >= 0) ::close(saved_out);
+        if (saved_err >= 0) ::close(saved_err);
+        return {1, "Cannot capture helper descriptors"};
+    }
+    ::fflush(stdout); ::fflush(stderr);
+    const bool redirected = ::dup2(output.handle(), STDOUT_FILENO) >= 0
+        && ::dup2(output.handle(), STDERR_FILENO) >= 0;
+    const int code = redirected ? operation() : 1;
+    ::fflush(stdout); ::fflush(stderr);
+    ::dup2(saved_out, STDOUT_FILENO); ::dup2(saved_err, STDERR_FILENO);
+    ::close(saved_out); ::close(saved_err);
+    output.seek(0);
+    return {code, output.read(16384)};
+}
+
+int reconcile(uid_t uid)
+{
+    const auto snapshot = readIntent(uid);
+    if (snapshot.isEmpty()) return 0;
+    const auto desired = QJsonDocument::fromJson(snapshot).object();
+    const auto gateway = desired["gateway"].toString();
+    if (gateway.isEmpty()) return 1;
+    QStringList exemptions;
+    for (const auto& item : desired["exemptions"].toArray()) exemptions << item.toString();
+    const auto routes = run(ip_binary, {"-4", "route", "show", "table",
+        QString::number(RoutingPlanner::routeTable(uid)), "default"});
+    const auto rules = run(ip_binary, {"-4", "-j", "rule", "show"});
+    bool matching_rule = false, fallback = false;
+    for (const auto& value : QJsonDocument::fromJson(rules.output).array()) {
+        const auto rule = value.toObject();
+        bool valid = false;
+        const auto mark = rule["fwmark"].toString().toUInt(&valid, 0);
+        if (valid && mark == RoutingPlanner::mark(uid)
+            && rule["table"].toVariant().toUInt() == RoutingPlanner::routeTable(uid)
+            && rule["priority"].toInt() == int(RoutingPlanner::rulePriority(uid))) matching_rule = true;
+        if (valid && mark == RoutingPlanner::mark(uid) && rule["action"].toString() == "unreachable"
+            && rule["priority"].toInt() == int(RoutingPlanner::rulePriority(uid) + 1)) fallback = true;
+    }
+    const auto guard = run(nft_binary, {"-j", "list", "table", "inet", QString("skewer_guard_%1").arg(uid)});
+    bool allows_marked_ipv4 = false;
+    for (const auto& item : QJsonDocument::fromJson(guard.output).object()["nftables"].toArray()) {
+        const auto rule = item.toObject()["rule"].toObject();
+        if (rule["chain"].toString() != "guarded") continue;
+        bool ipv4 = false, marked = false, returns = false;
+        for (const auto& expression : rule["expr"].toArray()) {
+            const auto statement = expression.toObject();
+            returns |= statement.contains("return");
+            const auto match = statement["match"].toObject();
+            if (match["op"].toString() != "==") continue;
+            const auto key = match["left"].toObject()["meta"].toObject()["key"].toString();
+            ipv4 |= key == "nfproto" && match["right"].toString() == "ipv4";
+            marked |= key == "mark" && match["right"].toDouble(-1) == RoutingPlanner::mark(uid);
+        }
+        allows_marked_ipv4 |= ipv4 && marked && returns;
+    }
+    if (RoutingGuard::installed(uid) && matching_rule && fallback && routes.exit_code == 0
+        && routes.output.contains(QString("default via %1 ").arg(gateway).toUtf8())
+        && run(nft_binary, {"list", "table", "inet", RoutingPlanner::tableName(uid)}).exit_code == 0
+        // A freshly reinstalled drop-only guard is safe but not operational.
+        // Restore the allow path too, rather than merely noticing table existence.
+        && guard.exit_code == 0 && allows_marked_ipv4)
+        return 0;
+    return up(uid, gateway, exemptions, snapshot);
+}
+
+bool sendReply(const Result& result)
+{
+    const auto data = QJsonDocument(QJsonObject{{"ok", result.exit_code == 0},
+        {"detail", QString::fromLocal8Bit(result.output).trimmed().left(8192)}})
+        .toJson(QJsonDocument::Compact) + '\n';
+    qsizetype offset = 0;
+    while (offset < data.size()) {
+        const auto written = ::write(STDOUT_FILENO, data.constData() + offset, data.size() - offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return false;
+        offset += written;
+    }
+    return true;
+}
+
+int serve(uid_t uid)
+{
+    ::signal(SIGPIPE, SIG_IGN);
+    QByteArray pending;
+    QByteArray last_error;
+    QElapsedTimer maintenance;
+    maintenance.start();
+    while (true) {
+        pollfd input{STDIN_FILENO, POLLIN, 0};
+        const int ready = ::poll(&input, 1, 500);
+        if (ready < 0) { if (errno == EINTR) continue; return 1; }
+        if (input.revents & (POLLIN | POLLHUP)) {
+            char buffer[4096];
+            const auto size = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+            if (size < 0 && errno == EINTR) continue;
+            if (size <= 0) return 0; // Session end never tears down routing.
+            pending.append(buffer, size);
+            while (pending.contains('\n')) {
+                const auto end = pending.indexOf('\n');
+                const auto frame = pending.left(end);
+                pending.remove(0, end + 1);
+                QStringList arguments;
+                const auto result = HelperProtocol::decode(frame, arguments)
+                    ? captured([&] { return dispatch(uid, arguments); })
+                    : Result{2, "Invalid or unsupported helper request"};
+                if (!sendReply(result)) return 0;
+            }
+            if (pending.size() > HelperProtocol::maxRequest) return 2;
+        }
+        if (input.revents & (POLLERR | POLLNVAL)) return 1;
+        if (maintenance.elapsed() >= 2000) {
+            const auto result = captured([&] { return reconcile(uid); });
+            if (result.exit_code && !result.output.isEmpty() && result.output != last_error)
+                QTextStream(stderr) << "skewer routing recovery: " << result.output;
+            last_error = result.exit_code ? result.output : QByteArray{};
+            maintenance.restart();
+        }
+    }
+}
+}
+
+int main(int argc, char* argv[])
+{
+    QCoreApplication application(argc, argv);
+    if (geteuid() != 0) {
+        QTextStream(stderr) << "skewer-net-helper: must run as root through pkexec or sudo\n";
+        return 2;
+    }
+    const auto uid = invokingUid();
+    if (!uid) {
+        QTextStream(stderr) << "skewer-net-helper: cannot identify the invoking user\n";
+        return 2;
+    }
+    const auto arguments = application.arguments().sliced(1);
+    if (arguments == QStringList{"serve"}) return serve(*uid);
+    return dispatch(uid, arguments);
 }

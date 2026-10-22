@@ -267,6 +267,20 @@ needs to be preserved. Startup remains quiet.
 
 ## Fail-closed process routing
 
+Routing changes use one authorized root helper session per running Skewer
+client, over inherited private pipes. The GUI stays unprivileged; the helper
+accepts a bounded whitelist of network operations, not shell commands or a
+caller-supplied UID. No sudo ticket renewal or password storage is involved.
+After Enable/Restore succeeds, the helper reconciles the saved next hop every
+two seconds. It restores missing process routes after a lab interface restart,
+without asking for the password again. While the interface is unavailable,
+the fail-closed guard remains in force. Disable cancels the shared desired
+state so another open Skewer cannot undo that choice. Closing the client ends
+its helper, but does not dismantle routing or the guard. Starting a new client
+requires a fresh authorized operation to resume maintenance. If routing is
+already active, **Maintain routing** starts that session explicitly; background
+polling never opens authentication dialogs.
+
 Before attaching or launching a process, Skewer installs a persistent output
 guard for its routed cgroup. Disabling routing leaves that guard in place:
 attached sockets are dropped instead of falling back to the host's default

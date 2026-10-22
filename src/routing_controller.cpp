@@ -1,5 +1,6 @@
 #include "routing_controller.hpp"
 #include "routing_guard.hpp"
+#include "privileged_session.hpp"
 
 #include "routing_plan.hpp"
 
@@ -149,11 +150,7 @@ QString RoutingController::helperPath()
 RoutingResult RoutingController::invoke(const QStringList& helper_arguments,
                                         Authorization authorization)
 {
-    QStringList arguments;
-    if (authorization == Authorization::Desktop) {
-        arguments << helperPath() << helper_arguments;
-        return run(QStringLiteral("/usr/bin/pkexec"), arguments, 120000);
-    }
-    arguments << helperPath() << helper_arguments;
-    return run(QStringLiteral("/usr/bin/sudo"), arguments, 120000);
+    const auto result = PrivilegedSession::request(helperPath(), helper_arguments,
+        authorization == Authorization::Desktop);
+    return {result.ok, result.detail};
 }

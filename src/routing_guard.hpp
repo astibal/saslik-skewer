@@ -1,4 +1,5 @@
 #pragma once
+#include "privileged_session.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -44,13 +45,10 @@ inline bool ensure(QString& error) {
 #endif
     }
     const bool terminal = isatty(STDIN_FILENO) || (qEnvironmentVariableIsEmpty("DISPLAY") && qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY"));
-    QProcess process;
-    process.setProcessChannelMode(QProcess::ForwardedChannels);
-    process.setInputChannelMode(QProcess::ForwardedInputChannel);
-    process.start(terminal ? "sudo" : "pkexec", {helper, "guard"});
-    if (!process.waitForFinished(60000)) { process.kill(); process.waitForFinished(); }
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() || !installed(getuid())) {
-        error = "Fail-closed protection could not be installed; refusing Attach/launch"; return false;
+    const auto result = PrivilegedSession::request(helper, {"guard"}, !terminal);
+    if (!result.ok || !installed(getuid())) {
+        error = "Fail-closed protection could not be installed; refusing Attach/launch: " + result.detail;
+        return false;
     }
     return true;
 }
