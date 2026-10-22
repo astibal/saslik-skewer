@@ -6,12 +6,23 @@
 #include <QApplication>
 #include <QPersistentModelIndex>
 #include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QDir>
+#include <QFile>
+#include <QBrush>
 
 #include <iostream>
 #include <unistd.h>
 
 int main(int argc, char** argv)
 {
+    QTemporaryDir desktop_root;
+    qputenv("XDG_DATA_HOME", desktop_root.path().toUtf8());
+    QDir().mkpath(desktop_root.path() + "/applications");
+    QFile desktop(desktop_root.path() + "/applications/skewer-fixture.desktop");
+    if (!desktop.open(QIODevice::WriteOnly)) return 25;
+    desktop.write("[Desktop Entry]\nType=Application\nName=Fixture Browser\nExec=/opt/fixture-browser\n");
+    desktop.close();
     QApplication application(argc, argv);
 
     ProcessInfo manager, browser, child, terminal;
@@ -143,5 +154,48 @@ int main(int argc, char** argv)
     if (!kept.isValid() || keptChild.isValid() || resets.count()) return 20;
     model.setProcesses({});
     if (kept.isValid() || model.rowCount() || resets.count()) return 21;
+    ProcessInfo shell = first;
+    shell.pid = 501; shell.name = "bash"; shell.executable = "/bin/bash";
+    shell.cgroup = "/app-shell.scope"; shell.arguments = {"bash"};
+    auto other_shell = shell;
+    other_shell.pid = 502; other_shell.cgroup = "/app-shell-two.scope";
+    auto script = shell;
+    script.pid = 503; script.cgroup = "/app-script.scope";
+    script.arguments = {"/bin/bash", "/opt/test scripts/skewer-browser"};
+    script.command_line = script.arguments.join(' ');
+    model.setProcesses({shell, other_shell, script});
+    if (model.rowCount(model.index(0, 0)) != 2) return 22;
+    const auto script_app = findPid(findPid, script.pid, {}).parent();
+    if (script_app.data().toString() != "skewer-browser"
+        || script_app.parent().data(ApplicationModel::NodeTypeRole).toInt()
+            != int(ApplicationModel::NodeType::Section)) return 23;
+    if (findPid(findPid, shell.pid, {}).parent().parent()
+        != findPid(findPid, other_shell.pid, {}).parent().parent()) return 24;
+    auto gui = shell;
+    gui.pid = 504; gui.parent_pid = shell.pid;
+    gui.name = "fixture-browser"; gui.executable = "/opt/fixture-browser";
+    gui.arguments = {gui.executable};
+    model.setProcesses({shell, gui});
+    const auto physical = findPid(findPid, gui.pid, {});
+    if (physical.parent().data(ApplicationModel::StableIdRole) != "pid:501"
+        || !physical.data(Qt::ToolTipRole).toString().contains("Also shown in Applications")) return 26;
+    if (physical.data(Qt::ForegroundRole).value<QBrush>().color()
+        != QApplication::palette().color(QPalette::Disabled, QPalette::Text)) return 27;
+    const auto apps = model.index(0, 0);
+    if (model.rowCount(apps) != 2 || apps.data(ApplicationModel::ProcessIdsRole).toList().size() != 2) return 28;
+    bool promoted = false;
+    for (int row = 0; row < model.rowCount(apps); ++row) {
+        const auto item = model.index(row, 0, apps);
+        if (item.data().toString() == "Fixture Browser") {
+            promoted = item.data(ApplicationModel::ProcessIdsRole).toList() == QVariantList{gui.pid};
+        }
+    }
+    if (!promoted) return 29;
+    // A separate scope must keep the real parent edge too.
+    gui.cgroup = "/app-browser.scope";
+    model.setProcesses({shell, gui});
+    const auto shell_node = findPid(findPid, shell.pid, {});
+    if (model.rowCount(shell_node) != 1
+        || !model.index(0, 0, shell_node).data(Qt::ToolTipRole).toString().contains("PPID 501")) return 30;
     return 0;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <sys/types.h>
@@ -13,6 +14,7 @@ struct ProcessInfo {
     QString executable;
     QString command_line;
     QString cgroup;
+    QStringList arguments;
 };
 
 class ProcessScanner {

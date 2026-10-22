@@ -63,6 +63,7 @@ private:
         bool partially_routed{};
         QString identity;
         int process_count{};
+        bool application_reference{};
         // Computed once per socket snapshot, never once per paint role.
         bool connections_cached{};
         int sockets_total{};
@@ -86,6 +87,7 @@ private:
     std::vector<std::unique_ptr<Node>> roots_;
     QHash<QString, QString> launch_commands_;
     QHash<QString, const DesktopEntry*> desktop_matches_;
+    QHash<QString, const DesktopEntry*> exact_desktop_matches_;
     QHash<QString, QIcon> application_icons_;
     QByteArray snapshot_;
     quint64 process_revision_{};

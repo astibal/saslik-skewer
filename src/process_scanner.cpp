@@ -17,15 +17,17 @@ QString readTextFile(const QString& path)
     return QString::fromLocal8Bit(file.readAll());
 }
 
-QString readCommandLine(const QString& path)
+QStringList readArguments(const QString& path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         return {};
     }
-    QByteArray data = file.readAll();
-    data.replace('\0', ' ');
-    return QString::fromLocal8Bit(data).trimmed();
+    auto words = file.readAll().split('\0');
+    if (!words.isEmpty() && words.last().isEmpty()) words.removeLast();
+    QStringList result;
+    for (const auto& word : words) result.append(QString::fromLocal8Bit(word));
+    return result;
 }
 
 std::optional<ProcessInfo> readProcess(pid_t pid, uid_t wanted_uid)
@@ -57,7 +59,8 @@ std::optional<ProcessInfo> readProcess(pid_t pid, uid_t wanted_uid)
     process.name = name_match.hasMatch() ? name_match.captured(1).trimmed()
                                          : QString::number(pid);
     process.executable = QFileInfo(root + QStringLiteral("/exe")).symLinkTarget();
-    process.command_line = readCommandLine(root + QStringLiteral("/cmdline"));
+    process.arguments = readArguments(root + QStringLiteral("/cmdline"));
+    process.command_line = process.arguments.join(' ').trimmed();
     const QString cgroup = readTextFile(root + QStringLiteral("/cgroup")).trimmed();
     process.cgroup = cgroup.startsWith(QStringLiteral("0::")) ? cgroup.sliced(3) : cgroup;
     return process;

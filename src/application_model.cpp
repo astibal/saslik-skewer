@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QPalette>
 #include <QFutureWatcher>
+#include <QStandardPaths>
 #include <QtConcurrent>
 
 #include <algorithm>
@@ -15,6 +16,13 @@
 
 ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
 {
+    // Resolve launchers once, never run PATH/filesystem searches during polls.
+    for (const auto& entry : catalog_.entries()) {
+        const QString resolved = entry.executable.startsWith('/') ? entry.executable
+            : QStandardPaths::findExecutable(entry.executable);
+        if (!resolved.isEmpty() && !exact_desktop_matches_.contains(resolved))
+            exact_desktop_matches_.insert(resolved, &entry);
+    }
     refresh_timer_.setInterval(5000);
     auto* scan = new QFutureWatcher<QVector<ProcessInfo>>(this);
     connect(scan, &QFutureWatcher<QVector<ProcessInfo>>::finished, this, [this, scan] {
@@ -69,6 +77,11 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
 {
     Node* item = node(model_index);
     if (!item) return {};
+    if (item->application_reference && role == Qt::ForegroundRole)
+        return QBrush(QApplication::palette().color(QPalette::Disabled, QPalette::Text));
+    if (item->application_reference && role == Qt::ToolTipRole)
+        return tr("Actual child process (PPID %1). Also shown in Applications; this is not another instance.")
+            .arg(item->process.parent_pid);
     if (model_index.column() == ConnectionsColumn && item->type != NodeType::Section
         && (role == Qt::DisplayRole || role == Qt::ForegroundRole || role == Qt::ToolTipRole)) {
         if (!item->connections_cached) {
@@ -109,8 +122,12 @@ QVariant ApplicationModel::data(const QModelIndex& model_index, int role) const
     if (role == PartiallyRoutedRole) return item->partially_routed;
     if (role == ProcessIdsRole) {
         QVariantList pids;
-        const auto collect = [&pids](const auto& self, const Node& current) -> void {
-            if (current.type == NodeType::Process) pids.push_back(current.process.pid);
+        QSet<int> seen;
+        const auto collect = [&pids, &seen](const auto& self, const Node& current) -> void {
+            if (current.type == NodeType::Process && !seen.contains(current.process.pid)) {
+                seen.insert(current.process.pid);
+                pids.push_back(current.process.pid);
+            }
             for (const auto& child : current.children) self(self, *child);
         };
         collect(collect, *item);
@@ -246,6 +263,74 @@ void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
         application->parent = is_foreground ? foreground.get() : background.get();
         (is_foreground ? foreground->children : background->children).push_back(std::move(application));
     }
+    // Preserve PPID ancestry while giving confidently recognized GUI programs
+    // their own application view. Reference rows never imply another process.
+    QHash<int, Node*> process_nodes;
+    const auto indexProcesses = [&](const auto& self, Node& node) -> void {
+        if (node.type == NodeType::Process) process_nodes.insert(node.process.pid, &node);
+        for (auto& child : node.children) self(self, *child);
+    };
+    indexProcesses(indexProcesses, *foreground);
+    indexProcesses(indexProcesses, *background);
+    const QSet<QString> shells{"bash", "sh", "dash", "zsh", "ksh"};
+    for (const auto& process : processes) {
+        Node* original = process_nodes.value(process.pid);
+        Node* parent = process_nodes.value(process.parent_pid);
+        if (!original || !parent || !shells.contains(QFileInfo(parent->process.executable).fileName())) continue;
+        QString executable = process.executable;
+        if (shells.contains(QFileInfo(executable).fileName())) {
+            const int arg = process.arguments.value(1) == "--" ? 2 : 1;
+            if (!process.arguments.value(arg).startsWith('/')) continue;
+            executable = process.arguments[arg];
+        }
+        const DesktopEntry* desktop = exact_desktop_matches_.value(executable, nullptr);
+        // Exact executable matching only: process names and fuzzy cgroup names
+        // are insufficient evidence for promoting a child into Applications.
+        const auto snap = executable.split('/');
+        if (!desktop && snap.size() > 4 && snap[1] == "snap")
+            desktop = exact_desktop_matches_.value("/snap/bin/" + snap[2], nullptr);
+        if (!desktop) continue;
+        const auto clone = [&](const auto& self, const Node& source, Node* owner, bool reference) -> std::unique_ptr<Node> {
+            auto copy = std::make_unique<Node>();
+            copy->type = source.type;
+            copy->process = source.process;
+            copy->title = source.title;
+            copy->subtitle = source.subtitle;
+            copy->parent = owner;
+            copy->application_reference = reference;
+            copy->id = QString("view:%1:%2:%3").arg(process.pid).arg(reference ? "ref" : "app").arg(source.process.pid);
+            for (const auto& child : source.children)
+                copy->children.push_back(self(self, *child, copy.get(), reference));
+            return copy;
+        };
+        if (original->parent != parent) {
+            // A cgroup boundary already gave this process its own application
+            // row. Add the missing real-parent edge, without moving that row.
+            parent->children.push_back(clone(clone, *original, parent, true));
+            continue;
+        }
+        auto application = std::make_unique<Node>();
+        application->type = NodeType::Application;
+        application->id = QString("app:promoted:%1").arg(process.pid);
+        application->identity = "desktop:" + desktop->id;
+        application->title = desktop->name;
+        application->icon = desktop->icon();
+        application->launch_command = desktop->launch_command;
+        application->parent = foreground.get();
+        application->children.push_back(clone(clone, *original, application.get(), false));
+        int routed = 0;
+        const auto markReference = [&](const auto& self, Node& node) -> void {
+            node.application_reference = true;
+            ++application->process_count;
+            routed += node.process.cgroup.split('/').contains("skewer-routed.slice");
+            for (auto& child : node.children) self(self, *child);
+        };
+        markReference(markReference, *original);
+        application->routed = routed > 0;
+        application->partially_routed = routed > 0 && routed < application->process_count;
+        application->subtitle = tr("%1 processes · desktop application").arg(application->process_count);
+        foreground->children.push_back(std::move(application));
+    }
     groupInstances(*foreground);
     groupInstances(*background);
 
@@ -309,11 +394,13 @@ void ApplicationModel::setProcesses(const QVector<ProcessInfo>& processes)
             }
             retained.insert(source.id);
             const bool changed = item->title != source.title || item->subtitle != source.subtitle
+                || item->application_reference != source.application_reference
                 || item->launch_command != source.launch_command || item->routed != source.routed
                 || item->partially_routed != source.partially_routed || item->identity != source.identity
                 || item->process_count != source.process_count || item->icon.cacheKey() != source.icon.cacheKey()
                 || processIds(processIds, *item) != processIds(processIds, source);
             item->title = source.title;
+            item->application_reference = source.application_reference;
             item->subtitle = source.subtitle;
             item->launch_command = source.launch_command;
             item->icon = source.icon;
@@ -368,13 +455,28 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
         if (!members.contains(process.parent_pid)
             && !process.executable.isEmpty()) { representative = &process; break; }
     }
+    QString executable = representative->executable;
+    QString name = representative->name;
+    // Shell script launchers identify the script, not the shared interpreter.
+    // Use real argv boundaries: parsing the display command would misidentify
+    // paths containing spaces. Do not guess at shell -c expressions/options.
+    const QSet<QString> shells{"bash", "sh", "dash", "zsh", "ksh"};
+    const auto& arguments = representative->arguments;
+    bool script_launcher = false;
+    if (shells.contains(QFileInfo(executable).fileName()) && arguments.size() > 1) {
+        const int script_index = arguments[1] == "--" ? 2 : 1;
+        if (script_index < arguments.size() && arguments[script_index].startsWith('/')) {
+            executable = arguments[script_index];
+            name = QFileInfo(executable).fileName();
+            script_launcher = true;
+        }
+    }
     // Catalog matching and icon lookup do not change with process churn.
     // Cache misses too, so background processes do not rescan the catalog.
-    const QString identity = key + QChar(0) + representative->executable
-        + QChar(0) + representative->name;
+    const QString identity = key + QChar(0) + executable + QChar(0) + name;
     if (!desktop_matches_.contains(identity))
         desktop_matches_.insert(identity,
-            catalog_.match(key, representative->executable, representative->name));
+            catalog_.match(key, executable, name));
     const DesktopEntry* entry = desktop_matches_.value(identity);
     if (entry) {
         application->identity = QStringLiteral("desktop:") + entry->id;
@@ -386,18 +488,20 @@ ApplicationModel::buildApplication(const QString& key, QVector<ProcessInfo> proc
         launch_commands_.insert(entry->name, entry->launch_command);
     } else {
         // A display name alone must never merge unrelated executables.
-        application->identity = representative->executable.isEmpty()
+        application->identity = executable.isEmpty()
             ? QStringLiteral("unknown:") + key
-            : QStringLiteral("exe:") + representative->executable;
-        application->title = representative->name;
-        application->launch_command = representative->executable;
-        if (!representative->executable.isEmpty()) {
+            : (script_launcher ? QStringLiteral("script:") : QStringLiteral("exe:")) + executable;
+        application->title = name;
+        // Keep unknown script launchers out of command completion: they may
+        // require interpreter flags or arguments that we must not invent.
+        application->launch_command = script_launcher ? QString{} : executable;
+        if (!executable.isEmpty()) {
             static QFileIconProvider icons;
-            const QString icon_key = representative->executable;
+            const QString icon_key = executable;
             if (!application_icons_.contains(icon_key))
                 application_icons_.insert(icon_key, icons.icon(QFileInfo(icon_key)));
             application->icon = application_icons_.value(icon_key);
-            launch_commands_.insert(application->title, representative->executable);
+            if (!script_launcher) launch_commands_.insert(application->title, executable);
         }
     }
     application->subtitle = tr("%1 processes · %2")
