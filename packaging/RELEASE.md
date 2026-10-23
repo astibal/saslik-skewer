@@ -1,5 +1,13 @@
 Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
 
+### 0.9.50.5
+
+- Saslik Portal connections now require HTTPS and use explicit SHA-256
+  certificate pinning without modifying the system trust store.
+- Changed portal certificates require a fresh, visible confirmation.
+- Persisted VM/interface routing is restored when Saslik recreates its lab
+  uplink, alongside the existing process-routing recovery.
+
 ### 0.9.50.1
 
 - Dedicated CA Trust tab with exact-certificate installation/removal, Snap

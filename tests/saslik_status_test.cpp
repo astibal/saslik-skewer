@@ -9,7 +9,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QSettings>
-#include <QTcpServer>
+#include <QCryptographicHash>
+#include <QFile>
+#include <QProcess>
+#include <QSslCertificate>
+#include <QSslConfiguration>
+#include <QSslKey>
+#include <QSslServer>
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
@@ -30,12 +36,35 @@ int main(int argc, char** argv)
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, config.path());
     QCoreApplication::setOrganizationName("SkewerTest");
     QCoreApplication::setApplicationName("Status");
-    QTcpServer server;
+    const QString certificate_path = config.filePath("portal-cert.pem");
+    const QString key_path = config.filePath("portal-key.pem");
+    if (QProcess::execute("openssl", {"req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-days", "1", "-subj", "/CN=Saslik Portal", "-addext", "subjectAltName=IP:127.0.0.1",
+            "-keyout", key_path, "-out", certificate_path}) != 0) return 50;
+    const auto certificates = QSslCertificate::fromPath(certificate_path);
+    QFile key_file(key_path);
+    if (certificates.size() != 1 || !key_file.open(QIODevice::ReadOnly)) return 51;
+    const QSslKey key(key_file.readAll(), QSsl::Rsa);
+    if (key.isNull()) return 52;
+    QSslConfiguration tls = QSslConfiguration::defaultConfiguration();
+    tls.setLocalCertificate(certificates.first());
+    tls.setPrivateKey(key);
+    QSslServer server;
+    server.setSslConfiguration(tls);
     if (!server.listen(QHostAddress::LocalHost)) return 1;
+    const auto pin_server = [&] {
+        const auto hex = certificates.first().digest(QCryptographicHash::Sha256).toHex().toUpper();
+        QStringList groups;
+        for (qsizetype offset = 0; offset < hex.size(); offset += 2)
+            groups << QString::fromLatin1(hex.mid(offset, 2));
+        QSettings().setValue(QString("portalPins/127.0.0.1:%1").arg(server.serverPort()), groups.join(':'));
+    };
+    pin_server();
     bool malformed = false;
     bool correct_path = false;
-    QObject::connect(&server, &QTcpServer::newConnection, [&] {
+    QObject::connect(&server, &QTcpServer::pendingConnectionAvailable, [&] {
         auto* socket = server.nextPendingConnection();
+        if (!socket) return;
         QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
             correct_path |= socket->readAll().startsWith("GET /api/status ");
             const QByteArray body = malformed ? QByteArray("bad json") : QByteArray(R"({
@@ -107,14 +136,18 @@ int main(int argc, char** argv)
     text->setText(QString(40, '\n') + QString(1000, 'x'));
     QApplication::processEvents();
     if (status_box->height() != status_height) return 29;
-    input->setText(QString("http://127.0.0.1:%1/api/skewer").arg(server.serverPort()));
+    input->setText(QString("https://127.0.0.1:%1/api/skewer").arg(server.serverPort()));
     const auto wait_for = [&](const QString& needle) {
         for (int i = 0; i < 100 && !text->text().contains(needle); ++i) QTest::qWait(20);
         return text->text().contains(needle);
     };
     QMetaObject::invokeMethod(input, "editingFinished");
     if (!wait_for("Updated:") || !correct_path || !text->text().contains("lab-test")
-        || !text->text().contains("stale") || !text->text().contains("tls: ok")) return 3;
+        || !text->text().contains("stale") || !text->text().contains("tls: ok")) {
+        qWarning() << "Initial HTTPS status failed:" << text->text() << correct_path
+                   << server.hasPendingConnections();
+        return 3;
+    }
     malformed = true;
     QMetaObject::invokeMethod(input, "editingFinished");
     if (!wait_for("Unavailable") || !text->text().contains("lab-test")) return 4;
@@ -133,7 +166,8 @@ int main(int argc, char** argv)
     if (connection->text() != "Reconnect" || !QSettings().value("saslik/disconnected").toBool()
         || !text->text().contains("Disconnected")) return 24;
     if (!server.listen(QHostAddress::LocalHost)) return 27;
-    input->setText(QString("http://127.0.0.1:%1/").arg(server.serverPort()));
+    pin_server();
+    input->setText(QString("https://127.0.0.1:%1/").arg(server.serverPort()));
     correct_path = false;
     malformed = false;
     QMetaObject::invokeMethod(input, "editingFinished");

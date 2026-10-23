@@ -389,6 +389,19 @@ int interfaceChange(uid_t uid, const QStringList& args)
         for (const auto& command : commands) if (run(ip_binary, command).exit_code) {
             interfacesDown(uid, true); QTextStream(stderr) << "Cannot prepare interface routing\n"; return 1;
         }
+    } else {
+        // Routes tied to Saslik's veth disappear when the lab recreates that
+        // interface.  The selected VM ports and nftables hooks remain valid,
+        // so restore only the recorded policy table here.  `replace` is also
+        // what makes a manual Attach/Restore repair this state idempotently.
+        const QVector<QStringList> commands{
+            {"-4", "route", "replace", gateway + "/32", "dev", uplink,
+             "scope", "link", "table", route_table},
+            {"-4", "route", "replace", "default", "via", gateway,
+             "dev", uplink, "table", route_table}};
+        for (const auto& command : commands) if (run(ip_binary, command).exit_code) {
+            QTextStream(stderr) << "Cannot restore interface routing\n"; return 1;
+        }
     }
     result = run(nft_binary, {"-f", "-"}, rules.toUtf8());
     if (result.exit_code) {
@@ -664,14 +677,38 @@ int reconcile(uid_t uid)
         }
         allows_marked_ipv4 |= ipv4 && marked && returns;
     }
-    if (RoutingGuard::installed(uid) && matching_rule && fallback && routes.exit_code == 0
+    const bool process_routing_ok = RoutingGuard::installed(uid) && matching_rule && fallback
+        && routes.exit_code == 0
         && routes.output.contains(QString("default via %1 ").arg(gateway).toUtf8())
         && run(nft_binary, {"list", "table", "inet", RoutingPlanner::tableName(uid)}).exit_code == 0
         // A freshly reinstalled drop-only guard is safe but not operational.
         // Restore the allow path too, rather than merely noticing table existence.
-        && guard.exit_code == 0 && allows_marked_ipv4)
-        return 0;
-    return up(uid, gateway, exemptions, snapshot);
+        && guard.exit_code == 0 && allows_marked_ipv4;
+    if (!process_routing_ok && up(uid, gateway, exemptions, snapshot)) return 1;
+
+    const auto interface_state = InterfaceRouting::state(uid);
+    if (interface_state.isEmpty()) return 0;
+    const QString interface_gateway = interface_state["gateway"].toString();
+    const QString uplink = interface_state["uplink"].toString();
+    const QString interface_table = QString::number(InterfaceRouting::routingTable(uid));
+    const auto interface_routes = run(ip_binary, {"-4", "route", "show", "table", interface_table});
+    if (interface_gateway == gateway && interface_routes.exit_code == 0
+        && interface_routes.output.contains(
+            QString("default via %1 dev %2").arg(gateway, uplink).toUtf8())) return 0;
+
+    // Replay one recorded top-level selection. interfaceChange validates its
+    // current ifindex, reconstructs every bridge port, restores the policy
+    // routes, and atomically rebuilds the nftables hooks for all selections.
+    const auto selections = interface_state["selections"].toObject();
+    if (selections.isEmpty()) return 1;
+    const QString selection = selections.begin().key();
+    const int separator = selection.lastIndexOf(':');
+    if (separator < 1) return 1;
+    QStringList restore{"interface-attach", selection.first(separator),
+                        selection.sliced(separator + 1), gateway};
+    for (const auto& value : interface_state["exemptions"].toArray())
+        restore << value.toString();
+    return interfaceChange(uid, restore);
 }
 
 bool sendReply(const Result& result)

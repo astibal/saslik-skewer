@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(saslik-skewer VERSION 0.9.50.2 LANGUAGES CXX)
+project(saslik-skewer VERSION 0.9.50.5 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -51,6 +51,7 @@ add_executable(skewer
     src/ca_store.hpp
     src/ca_panel.cpp src/ca_panel.hpp
     src/runtime_trust.cpp src/runtime_trust.hpp
+    src/portal_trust.cpp src/portal_trust.hpp
     src/desktop_catalog.cpp
     src/desktop_catalog.hpp
     src/main_window.cpp
@@ -205,6 +206,7 @@ if(BUILD_TESTING)
         src/ca_store.cpp src/ca_store.hpp
         src/ca_panel.cpp src/ca_panel.hpp
         src/runtime_trust.cpp src/runtime_trust.hpp
+        src/portal_trust.cpp src/portal_trust.hpp
         src/application_model.cpp src/application_model.hpp
         src/cgroup_manager.cpp src/cgroup_manager.hpp
         src/desktop_catalog.cpp src/process_scanner.cpp

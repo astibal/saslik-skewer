@@ -2,6 +2,7 @@
 #include "trust_tree_update.hpp"
 #include "desktop_catalog.hpp"
 #include "process_scanner.hpp"
+#include "portal_trust.hpp"
 #include <unistd.h>
 #include <QDateTime>
 #include <QFileDialog>
@@ -95,7 +96,7 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
     auto* source_layout = new QVBoxLayout(source_box);
     auto* source_row = new QHBoxLayout;
     source_ = new QLineEdit(source_box);
-    source_->setPlaceholderText(tr("CA download URL (HTTP(S))"));
+    source_->setPlaceholderText(tr("CA download URL (HTTPS)"));
     fetch_ = new QPushButton(tr("Fetch CA"), source_box);
     load_ = new QPushButton(tr("Open CA file…"), source_box);
     save_ = new QPushButton(tr("Save CA…"), source_box);
@@ -209,10 +210,11 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent)
             status_->setText(tr("Cannot save certificate."));
     });
     auto* network = new QNetworkAccessManager(this);
+    installPortalTrust(network, this);
     connect(fetch_, &QPushButton::clicked, this, [this, network] {
         const QUrl url(source_->text().trimmed());
-        if (!url.isValid() || url.host().isEmpty() || (url.scheme() != "http" && url.scheme() != "https")) {
-            status_->setText(tr("Enter a valid HTTP(S) CA URL.")); return;
+        if (!url.isValid() || url.host().isEmpty() || url.scheme() != "https") {
+            status_->setText(tr("Enter a valid HTTPS CA URL.")); return;
         }
         busy(true); status_->setText(tr("Fetching CA; trust will not be changed."));
         QNetworkRequest request(url); request.setTransferTimeout(10000);

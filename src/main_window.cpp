@@ -4,6 +4,7 @@
 #include "interface_routing.hpp"
 #include "launcher.hpp"
 #include "pairing.hpp"
+#include "portal_trust.hpp"
 #include "connections.hpp"
 #include <QInputDialog>
 #include <QScrollBar>
@@ -259,7 +260,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     info_layout->setContentsMargins(8, 0, 8, 0);
     auto* info_url = new QLineEdit(info);
     info_url->setObjectName(QStringLiteral("saslikInfoUrl"));
-    info_url->setPlaceholderText(tr("Saslik URL: skewer://host:8766/pair or http://host:8765"));
+    info_url->setPlaceholderText(tr("Saslik URL: skewer://host:8766/pair or https://host:8765"));
     info_url->setText(settings.value(QStringLiteral("saslik/statusUrl"),
                                     saslik_url_->text()).toString());
     info_layout->addWidget(info_url);
@@ -305,6 +306,8 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     });
     auto* status_network = new QNetworkAccessManager(info);
     report_network_ = new QNetworkAccessManager(this);
+    installPortalTrust(status_network, this);
+    installPortalTrust(report_network_, this);
     connect(ca_panel, &CaTrustPanel::trustReportReady, this,
             [this](const QJsonObject& trust) {
         trust_report_ = trust;
@@ -376,7 +379,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
                              checks.isEmpty() ? tr("not measured") : checks.join(" · "),
                              e2e["stale"].toBool() ? tr(" (stale)") : QString{}, QDateTime::currentDateTime().toString(Qt::ISODate)));
                 QUrl web;
-                web.setScheme("http"); web.setHost(base.host()); web.setPort(value["ui_port"].toInt(-1)); web.setPath("/");
+                web.setScheme("https"); web.setHost(base.host()); web.setPort(value["ui_port"].toInt(-1)); web.setPath("/");
                 const auto set_web_link = [base](QPushButton* button, QUrl url) {
                     if (QHostAddress(url.host()).isLoopback() || url.host() == "localhost") url.setHost(base.host());
                     const bool valid = !url.host().isEmpty() && (url.scheme() == "http" || url.scheme() == "https");
@@ -395,9 +398,8 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
             }));
             return;
         }
-        if (!base.isValid() || base.host().isEmpty()
-            || (base.scheme() != "http" && base.scheme() != "https")) {
-            info_text->setText(tr("Enter a valid HTTP(S) or paired skewer:// Saslik URL."));
+        if (!base.isValid() || base.host().isEmpty() || base.scheme() != "https") {
+            info_text->setText(tr("Enter a valid HTTPS or paired skewer:// Saslik URL."));
             return;
         }
         // Accept either the UI URL or the existing /api/skewer discovery URL.
@@ -504,6 +506,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
     connect(routing_source_, &QComboBox::currentIndexChanged,
             this, &MainWindow::updateRoutingSource);
     network_ = new QNetworkAccessManager(this);
+    installPortalTrust(network_, this);
     connect(network_, &QNetworkAccessManager::finished, this, &MainWindow::receiveSaslik);
     openConnectUrl(connect_url);
     updateRoutingSource();
@@ -859,8 +862,7 @@ void MainWindow::pollSaslik()
         process->start(QCoreApplication::applicationFilePath(),{"remote-status",url.toString()});
         return;
     }
-    if (!url.isValid() || (url.scheme() != QStringLiteral("http")
-                           && url.scheme() != QStringLiteral("https"))) {
+    if (!url.isValid() || url.scheme() != QStringLiteral("https")) {
         saslik_reachable_ = false;
         discovery_online_ = false;
         discovery_warning_ = tr("Invalid Saslik URL");
@@ -916,7 +918,7 @@ void MainWindow::applyDiscovery(const QByteArray& payload, bool request_ok)
     QUrl ca_source(saslik_url_->text().trimmed());
     ca_source.setPath(QStringLiteral("/api/ca"));
     ca_source.setQuery(QString{}); ca_source.setFragment(QString{});
-    if (ca_source.scheme()=="http" || ca_source.scheme()=="https") ca_panel_->setSource(ca_source);
+    if (ca_source.scheme()=="https") ca_panel_->setSource(ca_source);
     if (!trust_report_.isEmpty()
         && QDateTime::currentMSecsSinceEpoch() - last_trust_report_ms_ >= 10000)
         sendTrustReport();
