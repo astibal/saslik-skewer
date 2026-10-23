@@ -206,5 +206,31 @@ int main(int argc, char** argv)
         window.show();
         if (!window.close() || window.isVisible()) return 10;
     }
+    // Startup authorization is one-shot; polling never retries cancellation.
+    QSettings().setValue("routing/requested", true);
+    QSettings().setValue("saslik/disconnected", false);
+    int resumes = 0;
+    {
+        MainWindow resumed({}, nullptr, [&] {
+            ++resumes;
+            return RoutingResult{false, "Authorization canceled"};
+        });
+        QTest::qWait(100);
+        if (resumes != 1) return 43;
+        for (int i = 0; i < 3; ++i)
+            QMetaObject::invokeMethod(&resumed, "updateRoutingStatus");
+        QTest::qWait(100);
+        if (resumes != 1) return 44;
+    }
+    for (bool disconnected : {false, true}) {
+        QSettings().setValue("routing/requested", disconnected);
+        QSettings().setValue("saslik/disconnected", disconnected);
+        MainWindow disabled({}, nullptr, [&] {
+            ++resumes;
+            return RoutingResult{true, "Resumed"};
+        });
+        QTest::qWait(100);
+        if (resumes != 1) return 45;
+    }
     return 0;
 }

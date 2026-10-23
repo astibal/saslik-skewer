@@ -559,6 +559,14 @@ int caRemove(const QString& identity, const QString& path)
 
 int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
 {
+    if (arguments == QStringList{"resume"}) {
+        if (readIntent(*uid).isEmpty()) {
+            QTextStream(stderr) << "No saved routing intent. Use Enable/Restore routing explicitly.\n";
+            return 1;
+        }
+        QTextStream(stdout) << "Routing maintenance resumed; missing routes will be restored when the gateway is available.\n";
+        return 0;
+    }
     if (arguments == QStringList{"guard"}) return ensureGuard(*uid);
     if (arguments == QStringList{"tunnel-session"}) return tuntomService(*uid);
     if (arguments == QStringList{"tunnel-worker"}) return tuntomProcess(*uid);

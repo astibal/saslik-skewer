@@ -76,6 +76,13 @@ RoutingResult RoutingController::updateExemptions(const QStringList& destination
     return invoke(arguments, authorization);
 }
 
+RoutingResult RoutingController::resume(Authorization authorization) const
+{
+    // Resume root-owned intent, not a possibly stale GUI gateway snapshot.
+    // The helper can wait for the lab even when API discovery is not ready yet.
+    return invoke({QStringLiteral("resume")}, authorization);
+}
+
 RoutingResult RoutingController::deactivate(Authorization authorization) const
 {
     return invoke({QStringLiteral("down")}, authorization);

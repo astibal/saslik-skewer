@@ -65,7 +65,8 @@
 #include <QTreeView>
 #include <QVBoxLayout>
 
-MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
+MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
+                       std::function<RoutingResult()> resume_routing)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("Skewer"));
@@ -615,6 +616,20 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent)
         "QLabel#actionStatus { color: palette(window-text); }"
         "QLabel#routingStatus { color: palette(window-text); min-width: 58px; }"
         "QTreeView { font-size: 10pt; }"));
+    // Startup is an explicit lifecycle action, separate from read-only polling.
+    // Authorize at most once, including when canceled or when the lab is down.
+    // A connect URL selects a new destination and must not resume the old one.
+    if (connect_url.isEmpty() && initial_settings.value("routing/requested", false).toBool()
+        && !saslik_disconnected_) {
+        QTimer::singleShot(0, this, [this, resume_routing] {
+            if (!routing_requested_ || saslik_disconnected_) return;
+            const auto result = resume_routing ? resume_routing()
+                : routing_.resume(RoutingController::Authorization::Desktop);
+            action_status_->setText(result.ok ? result.detail
+                : tr("Automatic routing resume failed: %1 Use Restore routing to retry.").arg(result.detail));
+            updateRoutingStatus();
+        });
+    }
 }
 
 void MainWindow::openConnectUrl(const QString& connect_url)

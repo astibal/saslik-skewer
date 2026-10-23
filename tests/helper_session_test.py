@@ -112,7 +112,22 @@ def inside(binary, uid, host_net, host_mount):
         worker.stdin.close()
         assert worker.wait(timeout=5) == 0
         assert restored()
-        print('Persistent helper: recovery, interface replacement, Disable, invalid IPC, EOF passed')
+        # A new client resumes saved intent even before the lab returns.
+        run('ip', 'link', 'del', 'uplink')
+        worker = subprocess.Popen([binary, 'serve'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, env=environment)
+        assert request(['resume'])['ok']
+        time.sleep(2.5)
+        assert not restored()
+        run('ip', 'link', 'add', 'uplink', 'type', 'dummy')
+        run('ip', 'link', 'set', 'uplink', 'up')
+        run('ip', 'addr', 'add', '192.0.2.1/24', 'dev', 'uplink')
+        wait_restore()
+        assert request(['down'])['ok']
+        assert not request(['resume'])['ok']
+        time.sleep(2.5)
+        assert not restored()
+        print('Persistent helper: recovery, restart/resume, Disable, invalid IPC, EOF passed')
     finally:
         if not worker.stdin.closed:
             worker.stdin.close()

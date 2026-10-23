@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QJsonObject>
 #include <QSet>
+#include <functional>
 
 class ApplicationModel;
 class CaTrustPanel;
@@ -27,7 +28,8 @@ class MainWindow final : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(const QString& connect_url = {}, QWidget* parent = nullptr);
+    explicit MainWindow(const QString& connect_url = {}, QWidget* parent = nullptr,
+                        std::function<RoutingResult()> resume_routing = {});
     void openConnectUrl(const QString& connect_url);
 
 protected:

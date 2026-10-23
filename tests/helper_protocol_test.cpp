@@ -4,6 +4,8 @@
 int main()
 {
     QStringList args;
+    if (!HelperProtocol::decode(R"({"args":["resume"]})", args)
+        || args != QStringList{"resume"}) return 4;
     if (!HelperProtocol::decode(R"({"args":["up","192.0.2.2"]})", args)
         || args != QStringList{"up", "192.0.2.2"}) return 1;
     for (const auto* value : {

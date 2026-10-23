@@ -277,9 +277,12 @@ without asking for the password again. While the interface is unavailable,
 the fail-closed guard remains in force. Disable cancels the shared desired
 state so another open Skewer cannot undo that choice. Closing the client ends
 its helper, but does not dismantle routing or the guard. Starting a new client
-requires a fresh authorized operation to resume maintenance. If routing is
-already active, **Maintain routing** starts that session explicitly; background
-polling never opens authentication dialogs.
+automatically resumes saved routing intent once, asking for authorization if
+needed. This also works while the lab is temporarily unavailable. Disabled or
+explicitly disconnected clients do not resume. Cancellation is not retried by
+polling; use **Restore routing** or **Maintain routing** to retry explicitly.
+Missing root-owned intent requires explicit Enable/Restore, so stale GUI
+settings cannot resurrect routing disabled by another client.
 
 Before attaching or launching a process, Skewer installs a persistent output
 guard for its routed cgroup. Disabling routing leaves that guard in place:

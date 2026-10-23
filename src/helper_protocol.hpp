@@ -23,7 +23,7 @@ inline bool decode(const QByteArray& frame, QStringList& arguments)
     }
     // No UID override, executable path, shell, CA or long-running tunnel command.
     // Each allowed operation still uses the regular helper's argument validation.
-    static const QStringList allowed{"up", "down", "status", "guard", "exemptions",
+    static const QStringList allowed{"up", "down", "status", "resume", "guard", "exemptions",
         "interface-attach", "interface-release", "cleanup-tcp", "preview-tcp"};
     return allowed.contains(arguments.first());
 }
