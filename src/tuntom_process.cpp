@@ -167,7 +167,9 @@ int tuntomProcess(uid_t owner)
         if (!transport.waitForFinished(2000)) { transport.kill(); transport.waitForFinished(); }
         return 0;
     } catch (const std::exception& error) {
-        transport.kill(); transport.waitForFinished(2000);
+        if (transport.state() != QProcess::NotRunning) {
+            transport.kill(); transport.waitForFinished(2000);
+        }
         QTextStream(stderr) << error.what() << '\n';
         return 1;
     }
