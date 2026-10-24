@@ -16,8 +16,8 @@ public:
     static QSslCertificate parse(const QByteArray& pem);
     [[nodiscard]] QString fingerprint() const;
     [[nodiscard]] QVector<CaStore> stores() const;
-    [[nodiscard]] bool install(const CaStore& store, QString& error) const;
-    [[nodiscard]] bool remove(const CaStore& store, QString& error) const;
+    [[nodiscard]] bool install(const CaStore& store, QString& error, bool desktop = true) const;
+    [[nodiscard]] bool remove(const CaStore& store, QString& error, bool desktop = true) const;
 private:
     QSslCertificate certificate_;
 };

@@ -168,7 +168,7 @@ QVector<CaStore> CaStoreManager::stores() const
     result << system;
     return result;
 }
-bool CaStoreManager::install(const CaStore& store, QString& error) const
+bool CaStoreManager::install(const CaStore& store, QString& error, bool desktop) const
 {
     if (parse(certificate_.toPem()).isNull() || certificate_.expiryDate() < QDateTime::currentDateTimeUtc()
         || certificate_.effectiveDate() > QDateTime::currentDateTimeUtc()) {
@@ -179,17 +179,23 @@ bool CaStoreManager::install(const CaStore& store, QString& error) const
         error = "Cannot stage CA certificate"; return false;
     }
     QByteArray output;
-    if (store.system)
-        return run("pkexec", {helper(), "ca-install", fingerprint(), file.fileName()}, output, error);
+    if (store.system) {
+        QStringList args{helper(), "ca-install", fingerprint(), file.fileName()};
+        if (!desktop) args.prepend("-n");
+        return run(desktop ? "pkexec" : "sudo", args, output, error);
+    }
     return run(nssHelper(), {"install", store.path, QString::fromLatin1(certificate_.toDer().toBase64())}, output, error);
 }
-bool CaStoreManager::remove(const CaStore& store, QString& error) const
+bool CaStoreManager::remove(const CaStore& store, QString& error, bool desktop) const
 {
     if (fingerprint().isEmpty()) { error = "No CA selected"; return false; }
     QByteArray output;
     if (store.system) {
-        for (const auto& path : store.matches)
-            if (!run("pkexec", {helper(), "ca-remove", fingerprint(), path}, output, error)) return false;
+        for (const auto& path : store.matches) {
+            QStringList args{helper(), "ca-remove", fingerprint(), path};
+            if (!desktop) args.prepend("-n");
+            if (!run(desktop ? "pkexec" : "sudo", args, output, error)) return false;
+        }
         return true;
     }
     return run(nssHelper(), {"remove", store.path, QString::fromLatin1(certificate_.toDer().toBase64())}, output, error);

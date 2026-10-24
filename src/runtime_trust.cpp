@@ -1,4 +1,5 @@
 #include "runtime_trust.hpp"
+#include "runtime_trust_service.hpp"
 #include <QCryptographicHash>
 #include <QClipboard>
 #include <QApplication>
@@ -24,7 +25,6 @@
 #include <QtConcurrentRun>
 
 namespace {
-struct RuntimeResult { QString runtime, version, source, location, state, detail; };
 struct CommandResult { QByteArray out, err; bool ok{}; };
 CommandResult run(const QString& program, const QStringList& arguments,
                   const QProcessEnvironment& environment = QProcessEnvironment::systemEnvironment())
@@ -152,6 +152,8 @@ QVector<RuntimeResult> discover(const QByteArray& pem)
 }
 }
 
+QVector<RuntimeResult> discoverRuntimeTrust(const QByteArray& pem) { return discover(pem); }
+
 RuntimeTrustPanel::RuntimeTrustPanel(QWidget* parent) : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
@@ -214,7 +216,12 @@ void RuntimeTrustPanel::setCertificate(const QByteArray& pem)
 
 QString RuntimeTrustPanel::managedDirectory() const
 {
-    const auto certificates = QSslCertificate::fromData(certificate_);
+    return runtimeTrustDirectory(certificate_);
+}
+
+QString runtimeTrustDirectory(const QByteArray& pem)
+{
+    const auto certificates = QSslCertificate::fromData(pem);
     if (certificates.size() != 1) return {};
     return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
         + "/skewer/runtime-trust/" + digest(certificates.first());
@@ -233,10 +240,15 @@ void RuntimeTrustPanel::updateActions()
 
 void RuntimeTrustPanel::prepareBundle()
 {
-    const auto certificates = QSslCertificate::fromData(certificate_);
-    if (certificates.size() != 1) { summary_->setText(tr("Select exactly one CA first.")); return; }
-    const QString directory = managedDirectory();
-    if (!QDir().mkpath(directory)) { summary_->setText(tr("Cannot create the managed runtime-trust directory.")); return; }
+    summary_->setText(prepareRuntimeTrust(certificate_)); updateActions();
+}
+
+QString prepareRuntimeTrust(const QByteArray& pem)
+{
+    const auto certificates = QSslCertificate::fromData(pem);
+    if (certificates.size() != 1) return "Select exactly one CA first.";
+    const QString directory = runtimeTrustDirectory(pem);
+    if (!QDir().mkpath(directory)) return "Cannot create the managed runtime-trust directory.";
     QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     const QByteArray ca = certificates.first().toPem();
     QFile system(QStringLiteral("/etc/ssl/certs/ca-certificates.crt"));
@@ -251,43 +263,54 @@ void RuntimeTrustPanel::prepareBundle()
             || !file.commit()) return false;
         return QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     };
-    if (!write(managedCaPath(), ca) || !write(managedBundlePath(), bundle)) {
-        summary_->setText(tr("Cannot write the managed CA bundle.")); updateActions(); return;
-    }
-    QSettings().setValue("runtimeTrust/activeBundle", managedBundlePath());
-    QSettings().setValue("runtimeTrust/activeCa", managedCaPath());
-    summary_->setText(tr("Ready. New Skewer Shell sessions automatically use this CA bundle — no exports to paste. Open a new shell; existing shells are unchanged."));
-    updateActions();
+    if (!write(directory + "/saslik-ca.pem", ca) || !write(directory + "/ca-bundle.pem", bundle))
+        return "Cannot write the managed CA bundle.";
+    QSettings().setValue("runtimeTrust/activeBundle", directory + "/ca-bundle.pem");
+    QSettings().setValue("runtimeTrust/activeCa", directory + "/saslik-ca.pem");
+    return "Ready. New Skewer Shell sessions automatically use this CA bundle. Existing shells are unchanged.";
 }
 
 void RuntimeTrustPanel::removeBundle()
 {
+    summary_->setText(removeRuntimeTrust(certificate_)); updateActions();
+}
+
+QString removeRuntimeTrust(const QByteArray& pem)
+{
+    const auto directory = runtimeTrustDirectory(pem);
+    if (directory.isEmpty()) return "Select exactly one CA first.";
     bool ok = true;
-    for (const auto& path : {managedCaPath(), managedBundlePath()})
+    for (const auto& path : {directory + "/saslik-ca.pem", directory + "/ca-bundle.pem"})
         if (QFileInfo::exists(path) && !QFile::remove(path)) ok = false;
-    if (QFileInfo::exists(managedDirectory()) && !QDir().rmdir(managedDirectory())) ok = false;
-    if (ok && QSettings().value("runtimeTrust/activeBundle").toString() == managedBundlePath()) {
+    if (QFileInfo::exists(directory) && !QDir().rmdir(directory)) ok = false;
+    if (ok && QSettings().value("runtimeTrust/activeBundle").toString() == directory + "/ca-bundle.pem") {
         QSettings().remove("runtimeTrust/activeBundle");
         QSettings().remove("runtimeTrust/activeCa");
     }
-    summary_->setText(ok ? tr("Managed runtime CA files removed.") : tr("Some managed runtime CA files could not be removed."));
-    updateActions();
+    return ok ? "Managed runtime CA files removed." : "Some managed runtime CA files could not be removed.";
 }
 
 void RuntimeTrustPanel::copyEnvironment() const
 {
+    QApplication::clipboard()->setText(runtimeTrustEnvironment(certificate_));
+    summary_->setText(tr("Shell setup copied. It affects only programs started from that environment."));
+}
+
+QString runtimeTrustEnvironment(const QByteArray& pem)
+{
+    const auto directory = runtimeTrustDirectory(pem);
+    if (directory.isEmpty()) return {};
     const auto quote = [](QString value) {
         value.replace(QLatin1Char('\''), QStringLiteral("'\\''"));
         return QLatin1Char('\'') + value + QLatin1Char('\'');
     };
-    const QString bundle = quote(managedBundlePath()), ca = quote(managedCaPath());
+    const QString bundle = quote(directory + "/ca-bundle.pem"), ca = quote(directory + "/saslik-ca.pem");
     const QString commands = "export SSL_CERT_FILE=" + bundle + "\n"
         + "export REQUESTS_CA_BUNDLE=" + bundle + "\n"
         + "export CURL_CA_BUNDLE=" + bundle + "\n"
         + "export PIP_CERT=" + bundle + "\n"
         + "export NODE_EXTRA_CA_CERTS=" + ca + "\n";
-    QApplication::clipboard()->setText(commands);
-    summary_->setText(tr("Shell setup copied. It affects only programs started from that environment."));
+    return commands;
 }
 void RuntimeTrustPanel::refresh()
 {
@@ -308,5 +331,5 @@ void RuntimeTrustPanel::refresh()
         summary_->setText(certificate_.isEmpty() ? tr("Runtime sources found. Select a CA in CA Trust to verify its presence.") : tr("Runtime sources checked against the selected CA."));
         working_ = false; refresh_->setEnabled(true); updateActions();
     });
-    watcher->setFuture(QtConcurrent::run([pem = certificate_] { return discover(pem); }));
+    watcher->setFuture(QtConcurrent::run([pem = certificate_] { return discoverRuntimeTrust(pem); }));
 }
