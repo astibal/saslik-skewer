@@ -298,8 +298,18 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     auto* info_url = new QLineEdit(info);
     info_url->setObjectName(QStringLiteral("saslikInfoUrl"));
     info_url->setPlaceholderText(tr("Saslik URL: skewer://host:8766/pair or https://host:8765"));
-    info_url->setText(settings.value(QStringLiteral("saslik/statusUrl"),
-                                    saslik_url_->text()).toString());
+    const auto sync_status_endpoint = [this, info_url] {
+        // A connected lab has one identity. Legacy status-only settings must
+        // not hide its status or point CA/link actions at a different server.
+        const auto endpoint = saslik_url_->text().trimmed();
+        const bool follows_connection = usesSaslikUrl() && !endpoint.isEmpty();
+        info_url->setReadOnly(follows_connection);
+        if (follows_connection) info_url->setText(endpoint);
+        else info_url->setText(QSettings().value("saslik/statusUrl").toString());
+    };
+    sync_status_endpoint();
+    connect(saslik_url_, &QLineEdit::textChanged, info, sync_status_endpoint);
+    connect(routing_source_, qOverload<int>(&QComboBox::currentIndexChanged), info, sync_status_endpoint);
     info_layout->addWidget(info_url);
     auto* info_text = new QLabel(tr("Enter the Saslik URL to load status."), info);
     info_text->setObjectName(QStringLiteral("saslikInfoText"));
@@ -509,9 +519,12 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     status_timer->setInterval(Preferences::number("refresh/saslikSeconds", 10, 5, 120) * 1000);
     connect(status_timer, &QTimer::timeout, info, poll_status);
     connect(info_url, &QLineEdit::editingFinished, info, [=] {
-        QSettings().setValue(QStringLiteral("saslik/statusUrl"), info_url->text().trimmed());
+        if (!info_url->isReadOnly())
+            QSettings().setValue(QStringLiteral("saslik/statusUrl"), info_url->text().trimmed());
         poll_status();
     });
+    connect(saslik_url_, &QLineEdit::editingFinished, info, poll_status);
+    connect(routing_source_, qOverload<int>(&QComboBox::currentIndexChanged), info, poll_status);
     connect(info_toggle, &QToolButton::toggled, info, [=](bool expanded) {
         if (expanded) poll_status();
     });
@@ -699,6 +712,9 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
 MainWindow::~MainWindow()
 {
     stopTunnel();
+    // QProcess destruction can emit finished while QObject deletes children.
+    // Discovery callbacks must not access widgets already being torn down.
+    for (auto* process : findChildren<QProcess*>()) process->disconnect(this);
 }
 
 void MainWindow::applyPreferences()

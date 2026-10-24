@@ -1,4 +1,5 @@
 #include "session_status.hpp"
+#include "session_route.hpp"
 #include "session_guard.hpp"
 #include "routing_guard.hpp"
 #include "routing_plan.hpp"
@@ -93,8 +94,17 @@ Snapshot sample(pid_t shell_pid)
     if (!matching_rule) return {"offline", "routing-inactive"};
     if (!routes) return {"unknown", "cannot-read-route-table"};
     bool matching_route = false;
-    for (const auto& item : QJsonDocument::fromJson(routes->toUtf8()).array())
-        if (QHostAddress(item.toObject()["gateway"].toString()) == address) matching_route = true;
+    const auto defaults = QJsonDocument::fromJson(routes->toUtf8()).array();
+    QJsonArray links;
+    for (const auto& item : defaults) {
+        if (!item.toObject()["dev"].toString().startsWith("skt")) continue;
+        const auto metadata = ip({"-j", "-d", "link", "show"});
+        if (!metadata) return {"unknown", "cannot-read-tunnel-interface"};
+        links = QJsonDocument::fromJson(metadata->toUtf8()).array();
+        break;
+    }
+    for (const auto& item : defaults)
+        if (SessionRoute::matches(item.toObject(), address, links)) matching_route = true;
     if (!matching_route) return {"offline", "gateway-route-missing"};
     // A route alone says nothing about the remote lab's health.
     return api ? Snapshot{"online", "routing-and-saslik-api-available"}

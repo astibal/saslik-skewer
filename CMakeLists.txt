@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(saslik-skewer VERSION 0.9.50.5 LANGUAGES CXX)
+project(saslik-skewer VERSION 0.9.50.6 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 

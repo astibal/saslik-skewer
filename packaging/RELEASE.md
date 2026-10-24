@@ -1,5 +1,16 @@
 Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
 
+### 0.9.50.6
+
+- Shell status recognizes active Tuntom routes instead of comparing their
+  gateway with Saslik's direct gateway. Missing routes and inactive tunnel
+  interfaces still fail the status check.
+- The Saslik information panel follows the selected connection, ignoring empty
+  or stale legacy status URLs. Its endpoint is read-only while following a lab.
+- Regression coverage for tunnel route detection and status endpoint selection.
+- Disconnect process callbacks during window teardown to avoid accessing
+  widgets being destroyed while discovery is still running.
+
 ### 0.9.50.5
 
 - Tuntom integration uses a shared authorized helper session, with transport

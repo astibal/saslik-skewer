@@ -2,9 +2,27 @@
 #include "tuntom_control.hpp"
 #include "tuntom_status.hpp"
 #include "tuntom_recovery.hpp"
+#include "session_route.hpp"
 
 int main()
 {
+    const QHostAddress direct("10.254.77.2");
+    const QJsonObject route{{"gateway", "10.253.0.5"}, {"dev", "skt1c"}};
+    QJsonObject link{{"ifname", "skt1c"}, {"flags", QJsonArray{"UP"}},
+        {"linkinfo", QJsonObject{{"info_kind", "tun"}, {"info_data", QJsonObject{{"type", "tun"}}}}}};
+    if (!SessionRoute::matches(route, direct, QJsonArray{link})) return 50;
+    if (SessionRoute::matches(route, direct, {})) return 51;
+    link["flags"] = QJsonArray{};
+    if (SessionRoute::matches(route, direct, QJsonArray{link})) return 52;
+    link["flags"] = QJsonArray{"UP"};
+    link["linkinfo"] = QJsonObject{{"info_kind", "dummy"}};
+    if (SessionRoute::matches(route, direct, QJsonArray{link})) return 53;
+    if (SessionRoute::matches({}, direct, QJsonArray{link})) return 54;
+    if (!SessionRoute::matches({{"gateway", "10.254.77.2"}, {"dev", "sxp-test0"}}, direct, {})) return 55;
+    if (SessionRoute::matches({{"gateway", "10.253.0.5"}, {"dev", "eth0"}}, direct, {})) return 56;
+    auto blocked = route;
+    blocked["type"] = "unreachable";
+    if (SessionRoute::matches(blocked, direct, QJsonArray{link})) return 57;
     QByteArray key;
     for (int i = 0; i < 32; ++i) key.append(char(i));
     if (Tuntom::deriveKey(key, QByteArray(64, '0')).toHex() != "af07b757429bdce394a510a8635cf9da") return 1;

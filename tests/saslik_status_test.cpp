@@ -31,6 +31,9 @@
 
 int main(int argc, char** argv)
 {
+    // Discovery invokes the application executable. Do not recursively run
+    // this GUI test suite when a test window requests remote status.
+    if (argc > 1 && QByteArray(argv[1]) == "remote-status") return 1;
     QApplication app(argc, argv);
     QTemporaryDir config;
     QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -264,6 +267,17 @@ int main(int argc, char** argv)
         for (int i = 0; i < 3; ++i) QMetaObject::invokeMethod(&canceled, "updateRoutingStatus");
         QTest::qWait(100);
         if (authorizations != 6 || resumes != 1) return 54;
+    }
+    // A legacy empty/stale status URL cannot override the selected lab.
+    QSettings().setValue("routing/mode", "saslik");
+    QSettings().setValue("routing/saslikUrl", "skewer://lab-test.invalid:8766/pair");
+    QSettings().setValue("routing/resumeOnStartup", false);
+    for (const auto& stale : {QString{}, QString("https://old-lab.invalid")}) {
+        QSettings().setValue("saslik/statusUrl", stale);
+        MainWindow connected({}, nullptr, {}, authorize);
+        auto* endpoint = connected.findChild<QLineEdit*>("saslikInfoUrl");
+        if (!endpoint || !endpoint->isReadOnly()
+            || endpoint->text() != "skewer://lab-test.invalid:8766/pair") return 56;
     }
     return 0;
 }
