@@ -79,6 +79,9 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
     SSL_set_app_data(ssl.get(),&credentials); SSL_set_fd(ssl.get(),fd);
     if (SSL_connect(ssl.get())!=1 || SSL_version(ssl.get())!=TLS1_3_VERSION || SSL_get0_peer_certificate(ssl.get()))
         throw std::runtime_error("TLS-PSK authentication failed (no plaintext fallback)");
+    // Log the phase only, never the credential-bearing request or pairing URL.
+    const bool tunnel_open = request["action"].toString() == "tunnel-open";
+    if (tunnel_open) QTextStream(stderr) << "[tuntom] TLS-PSK authenticated; sending tunnel-open\n" << Qt::flush;
     const auto data = QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
     size_t written=0;
     if (!SSL_write_ex(ssl.get(),data.constData(),data.size(),&written) || written!=size_t(data.size()))
@@ -97,6 +100,8 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
     if (response.size()>65536 || error.error!=QJsonParseError::NoError || !document.isObject())
         throw std::runtime_error("Invalid control response");
     const auto value = document.object();
+    if (tunnel_open) QTextStream(stderr) << "[tuntom] tunnel-open response received: "
+        << (value.contains("error") ? "rejected" : "accepted") << '\n' << Qt::flush;
     if (value.contains("error")) throw std::runtime_error("Control request rejected");
     return value;
 }

@@ -1,9 +1,11 @@
 #include "routing_plan.hpp"
 #include "routing_guard.hpp"
 #include "helper_protocol.hpp"
+#include "tunnel_helper_session.hpp"
 #include "ca_store.hpp"
 #include "socket_cleanup.hpp"
 #include "tuntom_process.hpp"
+#include "tuntom_routing.hpp"
 #include "interface_routing.hpp"
 #include <QLockFile>
 #include <QNetworkInterface>
@@ -174,24 +176,31 @@ QByteArray readIntent(uid_t uid)
     return file.readAll();
 }
 
-bool writeIntent(uid_t uid, const QString& gateway, const QStringList& exemptions)
+bool writeIntent(uid_t uid, const QString& gateway, const QStringList& exemptions,
+                 const QString& tunnel_context = {})
 {
     QSaveFile file(intentPath(uid));
     if (!file.open(QIODevice::WriteOnly)) return false;
     file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     const auto data = QJsonDocument(QJsonObject{{"gateway", gateway},
-        {"exemptions", QJsonArray::fromStringList(exemptions)}}).toJson(QJsonDocument::Compact);
+        {"exemptions", QJsonArray::fromStringList(exemptions)},
+        {"tunnel_context", tunnel_context}}).toJson(QJsonDocument::Compact);
     return file.write(data) == data.size() && file.commit();
 }
 
 int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
-       const QByteArray& expected_intent = {})
+       const QByteArray& expected_intent = {}, const QString& tunnel_context = {})
 {
     QLockFile lock("/run/skewer-interface-routing.lock");
     if (!lock.tryLock(0)) return 1;
     // A concurrent Disable or another client changing the gateway wins over a
     // stale watchdog snapshot. Compare under the same lock as kernel updates.
     if (!expected_intent.isEmpty() && readIntent(uid) != expected_intent) return 0;
+    const auto desired_context = QJsonDocument::fromJson(readIntent(uid)).object()["tunnel_context"].toString();
+    if (desired_context != tunnel_context) {
+        QTextStream(stderr) << "Disable the current tunnel before changing routing\n";
+        return 1;
+    }
     QString error, local_control;
     quint16 local_control_port = 0;
     QStringList destinations;
@@ -241,9 +250,18 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
             return 1;
         }
     }
+    QString nft_rules = plan.nft_rules;
+    if (!tunnel_context.isEmpty()) {
+        // OUTPUT policy rerouting can retain the source chosen by the main
+        // table. Give the remote lab a return path through this /30 only.
+        const QString client_address = QHostAddress(QHostAddress(next_hop).toIPv4Address() + 1).toString();
+        nft_rules += QString("add chain inet %1 tunnel_snat { type nat hook postrouting priority srcnat; policy accept; }\n"
+            "add rule inet %1 tunnel_snat meta mark 0x%2 oifname \"%3\" snat ip to %4\n")
+            .arg(plan.nft_table).arg(RoutingPlanner::mark(uid), 0, 16).arg(interface_name, client_address);
+    }
     const Result nft = run(QString::fromLatin1(nft_binary), {QStringLiteral("-f"),
                                                               QStringLiteral("-")},
-                           plan.nft_rules.toUtf8());
+                           nft_rules.toUtf8());
     if (nft.exit_code != 0) {
         cleanup(plan);
         QTextStream(stderr) << "skewer-net-helper: nft failed: "
@@ -257,7 +275,7 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
         cleanup(plan);
         QTextStream(stderr) << error << '\n'; return 1;
     }
-    if (!writeIntent(uid, next_hop, exemptions)) {
+    if (!writeIntent(uid, next_hop, exemptions, tunnel_context)) {
         QString ignored;
         setGuard(uid, level, ignored);
         cleanup(plan);
@@ -297,6 +315,10 @@ int interfaceChange(uid_t uid, const QStringList& args)
     QLockFile lock("/run/skewer-interface-routing.lock");
     if (!lock.tryLock(0)) { QTextStream(stderr) << "Interface operation already in progress\n"; return 1; }
     const bool attach = args[0] == "interface-attach";
+    if (attach && !QJsonDocument::fromJson(readIntent(uid)).object()["tunnel_context"].toString().isEmpty()) {
+        QTextStream(stderr) << "Interface ingress through tunnels is not supported yet\n";
+        return 2;
+    }
     const auto previous = InterfaceRouting::state(uid);
     auto selections = previous["selections"].toObject();
     const QString name = args[1];
@@ -560,6 +582,10 @@ int caRemove(const QString& identity, const QString& path)
 int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
 {
     if (arguments == QStringList{"resume"}) {
+        if (!QJsonDocument::fromJson(readIntent(*uid)).object()["tunnel_context"].toString().isEmpty()) {
+            QTextStream(stderr) << "Resume the tunnel session before restoring routing\n";
+            return 1;
+        }
         if (readIntent(*uid).isEmpty()) {
             QTextStream(stderr) << "No saved routing intent. Use Enable/Restore routing explicitly.\n";
             return 1;
@@ -583,6 +609,10 @@ int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
     if (!arguments.isEmpty() && arguments.first() == "exemptions") {
         QLockFile lock("/run/skewer-interface-routing.lock");
         if (!lock.tryLock(0)) return 1;
+        if (!QJsonDocument::fromJson(readIntent(*uid)).object()["tunnel_context"].toString().isEmpty()) {
+            QTextStream(stderr) << "Disable the tunnel before changing destination exemptions\n";
+            return 2;
+        }
         if (!InterfaceRouting::state(*uid).isEmpty()) {
             QTextStream(stderr) << "Release interfaces before changing destination exemptions\n";
             return 2;
@@ -645,11 +675,13 @@ Result captured(const std::function<int()>& operation)
     return {code, output.read(16384)};
 }
 
-int reconcile(uid_t uid)
+int reconcile(uid_t uid, const QString& tunnel_context = {})
 {
     const auto snapshot = readIntent(uid);
     if (snapshot.isEmpty()) return 0;
     const auto desired = QJsonDocument::fromJson(snapshot).object();
+    // Only the worker that verified this tunnel may reopen its route.
+    if (desired["tunnel_context"].toString() != tunnel_context) return 0;
     const auto gateway = desired["gateway"].toString();
     if (gateway.isEmpty()) return 1;
     QStringList exemptions;
@@ -689,10 +721,12 @@ int reconcile(uid_t uid)
         && routes.exit_code == 0
         && routes.output.contains(QString("default via %1 ").arg(gateway).toUtf8())
         && run(nft_binary, {"list", "table", "inet", RoutingPlanner::tableName(uid)}).exit_code == 0
+        && (tunnel_context.isEmpty() || run(nft_binary,
+            {"list", "chain", "inet", RoutingPlanner::tableName(uid), "tunnel_snat"}).exit_code == 0)
         // A freshly reinstalled drop-only guard is safe but not operational.
         // Restore the allow path too, rather than merely noticing table existence.
         && guard.exit_code == 0 && allows_marked_ipv4;
-    if (!process_routing_ok && up(uid, gateway, exemptions, snapshot)) return 1;
+    if (!process_routing_ok && up(uid, gateway, exemptions, snapshot, tunnel_context)) return 1;
 
     const auto interface_state = InterfaceRouting::state(uid);
     if (interface_state.isEmpty()) return 0;
@@ -737,6 +771,7 @@ bool sendReply(const Result& result)
 int serve(uid_t uid)
 {
     ::signal(SIGPIPE, SIG_IGN);
+    TunnelHelperSession tunnel(uid);
     QByteArray pending;
     QByteArray last_error;
     QElapsedTimer maintenance;
@@ -757,7 +792,11 @@ int serve(uid_t uid)
                 pending.remove(0, end + 1);
                 QStringList arguments;
                 const auto result = HelperProtocol::decode(frame, arguments)
-                    ? captured([&] { return dispatch(uid, arguments); })
+                    ? (arguments.first().startsWith("tunnel-") ? [&] {
+                        const auto reply = tunnel.request(arguments);
+                        return Result{reply.exit_code, reply.output};
+                    }()
+                       : captured([&] { return dispatch(uid, arguments); }))
                     : Result{2, "Invalid or unsupported helper request"};
                 if (!sendReply(result)) return 0;
             }
@@ -773,6 +812,48 @@ int serve(uid_t uid)
         }
     }
 }
+}
+
+void Tuntom::beginRouting(uid_t uid, const Endpoint& endpoint, const QStringList& exemptions)
+{
+    QLockFile lock("/run/skewer-interface-routing.lock");
+    if (!lock.tryLock(2000)) throw std::runtime_error("Routing operation already in progress");
+    if (!InterfaceRouting::state(uid).isEmpty())
+        throw std::runtime_error("Release interfaces before enabling tunnel routing");
+    QString error;
+    QStringList normalized;
+    if (!RoutingPlanner::normalizeExemptions(exemptions, normalized, error))
+        throw std::runtime_error(error.toStdString());
+    const int level = cgroupLevel(uid, error);
+    if (!level || !setGuard(uid, level, error)) throw std::runtime_error(error.toStdString());
+    if (QFile::exists(intentPath(uid)) && !QFile::remove(intentPath(uid)))
+        throw std::runtime_error("Cannot cancel previous routing intent");
+    cleanup(RoutingPlanner::create(uid, "192.0.2.1", "lo"));
+    // Persist the fence before readiness is checked. A generic route watchdog
+    // must never mistake a still-existing TUN device for a live transport.
+    if (!writeIntent(uid, endpoint.serverAddress.chopped(3), normalized, endpoint.context))
+        throw std::runtime_error("Cannot save tunnel routing intent");
+}
+
+void Tuntom::suspendRouting(uid_t uid, const Endpoint& endpoint)
+{
+    QLockFile lock("/run/skewer-interface-routing.lock");
+    if (!lock.tryLock(2000)) throw std::runtime_error("Cannot lock tunnel routing");
+    if (QJsonDocument::fromJson(readIntent(uid)).object()["tunnel_context"].toString() != endpoint.context)
+        return; // A newer session or explicit Disable owns the routing now.
+    QString error;
+    const int level = cgroupLevel(uid, error);
+    if (!level || !setGuard(uid, level, error)) throw std::runtime_error(error.toStdString());
+    cleanup(RoutingPlanner::create(uid, "192.0.2.1", "lo"));
+}
+
+void Tuntom::updateRouting(uid_t uid, const Endpoint& endpoint, bool verified)
+{
+    if (QJsonDocument::fromJson(readIntent(uid)).object()["tunnel_context"].toString() != endpoint.context)
+        throw std::runtime_error("Tunnel routing canceled or replaced");
+    if (!verified) { suspendRouting(uid, endpoint); return; }
+    const auto result = captured([&] { return reconcile(uid, endpoint.context); });
+    if (result.exit_code) throw std::runtime_error(result.output.toStdString());
 }
 
 int main(int argc, char* argv[])

@@ -19,7 +19,7 @@ inline QByteArray deriveKey(const QByteArray& psk, const QByteArray& context)
                                             prk, QCryptographicHash::Sha256).left(16);
 }
 
-enum class Mode { Auto, DirectOnly };
+enum class Mode { Auto, DirectOnly, TunnelOnly };
 enum class Route { Direct, WaitForTunnel, Tunnel, Blocked };
 
 // Once traffic entered a tunnel, losing it must not silently select direct
@@ -27,6 +27,7 @@ enum class Route { Direct, WaitForTunnel, Tunnel, Blocked };
 inline Route selectRoute(Mode mode, bool directNextHop, bool tunnelReady, bool tunnelWasActive)
 {
     if (mode == Mode::DirectOnly) return directNextHop ? Route::Direct : Route::Blocked;
+    if (mode == Mode::TunnelOnly) return tunnelReady ? Route::Tunnel : Route::WaitForTunnel;
     if (tunnelWasActive) return tunnelReady ? Route::Tunnel : Route::Blocked;
     if (directNextHop) return Route::Direct;
     return tunnelReady ? Route::Tunnel : Route::WaitForTunnel;

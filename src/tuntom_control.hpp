@@ -24,6 +24,28 @@ inline bool confirmedSnapshot(const QByteArray& snapshot, int id, qint64 now)
         && fields.value("session_ready") == "1" && fields.value("session_confirmed") == "1";
 }
 
+inline QJsonObject trafficSnapshot(const QByteArray& snapshot, int id, qint64 now)
+{
+    if (!confirmedSnapshot(snapshot, id, now)) return {};
+    QJsonObject result;
+    // Export only public counters, never session keys or arbitrary stats fields.
+    // Decimal strings preserve uint64 precision across JSON consumers.
+    for (const auto& line : snapshot.split('\n')) {
+        const auto separator = line.indexOf('=');
+        if (separator <= 0) continue;
+        const auto key = line.first(separator);
+        if (key != "tun_rx_bytes" && key != "tun_tx_bytes"
+            && key != "tun_rx_packets" && key != "tun_tx_packets" && key != "uptime_seconds") continue;
+        const auto value = line.mid(separator + 1);
+        bool valid = !value.isEmpty();
+        for (const char c : value) valid = valid && c >= '0' && c <= '9';
+        bool converted = false;
+        const auto number = value.toULongLong(&converted);
+        if (valid && converted) result[QString::fromLatin1(key)] = QString::number(number);
+    }
+    return result;
+}
+
 struct Endpoint {
     int id = 0;
     int leaseSeconds = 0;

@@ -9,6 +9,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
+# Fail closed for Release, RelWithDebInfo, MinSizeRel and unspecified builds.
+add_compile_definitions(SKEWER_DEVELOPMENT_BINARY=$<IF:$<CONFIG:Debug>,1,0>)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Network Widgets Test Concurrent)
 find_package(PkgConfig REQUIRED)
@@ -56,6 +58,7 @@ add_executable(skewer
     src/desktop_catalog.hpp
     src/main_window.cpp
     src/main_window.hpp
+    src/preferences_dialog.cpp
     src/process_scanner.cpp
     src/process_scanner.hpp
     src/routing_plan.cpp
@@ -201,6 +204,7 @@ if(BUILD_TESTING)
     add_executable(saslik_status_test
         tests/saslik_status_test.cpp
         src/main_window.cpp src/main_window.hpp
+        src/preferences_dialog.cpp
         src/launcher.cpp
         src/connections.cpp
         src/ca_store.cpp src/ca_store.hpp
@@ -236,6 +240,27 @@ if(BUILD_TESTING)
     target_include_directories(tuntom_session_test PRIVATE src)
     target_link_libraries(tuntom_session_test PRIVATE Qt6::Network)
     add_test(NAME tuntom_session COMMAND tuntom_session_test)
+    add_executable(preferences_test tests/preferences_test.cpp src/preferences_dialog.cpp)
+    target_include_directories(preferences_test PRIVATE src)
+    target_link_libraries(preferences_test PRIVATE Qt6::Widgets)
+    add_test(NAME preferences COMMAND preferences_test)
+    foreach(policy IN ITEMS configured release)
+        add_executable(tuntom_binary_${policy}_test tests/tuntom_binary_test.cpp)
+        target_include_directories(tuntom_binary_${policy}_test PRIVATE src)
+        target_link_libraries(tuntom_binary_${policy}_test PRIVATE Qt6::Core)
+        add_test(NAME tuntom_binary_${policy} COMMAND tuntom_binary_${policy}_test)
+    endforeach()
+    target_compile_definitions(tuntom_binary_release_test PRIVATE SKEWER_TEST_RELEASE_POLICY=1)
+    set_tests_properties(preferences PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(tuntom_routing_driver tests/tuntom_routing_driver.cpp
+        src/tuntom_process.cpp src/socket_cleanup.cpp src/ca_store.cpp src/routing_plan.cpp)
+    target_include_directories(tuntom_routing_driver PRIVATE src)
+    target_link_libraries(tuntom_routing_driver PRIVATE Qt6::Network)
+    target_compile_definitions(tuntom_routing_driver PRIVATE
+        SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
+    add_test(NAME tuntom_routing COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/tuntom_routing_test.py
+        $<TARGET_FILE:skewer-net-helper> $<TARGET_FILE:tuntom_routing_driver>)
+    set_tests_properties(tuntom_routing PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 45)
     add_executable(tuntom_control_test tests/tuntom_control_test.cpp src/pairing.cpp)
     target_include_directories(tuntom_control_test PRIVATE src)
     target_link_libraries(tuntom_control_test PRIVATE Qt6::Network OpenSSL::SSL OpenSSL::Crypto)

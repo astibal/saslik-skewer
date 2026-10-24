@@ -2,8 +2,10 @@
 
 #include "cgroup_manager.hpp"
 #include "routing_controller.hpp"
+#include "tuntom_recovery.hpp"
 
 #include <QMainWindow>
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QSet>
 #include <functional>
@@ -23,16 +25,20 @@ class QCloseEvent;
 class QTimer;
 class QSystemTrayIcon;
 class QAction;
+class QProcess;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
 
 public:
     explicit MainWindow(const QString& connect_url = {}, QWidget* parent = nullptr,
-                        std::function<RoutingResult()> resume_routing = {});
+                        std::function<RoutingResult()> resume_routing = {},
+                        std::function<RoutingResult()> authorize_session = {});
+    ~MainWindow() override;
     void openConnectUrl(const QString& connect_url);
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void changeEvent(QEvent* event) override;
 
@@ -59,6 +65,27 @@ private:
     [[nodiscard]] bool usesSaslikUrl() const;
     void sendTrustReport();
     void updateTrayIcon();
+    void startTunnel(bool allowAuthorization = true);
+    void scheduleTunnelRetry();
+    void refreshTunnelCountdown();
+    QTimer* tunnel_retry_{};
+    QTimer* tunnel_retry_tick_{};
+    Tuntom::Recovery tunnel_recovery_;
+    void stopTunnel();
+    bool wantsTunnel() const;
+    QProcess* tunnel_process_{};
+    QString tunnel_gateway_;
+    QString tunnel_state_;
+    QString tunnel_error_;
+    QJsonObject tunnel_stats_;
+    QElapsedTimer tunnel_status_age_;
+    QByteArray tunnel_output_;
+    bool tunnel_selected_{};
+    QComboBox* transport_mode_{};
+    int tuntom_remote_enabled_{-1};
+    QString tuntom_license_;
+    QLabel* tuntom_availability_{};
+    void applyPreferences();
     QSystemTrayIcon* tray_{};
     QAction* close_to_tray_{};
     bool quitting_{};

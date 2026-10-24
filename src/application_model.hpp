@@ -52,6 +52,7 @@ signals:
 public slots:
     void setConnections(const ConnectionSnapshot& snapshot);
     void refresh();
+    void applyPreferences();
     void setProcesses(const QVector<ProcessInfo>& processes);
     void setCaStatus(const QHash<QString, QString>& statuses, const QString& fingerprint);
 

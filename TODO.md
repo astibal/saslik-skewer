@@ -1,5 +1,19 @@
 # Skewer roadmap
 
+## Enterprise: interface traffic through Tuntom (deferred)
+
+- [ ] Route selected interface/VM ingress through the authenticated Tuntom
+  tunnel, including supported bridge ports.
+- [ ] Tie forwarding to verified tunnel readiness: fail closed on loss and
+  restore automatically after recovery, without falling back to direct routing.
+- [ ] Define return-path handling and source-address visibility before
+  implementation; SNAT versus routed guest subnets remains an open design choice.
+- [ ] Cover tunnel restart, interface lifecycle and concurrent application
+  routing with integration tests.
+
+Reserved for the enterprise feature set. No implementation in the current scope;
+the existing restriction on interface ingress through tunnels remains in place.
+
 ## Completed: minimal local routing
 
 - [x] Keep application selection and process movement in `skewer-routed.slice`.

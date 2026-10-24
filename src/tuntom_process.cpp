@@ -1,5 +1,8 @@
 #include "tuntom_process.hpp"
 #include "tuntom_control.hpp"
+#include "tuntom_routing.hpp"
+#include "tuntom_binary.hpp"
+#include <optional>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -57,6 +60,10 @@ void validateSubnet(const Tuntom::Endpoint& endpoint)
 int tuntomProcess(uid_t owner)
 {
     QProcess transport;
+    std::optional<Tuntom::Endpoint> routed_endpoint;
+    auto suspend = [&] {
+        if (routed_endpoint) Tuntom::suspendRouting(owner, *routed_endpoint);
+    };
     try {
         QFile cgroup("/proc/self/cgroup");
         if (!cgroup.open(QIODevice::ReadOnly)
@@ -77,6 +84,15 @@ int tuntomProcess(uid_t owner)
             throw std::runtime_error("Invalid tunnel request framing");
         auto request = QJsonDocument::fromJson(input).object();
         const auto endpoint = Tuntom::endpointFromResponse(request);
+        if (request["route"].toBool()) {
+            QStringList exemptions;
+            for (const auto value : request["exemptions"].toArray()) {
+                if (!value.isString()) throw std::runtime_error("Invalid destination exemption");
+                exemptions << value.toString();
+            }
+            Tuntom::beginRouting(owner, endpoint, exemptions);
+            routed_endpoint = endpoint;
+        }
         const auto keyHex = request["key"].toString().toLatin1();
         const auto key = QByteArray::fromHex(keyHex);
         if (key.size() != 16 || key.toHex() != keyHex)
@@ -86,11 +102,12 @@ int tuntomProcess(uid_t owner)
             throw std::runtime_error("Tunnel server must be a resolved IPv4 address");
         if (remote.isInSubnet(QHostAddress::parseSubnet(endpoint.clientAddress)))
             throw std::runtime_error("Tunnel address pool contains its own transport destination");
-        const QString binary = "/usr/libexec/saslik/tuntom";
-        struct stat metadata{};
-        if (::stat(binary.toLocal8Bit().constData(), &metadata) || !S_ISREG(metadata.st_mode)
-            || metadata.st_uid != 0 || (metadata.st_mode & 0022) || !(metadata.st_mode & 0111))
-            throw std::runtime_error("Install the root-owned tuntom transport in /usr/libexec/saslik/tuntom");
+        QString binary_error;
+        // The build-time policy is enforced here too: a Release helper ignores
+        // development acknowledgments even from a modified/Debug client.
+        const QString binary = Tuntom::checkedBinary(request.value("binary").toString("/usr/libexec/saslik/tuntom"),
+            binary_error, request.value("acknowledge_development_binary").toBool());
+        if (binary.isEmpty()) throw std::runtime_error(binary_error.toStdString());
         const auto* account = ::getpwnam("tuntom");
         if (!account || account->pw_uid == 0) throw std::runtime_error("The tuntom runtime account is missing");
         if (QFile::exists("/sys/class/net/" + endpoint.clientInterface))
@@ -122,15 +139,15 @@ int tuntomProcess(uid_t owner)
         timer.restart();
         QByteArray pending;
         QElapsedTimer probe; probe.start();
-        QString previousState = "prepared";
         QTextStream(stdout) << "{\"state\":\"prepared\"}\n" << Qt::flush;
         while (!interrupted && timer.elapsed() < 30000) {
             if (transport.waitForFinished(100)) throw std::runtime_error("tuntom exited");
             transport.readAllStandardOutput(); transport.readAllStandardError();
             if (probe.elapsed() >= 3000) {
                 QFile stats(statsPath);
-                bool ready = stats.open(QIODevice::ReadOnly)
-                    && Tuntom::confirmedSnapshot(stats.read(65537), endpoint.id, QDateTime::currentSecsSinceEpoch());
+                const auto snapshot = stats.open(QIODevice::ReadOnly) ? stats.read(65537) : QByteArray{};
+                const auto now = QDateTime::currentSecsSinceEpoch();
+                bool ready = Tuntom::confirmedSnapshot(snapshot, endpoint.id, now);
                 if (ready) {
                     // Confirmation alone can outlive the peer. Check the data
                     // path too; readiness never follows mere interface creation.
@@ -142,10 +159,12 @@ int tuntomProcess(uid_t owner)
                     if (ping.state() != QProcess::NotRunning) { ping.kill(); ping.waitForFinished(); }
                 }
                 const QString state = ready ? "verified" : "waiting";
-                if (state != previousState) {
-                    QTextStream(stdout) << "{\"state\":\"" << state << "\"}\n" << Qt::flush;
-                    previousState = state;
-                }
+                if (routed_endpoint) Tuntom::updateRouting(owner, endpoint, ready);
+                // Reuse the existing probe cadence, including unchanged states,
+                // so the UI can distinguish live counters from stale telemetry.
+                const QJsonObject progress{{"state", state},
+                    {"stats", ready ? Tuntom::trafficSnapshot(snapshot, endpoint.id, now) : QJsonObject{}}};
+                QTextStream(stdout) << QJsonDocument(progress).toJson(QJsonDocument::Compact) << '\n' << Qt::flush;
                 probe.restart();
             }
             pollfd fd{STDIN_FILENO, POLLIN, 0};
@@ -163,10 +182,13 @@ int tuntomProcess(uid_t owner)
                 if (pending.size() > 128) throw std::runtime_error("Invalid tunnel lease framing");
             }
         }
+        suspend();
         transport.terminate();
         if (!transport.waitForFinished(2000)) { transport.kill(); transport.waitForFinished(); }
         return 0;
     } catch (const std::exception& error) {
+        try { suspend(); }
+        catch (const std::exception& cleanup_error) { QTextStream(stderr) << cleanup_error.what() << '\n'; }
         if (transport.state() != QProcess::NotRunning) {
             transport.kill(); transport.waitForFinished(2000);
         }

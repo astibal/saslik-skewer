@@ -22,6 +22,7 @@
 #include <QTabWidget>
 #include <QPushButton>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QTreeView>
@@ -78,7 +79,9 @@ int main(int argc, char** argv)
         });
         QObject::connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
     });
-    MainWindow window;
+    int authorizations = 0;
+    const auto authorize = [&] { ++authorizations; return RoutingResult{true, "Authorized"}; };
+    MainWindow window({}, nullptr, {}, authorize);
     auto* connections = window.findChild<QTableWidget*>("connectionsTable");
     auto* show_cgroup = window.findChild<QCheckBox*>("connectionsShowCgroup");
     if (!connections || !show_cgroup || !connections->isColumnHidden(6)
@@ -207,6 +210,14 @@ int main(int argc, char** argv)
         if (!window.close() || window.isVisible()) return 10;
     }
     // Startup authorization is one-shot; polling never retries cancellation.
+    auto* tunnel_status = window.findChild<QLabel*>("tuntomAvailability");
+    if (!tunnel_status || tunnel_status->text().isEmpty()
+        || !tunnel_status->toolTip().contains("Tunnel capability:")
+        || tunnel_status->toolTip().contains("Local checks cover")) return 47;
+    auto* transport = window.findChild<QComboBox*>("routingTransport");
+    if (!transport || transport->count() != 3
+        || transport->itemData(0) != "auto" || transport->itemData(1) != "direct"
+        || transport->itemData(2) != "tunnel") return 46;
     QSettings().setValue("routing/requested", true);
     QSettings().setValue("saslik/disconnected", false);
     int resumes = 0;
@@ -214,7 +225,7 @@ int main(int argc, char** argv)
         MainWindow resumed({}, nullptr, [&] {
             ++resumes;
             return RoutingResult{false, "Authorization canceled"};
-        });
+        }, authorize);
         QTest::qWait(100);
         if (resumes != 1) return 43;
         for (int i = 0; i < 3; ++i)
@@ -228,9 +239,29 @@ int main(int argc, char** argv)
         MainWindow disabled({}, nullptr, [&] {
             ++resumes;
             return RoutingResult{true, "Resumed"};
-        });
+        }, authorize);
         QTest::qWait(100);
         if (resumes != 1) return 45;
+    }
+    QSettings().setValue("routing/requested", true);
+    QSettings().setValue("saslik/disconnected", false);
+    QSettings().setValue("routing/resumeOnStartup", false);
+    {
+        MainWindow opted_out({}, nullptr, [&] { ++resumes; return RoutingResult{true, "Resumed"}; }, authorize);
+        QTest::qWait(100);
+        if (resumes != 1) return 49;
+    }
+    if (authorizations != 5) return 53;
+    QSettings().setValue("routing/resumeOnStartup", true);
+    {
+        MainWindow canceled({}, nullptr, [&] { ++resumes; return RoutingResult{true, "Resumed"}; }, [&] {
+            ++authorizations;
+            return RoutingResult{false, "Canceled"};
+        });
+        QTest::qWait(100);
+        for (int i = 0; i < 3; ++i) QMetaObject::invokeMethod(&canceled, "updateRoutingStatus");
+        QTest::qWait(100);
+        if (authorizations != 6 || resumes != 1) return 54;
     }
     return 0;
 }

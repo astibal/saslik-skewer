@@ -14,6 +14,7 @@
 #include <QtConcurrent>
 
 #include <algorithm>
+#include "preferences_values.hpp"
 #include <unistd.h>
 
 ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
@@ -25,7 +26,7 @@ ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
         if (!resolved.isEmpty() && !exact_desktop_matches_.contains(resolved))
             exact_desktop_matches_.insert(resolved, &entry);
     }
-    refresh_timer_.setInterval(5000);
+    refresh_timer_.setInterval(Preferences::number("refresh/processSeconds", 5, 2, 60) * 1000);
     auto* scan = new QFutureWatcher<QVector<ProcessInfo>>(this);
     connect(scan, &QFutureWatcher<QVector<ProcessInfo>>::finished, this, [this, scan] {
         if (scan->property("revision").toULongLong() == process_revision_)
@@ -51,11 +52,17 @@ ApplicationModel::ApplicationModel(QObject* parent) : QAbstractItemModel(parent)
     const auto query_vms = [vm_scan] {
         if (!vm_scan->isRunning()) vm_scan->setFuture(QtConcurrent::run(VmDiscovery::query));
     };
-    vm_timer_.setInterval(30000);
+    vm_timer_.setInterval(Preferences::number("refresh/vmSeconds", 30, 10, 300) * 1000);
     connect(&vm_timer_, &QTimer::timeout, this, query_vms);
     vm_timer_.start();
     QTimer::singleShot(0, this, query_vms);
     refresh();
+}
+
+void ApplicationModel::applyPreferences()
+{
+    refresh_timer_.setInterval(Preferences::number("refresh/processSeconds", 5, 2, 60) * 1000);
+    vm_timer_.setInterval(Preferences::number("refresh/vmSeconds", 30, 10, 300) * 1000);
 }
 
 QModelIndex ApplicationModel::index(int row, int column, const QModelIndex& parent_index) const

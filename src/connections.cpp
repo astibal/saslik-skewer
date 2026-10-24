@@ -3,6 +3,7 @@
 #include "routing_controller.hpp"
 #include <QCheckBox>
 #include <QSettings>
+#include "preferences_values.hpp"
 #include <QMessageBox>
 #include <QPushButton>
 #include <QComboBox>
@@ -93,6 +94,7 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
     auto* cleanup = new QPushButton(tr("Close old TCP connections…"));
     layout->addWidget(cleanup);
     auto* automatic = new QCheckBox(tr("Close old TCP connections after Attach"));
+    automatic->setObjectName("automaticTcpCleanup");
     automatic->setChecked(QSettings().value("connections/cleanupOnAttach",false).toBool());
     automatic->setToolTip(tr("Interrupts transfers. Applications may not reconnect. TCP only; existing sockets outside Skewer."));
     layout->addWidget(automatic);
@@ -241,6 +243,7 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
         if (window()->isVisible() && !watcher->isRunning())
             watcher->setFuture(QtConcurrent::run(readConnections));
     });
-    timer->start(5000);
+    timer->setObjectName("connectionsRefresh");
+    timer->start(Preferences::number("refresh/connectionSeconds", 5, 2, 60) * 1000);
     watcher->setFuture(QtConcurrent::run(readConnections));
 }

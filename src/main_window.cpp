@@ -2,6 +2,16 @@
 #include "routing_guard.hpp"
 #include "privileged_session.hpp"
 #include "interface_routing.hpp"
+#include "tuntom_session.hpp"
+#include "tuntom_status.hpp"
+#include <QTextStream>
+#include "tuntom_binary.hpp"
+#include "preferences_values.hpp"
+#include "preferences_dialog.hpp"
+#include <QSignalBlocker>
+#include <QCheckBox>
+#include <sys/stat.h>
+#include <pwd.h>
 #include "launcher.hpp"
 #include "pairing.hpp"
 #include "portal_trust.hpp"
@@ -31,6 +41,8 @@
 #include <QPainter>
 #include <QCompleter>
 #include <QCloseEvent>
+#include <QMouseEvent>
+#include <QKeyEvent>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -66,7 +78,8 @@
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
-                       std::function<RoutingResult()> resume_routing)
+                       std::function<RoutingResult()> resume_routing,
+                       std::function<RoutingResult()> authorize_session)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("Skewer"));
@@ -74,6 +87,13 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     QSettings settings;
     restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
     auto* settings_menu = menuBar()->addMenu(tr("Settings"));
+    auto* preferences = settings_menu->addAction(tr("Preferences…"));
+    preferences->setObjectName("preferencesAction");
+    connect(preferences, &QAction::triggered, this, [this] {
+        PreferencesDialog dialog(this);
+        if (dialog.exec() == QDialog::Accepted) applyPreferences();
+    });
+    settings_menu->addSeparator();
     close_to_tray_ = settings_menu->addAction(tr("Close to system tray"));
     close_to_tray_->setObjectName("closeToTray");
     close_to_tray_->setCheckable(true);
@@ -128,10 +148,10 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     search_ = new QLineEdit(central);
     search_->setPlaceholderText(tr("Find an application or process…"));
     search_->setClearButtonEnabled(true);
-    layout->addWidget(search_);
-
-    auto* routing_box = new QGroupBox(tr("Routing"), central);
+    auto* routing_box = new QGroupBox(central);
+    routing_box->setAccessibleName(tr("Routing"));
     auto* routing_layout = new QHBoxLayout(routing_box);
+    routing_layout->setContentsMargins(8, 6, 8, 6);
     routing_source_ = new QComboBox(routing_box);
     routing_source_->addItem(tr("Set gateway"), QStringLiteral("gateway"));
     routing_source_->addItem(tr("Saslik URL"), QStringLiteral("saslik"));
@@ -146,13 +166,29 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     routing_source_->setCurrentIndex(
         initial_settings.value(QStringLiteral("routing/mode")) == QStringLiteral("saslik") ? 1 : 0);
     routing_requested_ = initial_settings.value(QStringLiteral("routing/requested"), false).toBool();
+    transport_mode_ = new QComboBox(routing_box);
+    transport_mode_->setObjectName("routingTransport");
+    transport_mode_->addItem(tr("Auto"), "auto");
+    transport_mode_->addItem(tr("Direct"), "direct");
+    transport_mode_->addItem(tr("Enforced tunnel"), "tunnel");
+    const int transport_index = transport_mode_->findData(initial_settings.value("routing/transport", "auto"));
+    transport_mode_->setCurrentIndex(qMax(0, transport_index));
+    transport_mode_->setToolTip(tr("Auto: direct next hop when available, otherwise Tuntom. "
+        "Direct: never create a tunnel. Enforced tunnel: always use authenticated Tuntom, even when directly connected. "
+        "Disable routing before changing mode. Tunnel routing currently supports applications, not VM interfaces."));
+    connect(transport_mode_, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings().setValue("routing/transport", transport_mode_->currentData());
+    });
     routing_up_ = new QPushButton(tr("Enable"), routing_box);
     routing_down_ = new QPushButton(tr("Disable"), routing_box);
     routing_status_ = new QLabel(routing_box);
+    routing_status_->setObjectName("routingStatus");
+    routing_status_->installEventFilter(this);
     routing_status_->setObjectName(QStringLiteral("routingStatus"));
     routing_layout->addWidget(routing_source_);
     routing_layout->addWidget(next_hop_, 1);
     routing_layout->addWidget(saslik_url_, 1);
+    routing_layout->addWidget(transport_mode_);
     routing_layout->addWidget(routing_up_);
     routing_layout->addWidget(routing_down_);
     routing_layout->addWidget(routing_status_);
@@ -297,7 +333,13 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
                 QDesktopServices::openUrl(url);
         });
     }
-    links->addStretch();
+    links->addSpacing(12);
+    tuntom_availability_ = new QLabel(tr("Tunnel off"), info);
+    tuntom_availability_->setObjectName("tuntomAvailability");
+    tuntom_availability_->setTextFormat(Qt::PlainText);
+    tuntom_availability_->setWordWrap(true);
+    tuntom_availability_->setMinimumWidth(0);
+    links->addWidget(tuntom_availability_, 1);
     info_layout->addLayout(links);
     layout->addWidget(info);
     info->hide();
@@ -463,7 +505,8 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
         });
     };
     auto* status_timer = new QTimer(info);
-    status_timer->setInterval(10000);
+    status_timer->setObjectName("saslikRefresh");
+    status_timer->setInterval(Preferences::number("refresh/saslikSeconds", 10, 5, 120) * 1000);
     connect(status_timer, &QTimer::timeout, info, poll_status);
     connect(info_url, &QLineEdit::editingFinished, info, [=] {
         QSettings().setValue(QStringLiteral("saslik/statusUrl"), info_url->text().trimmed());
@@ -503,6 +546,8 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     connect(routing_up_, &QPushButton::clicked, this, &MainWindow::activateRouting);
     connect(routing_down_, &QPushButton::clicked, this, &MainWindow::deactivateRouting);
     routing_status_bar_ = new QLabel(this);
+    routing_status_bar_->setObjectName("routingStatusBar");
+    routing_status_bar_->installEventFilter(this);
     statusBar()->addPermanentWidget(routing_status_bar_);
     connect(routing_source_, &QComboBox::currentIndexChanged,
             this, &MainWindow::updateRoutingSource);
@@ -512,7 +557,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     openConnectUrl(connect_url);
     updateRoutingSource();
     routing_watchdog_ = new QTimer(this);
-    routing_watchdog_->setInterval(5000);
+    routing_watchdog_->setInterval(Preferences::number("refresh/routingSeconds", 5, 2, 60) * 1000);
     connect(routing_watchdog_, &QTimer::timeout, this, [this] {
         if (usesSaslikUrl()) pollSaslik();
         updateRoutingStatus();
@@ -544,6 +589,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     tree_->setColumnWidth(ApplicationModel::CaColumn, 150);
     tree_->setColumnWidth(ApplicationModel::CommandColumn, 500);
     tree_->setColumnWidth(ApplicationModel::ConnectionsColumn, 90);
+    layout->addWidget(search_);
     layout->addWidget(tree_, 1);
 
     auto* actions = new QHBoxLayout;
@@ -615,26 +661,280 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
         "QLabel#routingNote { color: palette(window-text); padding-top: 4px; }"
         "QLabel#actionStatus { color: palette(window-text); }"
         "QLabel#routingStatus { color: palette(window-text); min-width: 58px; }"
-        "QTreeView { font-size: 10pt; }"));
+        "QTreeView { font-size: %1pt; }").arg(Preferences::number("appearance/treeFontSize", 10, 8, 24)));
     // Startup is an explicit lifecycle action, separate from read-only polling.
     // Authorize at most once, including when canceled or when the lab is down.
     // A connect URL selects a new destination and must not resume the old one.
-    if (connect_url.isEmpty() && initial_settings.value("routing/requested", false).toBool()
-        && !saslik_disconnected_) {
-        QTimer::singleShot(0, this, [this, resume_routing] {
-            if (!routing_requested_ || saslik_disconnected_) return;
+    const bool resume_on_start = connect_url.isEmpty() && initial_settings.value("routing/resumeOnStartup", true).toBool()
+        && initial_settings.value("routing/requested", false).toBool()
+        && !saslik_disconnected_;
+    QTimer::singleShot(0, this, [this, resume_routing, authorize_session, resume_on_start] {
+            // Authorize independently of routing intent or remote availability.
+            // The persistent helper remains alive until the application exits;
+            // no sudo timestamp or periodic authentication refresh is involved.
+            const auto authorization = authorize_session ? authorize_session() : [] {
+                QString helper = QCoreApplication::applicationDirPath() + "/skewer-net-helper";
+                if (!QFileInfo(helper).isExecutable()) helper = SKEWER_INSTALLED_HELPER_PATH;
+                const auto reply = PrivilegedSession::request(helper, {"tunnel-poll"}, true);
+                return RoutingResult{reply.ok, reply.detail};
+            }();
+            if (!authorization.ok) {
+                action_status_->setText(tr("Helper authorization canceled or unavailable. Enable / Restore routing to retry."));
+                return;
+            }
+            if (!resume_on_start || !routing_requested_ || saslik_disconnected_) return;
+            if (!resume_routing && wantsTunnel()) { startTunnel(); return; }
             const auto result = resume_routing ? resume_routing()
                 : routing_.resume(RoutingController::Authorization::Desktop);
             action_status_->setText(result.ok ? result.detail
                 : tr("Automatic routing resume failed: %1 Use Restore routing to retry.").arg(result.detail));
             updateRoutingStatus();
         });
+}
+
+MainWindow::~MainWindow()
+{
+    stopTunnel();
+}
+
+void MainWindow::applyPreferences()
+{
+    close_to_tray_->setChecked(QSettings().value("window/closeToTray", true).toBool());
+    model_->applyPreferences();
+    routing_watchdog_->setInterval(Preferences::number("refresh/routingSeconds", 5, 2, 60) * 1000);
+    if (auto* timer = findChild<QTimer*>("saslikRefresh"))
+        timer->setInterval(Preferences::number("refresh/saslikSeconds", 10, 5, 120) * 1000);
+    if (auto* timer = findChild<QTimer*>("connectionsRefresh"))
+        timer->setInterval(Preferences::number("refresh/connectionSeconds", 5, 2, 60) * 1000);
+    if (auto* automatic = findChild<QCheckBox*>("automaticTcpCleanup")) {
+        QSignalBlocker blocker(automatic);
+        automatic->setChecked(QSettings().value("connections/cleanupOnAttach", false).toBool());
     }
+    QString style = styleSheet();
+    style.replace(QRegularExpression("QTreeView \\{ font-size: \\d+pt; \\}"),
+        QString("QTreeView { font-size: %1pt; }").arg(Preferences::number("appearance/treeFontSize", 10, 8, 24)));
+    setStyleSheet(style);
+    updateRoutingStatus();
+}
+
+bool MainWindow::wantsTunnel() const
+{
+    if (!usesSaslikUrl() || transport_mode_->currentData() == "direct") return false;
+    // Once selected, loss of a tunnel never silently falls back to direct.
+    if (tunnel_selected_) return true;
+    if (routing_requested_ && QSettings().value("routing/lastTransport") == "tunnel") return true;
+    const auto mode = transport_mode_->currentData() == "tunnel"
+        ? Tuntom::Mode::TunnelOnly : Tuntom::Mode::Auto;
+    const QString gateway = discovery_gateway_.isEmpty() ? next_hop_->text().trimmed() : discovery_gateway_;
+    return Tuntom::selectRoute(mode, routing_.nextHopReachable(gateway), false, false)
+        != Tuntom::Route::Direct;
+}
+
+void MainWindow::startTunnel(bool allowAuthorization)
+{
+    if (tunnel_process_) return;
+    if (tunnel_retry_) tunnel_retry_->stop();
+    if (tunnel_retry_tick_) tunnel_retry_tick_->stop();
+    if (allowAuthorization) tunnel_recovery_.reset();
+    const QUrl endpoint(saslik_url_->text().trimmed());
+    if (endpoint.scheme() != "skewer" || endpoint.path() != "/pair" || endpoint.hasFragment()
+        || endpoint.hasQuery() || !endpoint.userInfo().isEmpty()) {
+        action_status_->setText(tr("Tunnel requires an already paired skewer://HOST:PORT/pair address."));
+        return;
+    }
+    if (!InterfaceRouting::state(getuid())["selections"].toObject().isEmpty()) {
+        action_status_->setText(tr("Release VM/interface ingress before enabling a tunnel."));
+        return;
+    }
+    tunnel_selected_ = true;
+    tunnel_state_ = "connecting";
+    tunnel_error_.clear();
+    tunnel_stats_ = {};
+    tunnel_status_age_.invalidate();
+    tunnel_gateway_.clear();
+    tunnel_output_.clear();
+    routing_requested_ = true;
+    QSettings().setValue("routing/requested", true);
+    QSettings().setValue("routing/saslikUrl", endpoint.toString());
+    QSettings().setValue("routing/mode", "saslik");
+    QSettings().setValue("routing/lastTransport", "tunnel");
+    // Keep authorization even if the very first remote request fails.
+    QString helper = QCoreApplication::applicationDirPath() + "/skewer-net-helper";
+    if (!QFileInfo(helper).isExecutable()) helper = SKEWER_INSTALLED_HELPER_PATH;
+    const auto authorization = PrivilegedSession::request(helper, {"tunnel-poll"}, true, allowAuthorization);
+    if (!authorization.ok) {
+        tunnel_error_ = authorization.detail;
+        tunnel_state_ = "failed";
+        scheduleTunnelRetry();
+        action_status_->setText(tr("Helper unavailable · retry scheduled; click retry to authorize a new session"));
+        updateRoutingStatus();
+        return;
+    }
+    auto* process = new QProcess(this);
+    tunnel_process_ = process;
+    connect(process, &QProcess::readyReadStandardError, this, [this, process] {
+        const auto diagnostic = QString::fromUtf8(process->readAllStandardError());
+        QTextStream(stderr) << diagnostic << Qt::flush;
+        tunnel_error_ = (tunnel_error_ + diagnostic).right(4096);
+    });
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process, allowAuthorization] {
+        tunnel_output_ += process->readAllStandardOutput();
+        if (tunnel_output_.size() > 65536) {
+            tunnel_error_ = tr("Invalid tunnel status stream");
+            process->closeWriteChannel();
+            return;
+        }
+        while (tunnel_output_.contains('\n')) {
+            const auto line = tunnel_output_.first(tunnel_output_.indexOf('\n'));
+            tunnel_output_.remove(0, line.size() + 1);
+            const auto status = QJsonDocument::fromJson(line).object();
+            if (status["helper_request"].isArray()) {
+                QStringList args;
+                for (const auto& value : status["helper_request"].toArray()) args << value.toString();
+                // Only this child owns the tunnel stream. Background polling
+                // must never launch a new authorization dialog after a loss.
+                QString helper = QCoreApplication::applicationDirPath() + "/skewer-net-helper";
+                if (!QFileInfo(helper).isExecutable()) helper = SKEWER_INSTALLED_HELPER_PATH;
+                const auto reply = PrivilegedSession::request(helper, args, true,
+                    allowAuthorization && !args.isEmpty() && args.first() == "tunnel-start");
+                process->write(QJsonDocument(QJsonObject{{"ok", reply.ok}, {"detail", reply.detail}})
+                    .toJson(QJsonDocument::Compact) + '\n');
+                continue;
+            }
+            const auto state = status["state"].toString();
+            if (state != "prepared" && state != "waiting" && state != "verified") continue;
+            QHostAddress gateway(status["gateway"].toString());
+            if (gateway.protocol() != QAbstractSocket::IPv4Protocol) continue;
+            tunnel_state_ = state;
+            if (state == "verified") tunnel_recovery_.reset();
+            tunnel_stats_ = status["stats"].toObject();
+            tunnel_status_age_.restart();
+            tunnel_gateway_ = gateway.toString();
+            updateRoutingStatus();
+        }
+    });
+    connect(process, qOverload<int,QProcess::ExitStatus>(&QProcess::finished), this,
+        [this, process](int, QProcess::ExitStatus) {
+            const auto diagnostic = QString::fromUtf8(process->readAllStandardError());
+            QTextStream(stderr) << diagnostic << "[tuntom] Client process finished\n" << Qt::flush;
+            tunnel_error_ = (tunnel_error_ + diagnostic).right(4096);
+            tunnel_state_ = "failed";
+            tunnel_process_ = nullptr;
+            process->deleteLater();
+            scheduleTunnelRetry();
+            updateRoutingStatus();
+        });
+    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart) return;
+        tunnel_error_ = process->errorString();
+        QTextStream(stderr) << "[tuntom] Cannot start client process: " << tunnel_error_ << '\n' << Qt::flush;
+        tunnel_state_ = "failed";
+        tunnel_process_ = nullptr;
+        process->deleteLater();
+        scheduleTunnelRetry();
+        updateRoutingStatus();
+    });
+    process->start("/usr/bin/systemd-run",
+        Tuntom::controllerArguments(QCoreApplication::applicationFilePath(), endpoint.toString()));
+    updateRoutingStatus();
+}
+
+void MainWindow::scheduleTunnelRetry()
+{
+    if (!Tuntom::Recovery::allowed(routing_requested_, tunnel_selected_, !saslik_disconnected_,
+            quitting_, tunnel_process_ != nullptr)) return;
+    if (!tunnel_retry_) {
+        tunnel_retry_ = new QTimer(this);
+        tunnel_retry_->setObjectName("tunnelRecovery");
+        tunnel_retry_->setSingleShot(true);
+        connect(tunnel_retry_, &QTimer::timeout, this, [this] {
+            // Only explicit user intent or a live attempt cancels a retry.
+            if (Tuntom::Recovery::allowed(routing_requested_, tunnel_selected_, !saslik_disconnected_,
+                    quitting_, tunnel_process_ != nullptr))
+                startTunnel(false);
+        });
+        tunnel_retry_tick_ = new QTimer(this);
+        tunnel_retry_tick_->setInterval(1000);
+        connect(tunnel_retry_tick_, &QTimer::timeout, this, &MainWindow::refreshTunnelCountdown);
+    }
+    const int delay = tunnel_recovery_.nextDelayMs();
+    tunnel_retry_->start(delay);
+    tunnel_retry_tick_->start();
+    action_status_->setText(tr("Tunnel unavailable · routing blocked · retry in %1 s").arg(delay / 1000));
+}
+
+void MainWindow::refreshTunnelCountdown()
+{
+    const bool pending = tunnel_retry_ && tunnel_retry_->isActive();
+    for (auto* label : {routing_status_, routing_status_bar_}) {
+        label->setCursor(pending ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        label->setFocusPolicy(pending ? Qt::StrongFocus : Qt::NoFocus);
+        label->setToolTip(pending ? tr("Click to retry now") : tunnel_selected_ ? tunnel_error_ : QString{});
+        if (!pending) continue;
+        const int seconds = (qMax(0, tunnel_retry_->remainingTime()) + 999) / 1000;
+        const auto text = (routing_status_->property("retryGuarded").toBool()
+            ? tr("● Dropped · Tuntom: retry in %1 s")
+            : tr("● Tuntom unavailable · retry in %1 s")).arg(seconds);
+        if (label->text() != text) label->setText(text);
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    if ((watched == routing_status_ || watched == routing_status_bar_)
+        && tunnel_retry_ && tunnel_retry_->isActive()) {
+        bool activate = event->type() == QEvent::MouseButtonRelease
+            && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton;
+        if (event->type() == QEvent::KeyPress) {
+            const auto* key = static_cast<QKeyEvent*>(event);
+            activate = !key->isAutoRepeat() && (key->key() == Qt::Key_Return
+                || key->key() == Qt::Key_Enter || key->key() == Qt::Key_Space);
+        }
+        if (activate && Tuntom::Recovery::allowed(routing_requested_, tunnel_selected_,
+                !saslik_disconnected_, quitting_, tunnel_process_ != nullptr)) {
+            // A deliberate click may renew authorization; timed retries never do.
+            startTunnel(true);
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::stopTunnel()
+{
+    if (tunnel_retry_) tunnel_retry_->stop();
+    if (tunnel_retry_tick_) tunnel_retry_tick_->stop();
+    tunnel_recovery_.reset();
+    if (tunnel_process_) {
+        QString helper = QCoreApplication::applicationDirPath() + "/skewer-net-helper";
+        if (!QFileInfo(helper).isExecutable()) helper = SKEWER_INSTALLED_HELPER_PATH;
+        // Stop through the existing session before waiting for the child. The
+        // GUI cannot service child RPCs while waitForFinished blocks its loop.
+        PrivilegedSession::request(helper, {"tunnel-stop"}, true, false);
+        auto* process = tunnel_process_;
+        process->disconnect(this);
+        process->closeWriteChannel();
+        if (!process->waitForFinished(10000)) {
+            process->terminate();
+            if (!process->waitForFinished(2000)) { process->kill(); process->waitForFinished(1000); }
+        }
+        delete process;
+        tunnel_process_ = nullptr;
+    }
+    tunnel_state_.clear();
+    tunnel_stats_ = {};
+    tunnel_status_age_.invalidate();
+    tunnel_gateway_.clear();
+    tunnel_selected_ = false;
 }
 
 void MainWindow::openConnectUrl(const QString& connect_url)
 {
     if (connect_url.isEmpty()) return;
+    if (tunnel_selected_ && routing_requested_) {
+        action_status_->setText(tr("Disable the current tunnel before selecting another Saslik."));
+        return;
+    }
     const QUrl url(connect_url);
     const QString discovery = QUrlQuery(url).queryItemValue(QStringLiteral("discovery"));
     if (url.scheme() != QStringLiteral("skewer") || discovery.isEmpty()) return;
@@ -699,6 +999,7 @@ void MainWindow::activateRouting()
         return;
     }
     if (usesSaslikUrl()) pollSaslik();
+    if (wantsTunnel()) { startTunnel(); return; }
     const QString next_hop = currentNextHop();
     if (next_hop.isEmpty()) {
         QMessageBox::information(this, tr("Skewer"), usesSaslikUrl()
@@ -716,6 +1017,7 @@ void MainWindow::activateRouting()
         QSettings().setValue(QStringLiteral("routing/mode"),
                              usesSaslikUrl() ? QStringLiteral("saslik") : QStringLiteral("gateway"));
         QSettings().setValue(QStringLiteral("routing/requested"), true);
+        QSettings().setValue("routing/lastTransport", "direct");
         action_status_->setText(result.detail);
     }
     updateRoutingStatus();
@@ -723,6 +1025,7 @@ void MainWindow::activateRouting()
 
 void MainWindow::deactivateRouting()
 {
+    stopTunnel();
     const RoutingResult result = routing_.deactivate(RoutingController::Authorization::Desktop);
     if (!result.ok) QMessageBox::warning(this, tr("Skewer routing"), result.detail);
     else {
@@ -749,13 +1052,35 @@ void MainWindow::updateRoutingStatus()
     });
     check->setFuture(QtConcurrent::run([next_hop] {
         RoutingController controller;
-        return qMakePair(!next_hop.isEmpty() && controller.active(next_hop),
-                         !next_hop.isEmpty() && controller.nextHopReachable(next_hop));
+        const bool reachable = !next_hop.isEmpty() && controller.nextHopReachable(next_hop);
+        return qMakePair(!next_hop.isEmpty() && controller.active(next_hop), reachable);
     }));
 }
 
 void MainWindow::renderRoutingStatus(bool active, bool reachable)
 {
+    if (tunnel_selected_ && tunnel_state_ != "verified") active = false;
+    Tuntom::StatusView tunnel;
+    tunnel.mode = transport_mode_->currentData().toString();
+    tunnel.license = tuntom_license_;
+    tunnel.enabled = tuntom_remote_enabled_;
+    tunnel.connected = saslik_reachable_;
+    tunnel.paired = QUrl(saslik_url_->text().trimmed()).scheme() == "skewer";
+    tunnel.requested = routing_requested_;
+    tunnel.selected = tunnel_selected_;
+    // Once selected, currentNextHop refers to the tunnel, not the direct path.
+    tunnel.directKnown = !tunnel_selected_ && !currentNextHop().isEmpty();
+    tunnel.direct = reachable;
+    tunnel.state = tunnel_state_;
+    tunnel.fresh = tunnel_status_age_.isValid() && tunnel_status_age_.elapsed() < 15000;
+    tunnel.routingActive = active;
+    tunnel.stats = tunnel_stats_;
+    tuntom_availability_->setText(Tuntom::compactStatus(tunnel,
+        !QFileInfo(Preferences::tuntomBinary()).isExecutable()));
+    QString details = Tuntom::statusSummary(tunnel);
+    if (!tunnel_error_.trimmed().isEmpty()) details += '\n' + tunnel_error_.trimmed();
+    // Keep operational details, without the verbose security disclaimer.
+    tuntom_availability_->setToolTip(details);
     const bool protected_slice = RoutingGuard::installed(getuid());
     model_->setRoutingState(active, protected_slice);
     const bool alarm = !active && model_->hasAttachedProcesses();
@@ -780,12 +1105,20 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
     QString text;
     QString color;
     if (active) {
-        text = tr("● Routing active via %1").arg(next_hop);
+        text = tunnel_selected_ ? tr("● Tuntom active via %1").arg(next_hop)
+                                : tr("● Routing active via %1").arg(next_hop);
         color = QStringLiteral("#63dc94");
     } else if (alarm) {
         text = protected_slice ? tr("● Dropped · process routing unavailable")
                                : tr("● Unprotected · restore process routing");
+        if (protected_slice && tunnel_selected_)
+            text = tr("● Dropped · Tuntom: %1").arg(tunnel_state_);
         color = QStringLiteral("#ff5364");
+    } else if (tunnel_selected_) {
+        text = tunnel_state_ == "failed" ? (tunnel_retry_ && tunnel_retry_->isActive()
+                ? tr("● Tunnel unavailable · automatic retry pending") : tr("● Tunnel failed · Restore routing to retry"))
+                                        : tr("● Tuntom: %1 · routing blocked").arg(tunnel_state_);
+        color = tunnel_state_ == "failed" ? "#ff5364" : "#e3b94f";
     } else if (interfaces_attached) {
         text = tr("● Interface ingress configured via %1").arg(interface_state["gateway"].toString());
         color = QStringLiteral("#e3b94f");
@@ -800,8 +1133,10 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
         text = tr("○ Routing inactive");
         color = QStringLiteral("#899098");
     }
+    routing_status_->setProperty("retryGuarded", protected_slice);
     routing_status_->setText(text);
     routing_status_bar_->setText(text);
+    refreshTunnelCountdown();
     // Reuse the periodic status snapshot: hovering never runs network checks.
     QStringList tooltip{tr("Skewer"), text};
     if (!next_hop.isEmpty()) tooltip << tr("Gateway: %1").arg(next_hop);
@@ -811,19 +1146,22 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
             tooltip << (discovery_online_ ? tr("Lab: online") : tr("Lab: offline"));
     }
     tray_->setToolTip(tooltip.join('\n'));
+    routing_status_->setToolTip(tunnel_retry_ && tunnel_retry_->isActive()
+        ? tr("Click to retry now") : tunnel_selected_ ? tunnel_error_ : QString{});
     routing_status_->setStyleSheet(QStringLiteral("color:%1").arg(color));
     routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
     // Existing kernel routes may outlive the previous GUI's privileged session.
     // Re-authorize explicitly; read-only startup polling must not show dialogs.
-    const bool maintained = PrivilegedSession::client().running()
-        && QFile::exists(QString("/run/skewer-route-intent-%1.json").arg(getuid()));
+    const bool maintained = tunnel_process_ || (PrivilegedSession::client().running()
+        && QFile::exists(QString("/run/skewer-route-intent-%1.json").arg(getuid())));
     routing_up_->setText(active && !maintained ? tr("Maintain routing")
         : routing_requested_ && !active ? tr("Restore routing") : tr("Enable"));
-    routing_up_->setEnabled(!active || !maintained);
+    routing_up_->setEnabled(!tunnel_process_ && (!active || !maintained));
     routing_up_->setToolTip(tr("Authorize a persistent helper for this Skewer session. "
         "Missing routes will be restored without asking for the password again."));
     routing_down_->setEnabled(routing_requested_ || active || interfaces_attached);
     routing_source_->setEnabled(!routing_requested_ && !active && !interfaces_attached);
+    transport_mode_->setEnabled(!routing_requested_ && !active && !interfaces_attached && usesSaslikUrl());
     next_hop_->setEnabled(!routing_requested_ && !active && !interfaces_attached && !usesSaslikUrl());
     saslik_url_->setEnabled(!routing_requested_ && !active && !interfaces_attached && usesSaslikUrl());
 
@@ -837,6 +1175,7 @@ bool MainWindow::usesSaslikUrl() const
 
 QString MainWindow::currentNextHop() const
 {
+    if (tunnel_selected_) return tunnel_gateway_;
     return usesSaslikUrl() ? discovery_gateway_ : next_hop_->text().trimmed();
 }
 
@@ -923,6 +1262,9 @@ void MainWindow::applyDiscovery(const QByteArray& payload, bool request_ok)
         return;
     }
     saslik_reachable_ = true;
+    const auto advertised_tuntom = value["features"].toObject()["tuntom"];
+    tuntom_remote_enabled_ = advertised_tuntom.isBool() ? int(advertised_tuntom.toBool()) : -1;
+    tuntom_license_ = value["features"].toObject()["tuntom_license"].toString();
     if (QUrl(saslik_url_->text().trimmed()).scheme() == "skewer") {
         const auto pem = value["ca_pem"].toString().toUtf8();
         if (!pem.isEmpty()) ca_panel_->setRemoteCertificate(pem);

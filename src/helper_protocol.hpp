@@ -21,10 +21,12 @@ inline bool decode(const QByteArray& frame, QStringList& arguments)
             || value.toString().contains(QChar::Null)) return false;
         arguments << value.toString();
     }
-    // No UID override, executable path, shell, CA or long-running tunnel command.
+    // No UID override, shell or CA command. Tunnel operations are session-owned;
+    // their payload is validated again by the privileged tunnel worker.
     // Each allowed operation still uses the regular helper's argument validation.
     static const QStringList allowed{"up", "down", "status", "resume", "guard", "exemptions",
-        "interface-attach", "interface-release", "cleanup-tcp", "preview-tcp"};
+        "interface-attach", "interface-release", "cleanup-tcp", "preview-tcp",
+        "tunnel-start", "tunnel-poll", "tunnel-renew", "tunnel-stop"};
     return allowed.contains(arguments.first());
 }
 }
