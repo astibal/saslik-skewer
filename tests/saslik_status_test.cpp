@@ -82,6 +82,8 @@ int main(int argc, char** argv)
     int authorizations = 0;
     const auto authorize = [&] { ++authorizations; return RoutingResult{true, "Authorized"}; };
     MainWindow window({}, nullptr, {}, authorize);
+    const auto* version = window.findChild<QLabel*>("applicationVersion");
+    if (!version || !version->text().startsWith("Skewer ")) return 55;
     auto* connections = window.findChild<QTableWidget*>("connectionsTable");
     auto* show_cgroup = window.findChild<QCheckBox*>("connectionsShowCgroup");
     if (!connections || !show_cgroup || !connections->isColumnHidden(6)

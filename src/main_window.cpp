@@ -545,6 +545,10 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     QTimer::singleShot(0, info, poll_status);
     connect(routing_up_, &QPushButton::clicked, this, &MainWindow::activateRouting);
     connect(routing_down_, &QPushButton::clicked, this, &MainWindow::deactivateRouting);
+    auto* version_label = new QLabel(QStringLiteral("Skewer %1").arg(QString::fromLatin1(SKEWER_VERSION)), this);
+    version_label->setObjectName("applicationVersion");
+    version_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    statusBar()->addWidget(version_label);
     routing_status_bar_ = new QLabel(this);
     routing_status_bar_->setObjectName("routingStatusBar");
     routing_status_bar_->installEventFilter(this);
