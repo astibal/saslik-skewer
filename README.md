@@ -172,9 +172,31 @@ Run the terminal interface, for example inside `screen` or `tmux`:
 Without a graphical session, Skewer selects the TUI automatically. `--gui`
 forces the desktop interface.
 
+The TUI is a supported frontend, not a reduced-privilege or reduced-safety mode.
+It shares settings, pairing credentials, CA-store operations, runtime trust
+services, socket discovery and the tunnel controller/helper protocol with GUI.
+Terminal authorization uses sudo; desktop authorization uses polkit.
+
+| Key | Terminal action |
+| --- | --- |
+| E / X | Enable or disable routing |
+| S / P / Z | Select paired Saslik / pair using a hidden invitation / disconnect |
+| T / I | Auto, Direct or Enforced tunnel / capability and diagnostics |
+| C / U | CA Trust (retained CAs, download, import, export, install/remove) / Runtime Trust |
+| V | User connections or selected application's connections; optional TCP cleanup |
+| O | Shared settings, Tuntom path and destination exemptions |
+| A / D | Attach / release selected application or interface |
+| N / ! | Launch a command / open a routed shell |
+
+Menus and command editing continue servicing tunnel IPC. Quitting stops the
+owned tunnel without silently switching traffic to a direct route. Previously
+opened sockets and existing runtime-trust exports retain their original state.
+Privileged end-to-end terminal workflows require a separate isolated lab check;
+unit tests do not substitute for that check.
+
 ## Routing
 
-### Experimental tuntom transport (`tuntom-integration`)
+### Experimental tuntom transport
 
 **Settings → Preferences** groups window behavior, startup routing resume,
 TCP cleanup-on-attach, tree font size and UI refresh intervals. Changes apply

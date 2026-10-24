@@ -30,6 +30,7 @@ inline QString compactStatus(const StatusView& s, bool missingBinary = false)
         && (s.selected || s.mode == "tunnel" || (s.connected && s.directKnown && !s.direct));
     if (needed && missingBinary) return "Tuntom missing — install or select executable in Settings";
     if (!s.requested) return "Tunnel off";
+    if (s.state == "authorization-required") return "Tunnel · helper authorization required";
     if (s.mode == "direct" || (s.mode == "auto" && !s.selected && s.directKnown && s.direct)) return "Direct routing";
     if (!s.connected) return "Tunnel · waiting for Saslik";
     if (s.selected && s.state == "failed") return "Tunnel failed · see details";

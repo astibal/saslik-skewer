@@ -225,6 +225,7 @@ if(BUILD_TESTING)
     add_test(NAME saslik_status COMMAND saslik_status_test)
     set_tests_properties(saslik_status PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     add_executable(tui_test tests/tui_test.cpp src/tui.cpp
+        src/ca_store.cpp src/connections.cpp src/runtime_trust.cpp src/runtime_trust.hpp
         src/application_model.cpp src/desktop_catalog.cpp src/process_scanner.cpp
         src/cgroup_manager.cpp src/routing_controller.cpp src/routing_plan.cpp)
     target_include_directories(tui_test PRIVATE src)

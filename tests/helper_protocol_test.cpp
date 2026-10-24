@@ -21,6 +21,9 @@ int main(int argc, char** argv)
         return 0;
     }
     TunnelHelperSession session(getuid());
+    // An authorized session is healthy even before any tunnel exists.
+    const auto idle = session.request({"tunnel-poll"});
+    if (idle.exit_code || QJsonDocument::fromJson(idle.output).object()["running"].toBool()) return 18;
     if (!session.request({"tunnel-start", "broken"}).exit_code) return 11;
     for (int cycle = 0; cycle < 2; ++cycle) {
         if (session.request({"tunnel-start", "{}"}).exit_code) return 12;
