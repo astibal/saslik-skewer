@@ -1,4 +1,5 @@
 #include "tunnel_pump.hpp"
+#include "packet_queue.hpp"
 #include <array>
 #include <deque>
 #include <iostream>
@@ -195,6 +196,26 @@ void test(const char* ip) {
 
 int main() {
     try {
+        {
+            PacketQueue queue(1, 4);
+            std::array<std::uint8_t, 4> data{1, 2, 3, 4}, buffer{};
+            require(!queue.enqueue({}) && !queue.writePacket({}), "Empty queue packet accepted");
+            require(queue.enqueue(data) && !queue.enqueue(data), "Queue capacity not enforced");
+            require(WaitForSingleObject(queue.readEvent(), 0) == WAIT_OBJECT_0, "Queue did not wake pump");
+            data[0] = 9;
+            require(queue.readPacket(buffer) == 4 && buffer[0] == 1, "Queue did not own packet bytes");
+            require(WaitForSingleObject(queue.readEvent(), 0) == WAIT_TIMEOUT, "Queue event remained set");
+            require(queue.writePacket(data) && !queue.writePacket(data), "Inbound bound missing");
+            require(queue.takeReceived().has_value() && !queue.takeReceived(), "Inbound dequeue failed");
+            std::array<std::uint8_t, 5> big{};
+            require(!queue.enqueue(big) && !queue.writePacket(big), "MTU bound missing");
+            require(queue.enqueue(data) && queue.writePacket(data), "Queue reuse failed");
+            queue.stop();
+            require(!queue.enqueue(data) && !queue.writePacket(data) && !queue.takeReceived() &&
+                        !queue.readPacket(buffer),
+                    "Stopped queue retained packets");
+            std::cout << "PASS: bounded packet bridge ownership, events and terminal stop\n";
+        }
         test("127.0.0.1");
         test("::1");
         testQuietPeer("127.0.0.1");

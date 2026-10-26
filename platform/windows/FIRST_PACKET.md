@@ -43,7 +43,7 @@ the Secure Boot development VM:
   exact payload.
 - Withholding reinjection drops the next datagram within the receive deadline.
 
-The script bounds the child lifetime to 15 seconds and cleans up only that
+The script bounds the child lifetime to 45 seconds and cleans up only that
 retained process. No routes or persistent policies change. This establishes the
 basic capture/send path, not global process ownership, physical egress, tunnel
 forwarding or service lifetime. It is deliberately excluded from CTest.
@@ -66,6 +66,26 @@ reuses only endpoint normalization, not FLOW-cache insertion semantics.
 Next integration must handle bounded waiting, unknown and ambiguous ownership,
 process exit/reuse, socket lifecycle, wildcard/shared endpoints and non-loopback
 traffic before these observations can drive application routing.
+
+### Captured packets through encrypted transport
+
+With the Tuntom pump enabled, the fixture carries captured UDP IPv4/IPv6 packets
+through an encrypted local UDP tunnel round trip before reinjection. An
+unconfirmed tunnel discards the datagram; its destination must remain unreadable.
+`PacketQueue` supplies bounded worker-owned buffers, explicit backpressure and
+terminal stop. It does not infer ownership or provide a direct-network fallback.
+
+A separate TCP test captures both directions of an exclusively bound loopback
+port pair. After holding the first SYN, it carries every captured packet through
+encrypted transport before reinjection, completing the handshake and exact
+bidirectional payload for IPv4 and IPv6. Each round trip uses a fresh test
+session: this is deliberately not a production relay loop.
+
+These VM tests passed. They prove composition of capture, encrypted transport
+and reinjection, not remote internet routing. The peer is a local echo fixture;
+capture uses fixture-owned ports, not general application classification.
+Browser Attach remains disabled. Physical-egress leak tests, process/socket
+ownership, return-path mapping and the persistent routing loop remain required.
 
 ### Ownership remains a separate integration gate
 

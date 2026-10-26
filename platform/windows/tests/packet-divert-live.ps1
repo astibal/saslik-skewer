@@ -19,7 +19,7 @@ try {
     $child = Start-Process (Join-Path $Directory 'packet_divert_test.exe') `
         -ArgumentList ('"' + $dll + '"') -PassThru -NoNewWindow
     $null = $child.Handle
-    if (-not $child.WaitForExit(15000)) { throw 'Packet diversion fixture timed out' }
+    if (-not $child.WaitForExit(45000)) { throw 'Packet diversion fixture timed out' }
     if ($child.ExitCode -ne 0) { throw "Packet diversion fixture failed: $($child.ExitCode)" }
 } finally {
     # Retained child only; closing its handles removes its narrowly scoped filters.

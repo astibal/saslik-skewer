@@ -7,6 +7,10 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#ifdef SKEWER_TEST_TUNNEL_PATH
+#include "packet_queue.hpp"
+#include "tunnel_pump.hpp"
+#endif
 #include <ws2tcpip.h>
 #include <windivert.h>
 
@@ -20,6 +24,66 @@ void require(bool condition, const char* message) {
         throw std::runtime_error(message);
     }
 }
+
+#ifdef SKEWER_TEST_TUNNEL_PATH
+void tunnelDropsUnhealthy(const std::vector<std::uint8_t>& original) {
+    using namespace skewer::windows;
+    PacketQueue queue;
+    UdpEndpoint udp(UdpAddress::numeric("127.0.0.1", 0)), silent_peer(UdpAddress::numeric("127.0.0.1", 0));
+    tuntom::ascon::key_type key{};
+    key.fill(0x74);
+    TunnelPump pump(queue, udp, silent_peer.localAddress(), 92, key);
+    require(queue.enqueue(original), "Queue rejected drop fixture");
+    pump.step(TunnelPump::Clock::now());
+    require(!pump.healthy(TunnelPump::Clock::now()) && pump.counters().not_ready == 1 &&
+                pump.counters().tx == 0 && !queue.takeReceived(),
+            "Unhealthy tunnel did not discard captured packet");
+}
+
+std::vector<std::uint8_t> tunnelRoundTrip(const std::vector<std::uint8_t>& original) {
+    using namespace skewer::windows;
+    PacketQueue local, remote;
+    UdpEndpoint local_udp(UdpAddress::numeric("127.0.0.1", 0));
+    UdpEndpoint remote_udp(UdpAddress::numeric("127.0.0.1", 0));
+    tuntom::ascon::key_type key{};
+    key.fill(0x73); // Public test key, never used by a production session.
+    TunnelPump client(local, local_udp, remote_udp.localAddress(), 91, key);
+    TunnelPump server(remote, remote_udp, local_udp.localAddress(), 91, key, true);
+    const auto deadline = GetTickCount64() + 2000;
+    while (GetTickCount64() < deadline) {
+        const auto now = TunnelPump::Clock::now();
+        client.step(now);
+        server.step(now);
+        if (client.healthy(now) && server.healthy(now)) {
+            break;
+        }
+        Sleep(1);
+    }
+    require(client.healthy(TunnelPump::Clock::now()) && server.healthy(TunnelPump::Clock::now()),
+            "Packet tunnel handshake failed");
+    require(local.enqueue(original), "Captured packet exceeds tunnel queue bounds");
+    bool traversed{};
+    while (GetTickCount64() < deadline) {
+        const auto now = TunnelPump::Clock::now();
+        client.step(now);
+        server.step(now);
+        if (auto received = remote.takeReceived()) {
+            require(*received == original, "Tunnel changed captured packet");
+            require(remote.enqueue(*received), "Remote echo queue rejected packet");
+            traversed = true;
+        }
+        if (auto received = local.takeReceived()) {
+            require(traversed && *received == original, "Invalid tunnel return packet");
+            std::cout << "PASS: captured packet crossed encrypted Tuntom transport before reinjection\n";
+            // No direct fallback on transport failure; only this authenticated
+            // round-trip result reaches the fixture's explicit reinjection.
+            return std::move(*received);
+        }
+        Sleep(1);
+    }
+    throw std::runtime_error("Captured packet did not traverse encrypted tunnel");
+}
+#endif
 
 template <typename Function> Function resolve(HMODULE dll, const char* name) {
     const auto symbol = GetProcAddress(dll, name);
@@ -75,6 +139,90 @@ bool readable(SOCKET socket, long milliseconds) {
     require(result != SOCKET_ERROR, "Wait for UDP delivery");
     return result != 0;
 }
+
+#ifdef SKEWER_TEST_TUNNEL_PATH
+void tcpTunnel(const std::wstring& path, int family) {
+    using namespace skewer::windows;
+    Socket source(family, true), listener(family, true);
+    const auto local = bindLoopback(source.value, family), remote = bindLoopback(listener.value, family);
+    const auto ports = "((tcp.SrcPort == " + std::to_string(port(local)) +
+                       " and tcp.DstPort == " + std::to_string(port(remote)) +
+                       ") or (tcp.SrcPort == " + std::to_string(port(remote)) +
+                       " and tcp.DstPort == " + std::to_string(port(local)) + "))";
+    traffic::PacketCapture capture(path, std::string("outbound and loopback and tcp and ") +
+                                             (family == AF_INET ? "ip and " : "ipv6 and ") + ports);
+    Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(static_cast<bool>(stop), "TCP tunnel stop event");
+    require(listen(listener.value, 1) == 0, "TCP tunnel listen");
+    u_long nonblocking = 1;
+    require(ioctlsocket(source.value, FIONBIO, &nonblocking) == 0 &&
+                ioctlsocket(listener.value, FIONBIO, &nonblocking) == 0,
+            "TCP nonblocking sockets");
+    require(connect(source.value, reinterpret_cast<const sockaddr*>(&remote),
+                    family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6)) == SOCKET_ERROR &&
+                WSAGetLastError() == WSAEWOULDBLOCK,
+            "TCP must wait for diverted SYN");
+    auto first = capture.next(stop.get(), 2000);
+    require(first.packet.has_value() && !readable(listener.value, 50), "TCP bypassed held SYN");
+    first.packet->bytes = tunnelRoundTrip(first.packet->bytes);
+    capture.reinject(std::move(*first.packet));
+    struct Accepted {
+        SOCKET value{INVALID_SOCKET};
+        ~Accepted() {
+            if (value != INVALID_SOCKET) {
+                closesocket(value);
+            }
+        }
+    } accepted;
+    constexpr char payload[] = "tcp-through-encrypted-tunnel";
+    bool sent{}, replied{};
+    std::string received, returned;
+    const auto deadline = GetTickCount64() + 8000;
+    while (GetTickCount64() < deadline) {
+        auto packet = capture.next(stop.get(), 5);
+        if (packet.packet) {
+            packet.packet->bytes = tunnelRoundTrip(packet.packet->bytes);
+            capture.reinject(std::move(*packet.packet));
+        }
+        if (accepted.value == INVALID_SOCKET) {
+            accepted.value = accept(listener.value, nullptr, nullptr);
+            if (accepted.value == INVALID_SOCKET) {
+                require(WSAGetLastError() == WSAEWOULDBLOCK, "TCP tunnel accept failed");
+                continue;
+            }
+            require(ioctlsocket(accepted.value, FIONBIO, &nonblocking) == 0, "Accepted socket nonblocking");
+        }
+        if (!sent) {
+            require(send(source.value, payload, sizeof(payload), 0) == sizeof(payload), "TCP fixture send");
+            sent = true;
+        }
+        std::array<char, 128> buffer{};
+        if (readable(accepted.value, 0)) {
+            const auto n = recv(accepted.value, buffer.data(), buffer.size(), 0);
+            require(n > 0, "TCP server receive failed");
+            received.append(buffer.data(), n);
+        }
+        if (!replied && received.size() == sizeof(payload)) {
+            require(received == std::string(payload, sizeof(payload)), "TCP outbound payload changed");
+            require(send(accepted.value, payload, sizeof(payload), 0) == sizeof(payload), "TCP reply send");
+            replied = true;
+        }
+        if (readable(source.value, 0)) {
+            const auto n = recv(source.value, buffer.data(), buffer.size(), 0);
+            require(n > 0, "TCP client receive failed");
+            returned.append(buffer.data(), n);
+        }
+        if (returned.size() == sizeof(payload)) {
+            require(returned == std::string(payload, sizeof(payload)), "TCP return payload changed");
+            require(capture.stats().captured_packets >= 5, "TCP exchange bypassed capture");
+            std::cout << "PASS: full TCP handshake and bidirectional payload through encrypted transport "
+                      << (family == AF_INET ? "IPv4" : "IPv6") << '\n';
+            return;
+        }
+    }
+    throw std::runtime_error("TCP tunnel exchange timed out");
+}
+#endif
 
 void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = false) {
     using namespace skewer::windows;
@@ -220,7 +368,13 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                 "Reverse tuple lost fixture identity");
         require(!readable(destination.value, 100), "Packet leaked while awaiting flow metadata");
         if (!reinject) {
+#ifdef SKEWER_TEST_TUNNEL_PATH
+            auto dropped = held.take(*ticket, HoldingQueue::Clock::now());
+            require(dropped.has_value(), "Missing captured drop fixture");
+            tunnelDropsUnhealthy(dropped->bytes);
+#else
             require(held.discard(*ticket), "UDP pending packet was lost");
+#endif
             require(!readable(destination.value, 300), "Discarded datagram was delivered");
             continue;
         }
@@ -228,6 +382,10 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         // the capture's routing metadata and calculate checksums before send.
         auto ready = held.take(*ticket, HoldingQueue::Clock::now());
         require(ready.has_value(), "Correlated packet expired before reinjection");
+#ifdef SKEWER_TEST_TUNNEL_PATH
+        ready->bytes = tunnelRoundTrip(ready->bytes);
+        require(!readable(destination.value, 100), "Packet escaped while traversing tunnel");
+#endif
         capture.reinject({std::move(ready->bytes), ready->context});
         require(readable(destination.value, 3000), "Reinjected packet not delivered");
         std::array<char, 128> delivered{};
@@ -305,6 +463,10 @@ int wmain(int argc, wchar_t** argv) {
         exercise(module, path, AF_INET6);
         exercise(module, path, AF_INET, true);
         exercise(module, path, AF_INET6, true);
+#ifdef SKEWER_TEST_TUNNEL_PATH
+        tcpTunnel(path, AF_INET);
+        tcpTunnel(path, AF_INET6);
+#endif
         captureLifecycle(path);
         return 0;
     } catch (const std::exception& error) {

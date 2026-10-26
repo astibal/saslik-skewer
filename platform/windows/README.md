@@ -577,7 +577,8 @@ the exchange. Never reconnect silently after verification.
 
 VM tests currently cover a valid pinned local server and rejection of wrong
 PID, stale creation time, the wrong pipe endpoint and a missing service.
-Successful SCM-worker/GUI integration remains untested and is not enabled.
+GUI integration remains untested and is not enabled. The separate SCM fixture
+below verifies the worker/client path without the GUI.
 
 `tests/selection-service-live.ps1` now exercises a real temporary SCM worker
 and authenticated client twice, then verifies clean service stop. It copies the
