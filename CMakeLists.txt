@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.24)
 
 project(saslik-skewer VERSION 0.9.50.6 LANGUAGES CXX)
 
+# Select platform dependencies before discovering Linux-only services/libraries.
+if(WIN32)
+    set(SKEWER_APP_VERSION "${PROJECT_VERSION}")
+    set(SKEWER_WINDOWS_APP ON CACHE BOOL "Build the Windows application")
+    include(CTest)
+    add_subdirectory(platform/windows)
+    return()
+endif()
+
 include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 20)
