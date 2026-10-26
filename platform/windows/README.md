@@ -237,8 +237,24 @@ terminate the worker; this is a fixed-peer PSK transport only.
 `tunnel_pump_test.exe` uses real IPv4/IPv6 loopback UDP and an in-memory packet
 device. It tests inner IPv4/IPv6 transfer, unconfirmed/stale-session drops,
 foreign peers, MTU/invalid headers, full device rings, session recovery and stop.
-Wintun driver I/O is separately covered by `wintun_device_test`; the combined
-pump has **not yet been exercised with routed application traffic on Wintun**.
+Wintun driver I/O is separately covered by `wintun_device_test`.
+
+The explicit elevated VM-only probe `tunnel_pump_live.exe` exercises the combined
+pump with the real Windows IP stack and Wintun driver. Run the repository's
+`platform/windows/tests/tunnel-pump-live.ps1 -Directory C:\\TrustedTestDirectory`
+with the executable and signed `wintun.dll` in that directory. It creates a
+uniquely named adapter, assigns only `198.18.254.1/30` in ActiveStore, sets MTU
+1280, waits for address readiness and requires three successful pings to
+`198.18.254.2`. The remote endpoint is a narrow in-process ICMP responder reached
+through encrypted loopback UDP, not an actual Saslik server. Both session peers
+use an ephemeral random key. The probe times out after 45 seconds and adapter
+destruction removes its test configuration. The script verifies adapter/route
+cleanup and unchanged IPv4/IPv6 default routes, retaining per-run logs.
+
+This probe is deliberately excluded from CTest, never installs a default route
+or changes host firewall policy, and must not run on a production host. It proves
+kernel-to-Wintun-to-session-to-UDP-to-echo and return-path integration only, not
+remote interoperability, TCP/UDP application behavior or leak protection.
 
 Remaining integration includes adapter addressing/routes, outbound fragmentation
 and PMTU, leases, VPN AUTH/config, supervisor/GUI integration and independently
