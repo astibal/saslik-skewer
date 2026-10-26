@@ -23,3 +23,13 @@ endif()
 enable_testing()
 add_test(NAME packet_tuple COMMAND packet_tuple_test)
 add_test(NAME flow_index COMMAND flow_index_test)
+# Exercise the actual pure decision used by the WDK prototype, without loading
+# any kernel code. This does not test WFP callback lifetime or enforcement.
+add_executable(ale_decision_test ../windows/driver/decision_test.cpp)
+if(NOT MSVC)
+    target_compile_options(ale_decision_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
+if(MINGW)
+    target_link_options(ale_decision_test PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+add_test(NAME ale_decision COMMAND ale_decision_test)

@@ -52,6 +52,10 @@ the chosen process creates an authorization gap, not a safe handoff.
 
 ## Next implementation gate
 
+The [build-only ALE prototype](driver/README.md) now compiles with MSVC/WDK.
+It has not been installed or exercised in kernel context; the remaining gate
+below is not satisfied by compilation or its portable decision tests.
+
 For strict per-instance selection, investigate a small WFP callout at ALE
 authorization before implementing a general packet forwarding loop. Microsoft's
 [asynchronous classification contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/network/processing-classify-callouts-asynchronously)
