@@ -158,6 +158,27 @@ void runPolicyCommand(std::wstring_view mode, wchar_t* policy_id) {
     // Do not release on exit, including this bounded fixture timeout.
     Sleep(60000);
 }
+
+void runProbeSequence(const std::wstring& prefix) {
+    // The first-packet harness owns these events and this fixture process.
+    const auto go = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, (prefix + L"-go").c_str());
+    const auto done = OpenEventW(EVENT_MODIFY_STATE, FALSE, (prefix + L"-done").c_str());
+    struct Cleanup {
+        HANDLE go, done;
+        ~Cleanup() {
+            CloseHandle(go);
+            CloseHandle(done);
+        }
+    } cleanup{go, done};
+    require(go && done, "Open probe sequence events");
+    for (const auto expected : {L"allowed", L"blocked", L"allowed"}) {
+        require(WaitForSingleObject(go, 20000) == WAIT_OBJECT_0, "Probe sequence deadline");
+        require(ResetEvent(go), "Reset probe sequence event");
+        runProbes(expected);
+        std::cout << "ROUND COMPLETE" << std::endl;
+        require(SetEvent(done), "Signal probe sequence completion");
+    }
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -169,7 +190,9 @@ int wmain(int argc, wchar_t** argv) {
         require(argc == 3, "Usage: app_egress_guard_test --probe allowed|blocked OR "
                            "--live-arm-wait|--live-status|--live-release GUID");
         const std::wstring mode = argv[1];
-        if (mode == L"--probe") {
+        if (mode == L"--probe-sequence") {
+            runProbeSequence(argv[2]);
+        } else if (mode == L"--probe") {
             runProbes(argv[2]);
         } else {
             runPolicyCommand(mode, argv[2]);

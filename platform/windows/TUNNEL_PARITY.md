@@ -68,6 +68,11 @@ implemented and tested; do not assume WinDivert alone provides them.
 
 ## Acceptance tests
 
+The [first-packet experiment](FIRST_PACKET.md) confirms that a WinDivert SOCKET
+filter can deny fresh TCP/UDP attempts for one PID, but new connections become
+allowed after its owner is killed. This is not the required persistent guard.
+Resolve the ALE authorization/callout design before enabling application Attach.
+
 `tunnel_contract_test` runs the actual shared Linux policy helpers on both OSes:
 all route-mode combinations, endpoint validation, session-key vector, stale and
 malformed telemetry, and reconnect eligibility/backoff. These are policy tests,
