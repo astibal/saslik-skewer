@@ -400,6 +400,11 @@ See the [FLOW API documentation](https://github.com/basil00/WinDivert/blob/v2.2.
 
 ### Remaining integration
 
+The independent [`platform/traffic`](../traffic/README.md) module now decodes
+bounded IPv4/IPv6 TCP/UDP packet tuples. It is tested on both platforms but is not
+yet wired to capture or authorization; unrecognized packets cannot safely be
+assigned to an application merely from FLOW events.
+
 1. Port additional controllers behind explicit platform capability interfaces;
    do not expose Linux-specific helpers or settings as working Windows features.
 2. Add desktop application identity/icons, launcher completion, and explicit
