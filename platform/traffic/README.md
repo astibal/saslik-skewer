@@ -1,5 +1,38 @@
 # Portable packet identity
 
+## Observed flow index
+
+`skewer-flow-index` correlates decoded tuples with explicitly supplied flow
+observations. It is a diagnostic primitive, not yet connected to the Windows
+observer or a live packet capture. Its key includes PID, process creation time
+and endpoint ID; it never derives process ownership from an executable name.
+Both directions share a canonical tuple. Multiple sockets of one process still
+have one observed owner; distinct process identities produce `Ambiguous`.
+Lookups are indexed by tuple, not a linear scan of every observed flow.
+
+Results are `Unknown`, `Observed`, `Ambiguous` or `Unreliable`; only `Observed`
+contains an identity, and that means **observed**, not authenticated ownership.
+The caller must supply comparable source timestamps and nondecreasing steady
+clock times, serialize access, and signal detected observation loss through
+`invalidate()`. Undetectable driver event loss remains undetectable here too.
+
+Closed endpoints retain tombstones. Delayed opens cannot resurrect them, and
+equal timestamps prefer closure. Conflicting endpoint metadata, capacity overflow
+or explicitly expired context invalidate the index rather than silently evicting
+a competing owner. Lookup itself never returns expired observations. Defaults
+are 4096 records (including tombstones) and five minutes of context lifetime;
+the caller runs `expire()` periodically. Expiration requires starting a new
+observation epoch, not automatic "recovery" with incomplete history. `reset()`
+is only valid after old producers have stopped and their queued events cannot
+enter the new epoch. No locking, background thread or network policy is hidden
+in this library.
+
+Tests include reverse packets, duplicate same-process sockets, conflicting
+owners, PID reuse, out-of-order events, deletion-before-open, timestamp ties,
+capacity exhaustion, context expiration and explicit epoch reset.
+
+## Packet decoding
+
 `skewer-packet-tuple` decodes source/destination addresses and ports from complete
 IPv4/IPv6 TCP/UDP L3 packets. It has no Qt, Windows, driver or tunnel dependency,
 allocates no memory while parsing, and never changes the supplied packet.
