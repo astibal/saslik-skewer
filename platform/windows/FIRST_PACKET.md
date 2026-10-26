@@ -30,6 +30,45 @@ use that ephemeral helper as production protection. It is excluded from CTest.
 
 ## Why FLOW plus a PID cache is insufficient
 
+### NETWORK packet-path experiment
+
+`tests/packet-divert-live.ps1` runs `packet_divert_test.exe` against the verified
+official WinDivert DLL/driver. The elevated VM-only fixture binds exclusive UDP
+loopback endpoints, opens a NETWORK filter for their source/destination ports
+and address family, then sends its own payload. Both IPv4 and IPv6 passed on
+the Secure Boot development VM:
+
+- The receiver does not get the captured datagram before reinjection.
+- Reinjection with preserved metadata and calculated checksums delivers the
+  exact payload.
+- Withholding reinjection drops the next datagram within the receive deadline.
+
+The script bounds the child lifetime to 15 seconds and cleans up only that
+retained process. No routes or persistent policies change. This establishes the
+basic capture/send path, not global process ownership, physical egress, tunnel
+forwarding or service lifetime. It is deliberately excluded from CTest.
+
+The fixture now starts a selected-process FLOW observer before socket creation
+and decodes each held UDP packet through the real packet parser. Both address
+families correlate to the fixture's PID and creation time while delivery remains
+held, including reverse tuple lookup. This does not establish uniqueness against
+unobserved processes sharing a tuple.
+
+For TCP, the initial FLOW-only experiment did not resolve ownership within two
+seconds while holding the SYN. Do not depend on an established-FLOW event to
+identify the first TCP packet. A passive SOCKET CONNECT observer opened before
+connect provides PID and endpoints matching the held SYN on both IPv4 and IPv6.
+The final test asserts that match and that the listening socket is not ready to
+accept while the SYN is held. It does not complete/reinject a TCP handshake.
+CONNECT attempts remain separate from established FLOW records; the fixture
+reuses only endpoint normalization, not FLOW-cache insertion semantics.
+
+Next integration must handle bounded waiting, unknown and ambiguous ownership,
+process exit/reuse, socket lifecycle, wildcard/shared endpoints and non-loopback
+traffic before these observations can drive application routing.
+
+### Ownership remains a separate integration gate
+
 The [WinDivert layer contract](https://reqrypt.org/windivert-doc.html#divert_layer)
 has distinct capabilities:
 
@@ -43,18 +82,24 @@ SOCKET blocking rejects an operation; it is not a queue from which a successful
 connect can later be resumed or rewritten. Adding a NETWORK tuple filter after a
 FLOW event cannot establish a first-packet guarantee. Capturing a broad packet
 set before any application starts is a different design, with global queuing,
-unknown-owner handling and independent crash-surviving protection still required.
+unknown-owner handling still required. Protection after service failure is outside
+the accepted first-release lab scope.
 Our diagnostic flow index is not that protection.
 
 The existing persistent image guard also cannot be treated as per-instance
 protection: it blocks every instance of that executable. Removing it to allow
 the chosen process creates an authorization gap, not a safe handoff.
 
-## Next implementation gate
+## Deferred alternative: custom kernel guard
+
+This section records a possible later security-oriented design, not the active
+implementation plan. The first release uses WinDivert and accepts loss of its
+filters when the owner service terminates. Do not load or package this prototype
+for that release. See [the active contract](TUNNEL_PARITY.md).
 
 The [build-only ALE prototype](driver/README.md) now compiles with MSVC/WDK.
-It has not been installed or exercised in kernel context; the remaining gate
-below is not satisfied by compilation or its portable decision tests.
+It has not been installed or exercised in kernel context; the properties below
+are not established by compilation or its portable decision tests.
 
 For strict per-instance selection, investigate a small WFP callout at ALE
 authorization before implementing a general packet forwarding loop. Microsoft's
@@ -63,7 +108,7 @@ supports pending new ALE authorization, then completing and deciding during
 reauthorization. Non-TCP data may also need to be cloned/retained and reinjected;
 FLOW_ESTABLISHED is not an asynchronous authorization point.
 
-The prototype must establish these properties before GUI Attach is enabled:
+A future strict kernel guard would need to establish these properties:
 
 - Kernel-bound process identity, with PID reuse, selection and lifetime handled
   explicitly; no trust in a delayed user-mode PID-to-tuple observation.

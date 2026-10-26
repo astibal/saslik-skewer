@@ -5,6 +5,19 @@ control may claim routing protection before a privileged backend actually
 enforces it. This document records the implementation boundary, not a claim that
 Windows tunneling or filtering is already available.
 
+## First-release scope: lab routing, not security isolation
+
+Use WinDivert for interception and Wintun/Tuntom for transport. The interception
+service must outlive the GUI. While it remains running, tunnel failure must keep
+selected traffic blocked. If the service exits or crashes, its WinDivert handles
+close and their filters disappear: applications may communicate through normal
+host routes. Automatic service restart does not eliminate this exposure window.
+This limitation is accepted for laboratory/testing use, not as a security boundary.
+These are requirements; integrated routing is not yet available.
+
+A custom WFP callout driver is deferred beyond the first release. Neither its
+build nor a live kernel experiment is a gate for the WinDivert implementation.
+
 ## Existing protocol to preserve
 
 Skewer currently obtains a paired endpoint from Saslik, derives a transport key
@@ -24,14 +37,15 @@ transport's access-data gate and apply required CONFIG items successfully.
 
 | Event | Required result for selected applications |
 | --- | --- |
-| First attach/launch | Install and verify the kernel guard before admitting the application |
+| First attach/launch | Establish service-owned interception before admitting selected traffic |
 | Tunnel preparing | Block; an adapter existing is not evidence of a working tunnel |
 | Verified session and data path | Allow only the selected tunnel path and explicit configured exemptions |
 | Peer loss, stale stats, expired lease, adapter loss | Block; never fall back to the host default route |
-| Transport or privileged helper crashes | Guard survives; direct egress remains blocked |
+| Transport fails while interception service lives | Keep selected traffic blocked |
+| Interception service exits or crashes | Filters disappear; direct egress may resume; report unavailable |
 | Reconnect | Stay blocked until the replacement session and data path are verified |
 | Old worker reports ready | Ignore it after session replacement or explicit Disable |
-| GUI closes or crashes | Do not release application selection or remove kernel protection |
+| GUI closes or crashes | Service continues; do not release selection or remove interception |
 | Explicit Disable | Stop routing while retaining protection for still-selected applications |
 | Explicit application Release | Deliberately return that application's future traffic to normal routing |
 
@@ -54,24 +68,25 @@ equivalent to selecting one running application instance.
    lifetime. The unprivileged Qt GUI is only a client of authenticated local IPC.
 4. Verify paired transport and data-path probes in the development VM using
    narrow test routes, without replacing the machine's default route.
-5. Add per-application enforcement and diversion with a crash-surviving guard.
+5. Add per-application enforcement and diversion using service-owned WinDivert handles.
    Do not expose Attach until both IPv4 and IPv6 bypass behavior is tested.
 
 Wintun supplies packet I/O, not application selection or a kill switch. WFP
 dynamic-session objects are deleted when the owning session closes: a dynamic
-block filter alone therefore cannot implement the required crash protection.
+block filter alone therefore cannot provide protection after owner failure.
 The isolated `traffic::AppImageBlock` primitive now implements persistent
 block-only image rules independently of any tunnel. Its scope is deliberately
 all instances of an executable, not one selected process. Instance-level
-matching, interception, and a production guard/callout design remain to be
-implemented and tested; do not assume WinDivert alone provides them.
+matching and interception remain to be implemented and tested. The image guard
+is experimental, not the selected first-release enforcement backend.
 
 ## Acceptance tests
 
 The [first-packet experiment](FIRST_PACKET.md) confirms that a WinDivert SOCKET
 filter can deny fresh TCP/UDP attempts for one PID, but new connections become
-allowed after its owner is killed. This is not the required persistent guard.
-Resolve the ALE authorization/callout design before enabling application Attach.
+allowed after its owner is killed. Preserve this test to document the accepted
+service-lifetime limitation. Resolve first-packet ownership and interception
+before enabling application Attach.
 
 `tunnel_contract_test` runs the actual shared Linux policy helpers on both OSes:
 all route-mode combinations, endpoint validation, session-key vector, stale and
@@ -79,8 +94,10 @@ malformed telemetry, and reconnect eligibility/backoff. These are policy tests,
 not proof of kernel enforcement.
 
 Before Windows routing is enabled, packet-level integration tests must capture
-the physical egress and verify no direct leak during tunnel loss, helper kill,
-GUI restart, adapter deletion, lease expiry and reconnect. Exercise TCP, UDP,
+the physical egress and verify no direct leak during tunnel loss with the service
+alive, GUI restart, adapter deletion, lease expiry and reconnect. Test service
+termination separately: direct connectivity may return, and the GUI must report
+the service unavailable rather than protected. Exercise TCP, UDP,
 IPv4, IPv6, existing sockets, spawned children and PID reuse. Include DNS through
 the system resolver; shared resolver traffic must not become an unnoticed bypass.
 Also verify another unselected application retains normal connectivity and an

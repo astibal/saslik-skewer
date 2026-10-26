@@ -1,5 +1,80 @@
 # Windows backend and shared application UI
 
+## First-release direction and limitation
+
+The selected backend is WinDivert interception with Wintun/Tuntom transport,
+owned by a privileged service independent of the GUI. Integration is still in
+progress; this is not a claim that application routing is already available.
+The custom kernel callout prototype is deferred and will not ship in the first
+release. No custom-driver test-signing setup is required for that release.
+
+Skewer is a laboratory routing and testing tool, not a security isolation
+boundary. The service must block selected traffic during tunnel failure while
+it remains running. If the service exits or crashes, its WinDivert filters
+disappear and applications may communicate through normal host routes. Automatic
+restart cannot remove that exposure window. Closing the GUI must not stop the
+service. These behaviors require integration tests before they are advertised
+as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
+
+## Current implementation
+
+### Service lifecycle host (not yet the routing service)
+
+`runService()` hosts one worker in an own-process Windows service. SCM stop and
+shutdown controls signal a manual-reset event; the status owner reports stop
+checkpoints while joining the worker. Worker failures become service-specific
+SCM errors rather than a false clean exit. The worker must honor cancellation;
+the host does not forcibly kill a stuck thread. Callback context remains alive
+until process teardown, avoiding callbacks into destroyed stack data.
+
+SCM `Running` means the worker was started, not that interception or a tunnel is
+ready. A future routing service needs a separate readiness/health contract and
+authenticated user-scoped IPC. Its service account and driver privileges remain
+to be designed; the lifecycle test's LocalService account does not demonstrate
+that LocalService can open WinDivert or impersonate the selecting user.
+
+`tests/service-host-live.ps1` creates unique demand-start LocalService fixtures
+from a binary copied beneath Program Files. It tests normal stop and worker
+error 42, then removes only those services. The copied binary is retained for
+audit. No production service, auto-start, recovery policy or network change is
+installed, and the test is excluded from CTest.
+
+### Worker-owned packet capture (not yet a service)
+
+The session-zero integration fixture `capture_service_test` now connects the
+service host to `PacketCapture`. Its compiled-in `false` filter intercepts no
+traffic. `tests/capture-service-live.ps1` installs unique, demand-start LocalSystem
+fixtures from an administrator-owned Program Files directory, verifies the
+official DLL/SYS hashes and driver signature, and removes the fixture services
+afterwards. It leaves binaries/status logs for audit, never removes the shared
+WinDivert driver, and does not change routes or install automatic recovery.
+
+The fixture distinguishes `starting`, `capture_ready`, `stopping`, `stopped` and
+`failed` in its status log. Every state explicitly says `routing_ready=false`.
+A missing DLL must fail without ever reporting capture readiness. Normal capture
+shutdown and that failure path passed on the Windows development VM. This is
+not authenticated status IPC or the production routing service; use of
+LocalSystem here does not settle the eventual privilege-separation design.
+
+`traffic::PacketCapture` provides reusable NETWORK capture and explicit
+reinjection, independently of Qt, process selection and the tunnel. A single
+worker owns it; counters need no global lock. Reads use overlapped I/O, retain
+the same pending request across timeouts, and drain cancellation before freeing
+buffers. Returned packets own their bytes and original WinDivert metadata.
+Reinjection calculates checksums and reports successful packet/byte counts.
+
+Cancellation is terminal for the reader and rejects subsequent reinjection, but
+keeps its filter installed until destruction. The supervisor must stop/join the
+worker before destroying it. Destruction closes the handle and removes that
+filter; this is not persistent protection after service failure. Packet expiry
+or cancellation never implicitly reinjects anything. The trusted backend builds
+filters; raw filter language must not become an unprivileged GUI/IPC API.
+
+The VM packet fixture now exercises this component, including idle timeout
+reuse, in-flight cancellation, pending-read destruction and counters, alongside
+TCP SYN/UDP correlation for IPv4/IPv6. It is not yet a long-running Windows
+service, application-routing controller, or tunnel forwarding loop.
+
 This directory is part of Skewer, not a separate product or GUI fork. It is a
 native backend selected by the root CMake build on Windows. Both platforms
 use `src/ui/application_shell.hpp` and `src/ui/application_page.hpp`: the same

@@ -1,5 +1,38 @@
 # Skewer roadmap
 
+## Windows first release: WinDivert lab routing
+
+WinDivert is the selected interception backend. A custom WFP kernel driver is
+not a first-release dependency. Windows routing is still under development;
+these items are acceptance gates, not implemented capabilities.
+
+- [ ] Run interception in a privileged service independent of the GUI, with
+  authenticated local IPC and verified current-user process identities.
+- [ ] Establish interception before admitting selected traffic; bound queues and
+  handle unknown ownership explicitly. A late FLOW event cannot protect the
+  first packet by itself.
+- [ ] Integrate diversion and return traffic with Wintun/Tuntom; exclude the
+  service and tunnel control traffic from interception.
+- [ ] Keep selected traffic blocked during tunnel loss while the service lives;
+  verify readiness before resuming forwarding.
+- [ ] Test physical egress for TCP/UDP and IPv4/IPv6, initial packets, existing
+  sockets, descendants, shared DNS, reconnect and GUI restart. Reject unsupported
+  cases visibly rather than claiming they are routed.
+- [ ] Report service failure accurately. Test and document that owner termination
+  removes WinDivert filters and may restore direct connectivity. Automatic restart
+  improves availability but cannot guarantee leak-free recovery.
+- [ ] Package official signed dependencies and licenses. Do not require
+  test-signing or disabling Secure Boot on users' machines.
+
+Skewer is a laboratory/testing tool, not a security isolation boundary. See
+[the Windows contract](platform/windows/TUNNEL_PARITY.md).
+
+### Deferred: custom kernel guard
+
+Keep the build-only `platform/windows/driver` prototype for possible later work.
+Do not load, package or require it for the first release. Revisit only if strict
+per-instance protection surviving service failure becomes a product requirement.
+
 ## Enterprise: interface traffic through Tuntom (deferred)
 
 - [ ] Route selected interface/VM ingress through the authenticated Tuntom

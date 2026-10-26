@@ -1,9 +1,14 @@
 # Build-only ALE guard prototype
 
+**Deferred beyond the first release.** WinDivert is the selected lab interception
+backend. Keep this prototype as research only: do not load, package or depend on
+it for release work. See [the active Windows contract](../TUNNEL_PARITY.md).
+
 This is **not installed, loaded, production-ready, or a verified kill switch**.
 The first artifact is an unsigned x64 WDM `.sys`, built with Microsoft MSVC/WDK.
 The standard MinGW application build does not compile or package this driver.
-It only runs the portable `ale_decision` test for the actual pure decision function.
+The portable `ale_decision` test for the actual pure decision function is opt-in
+with `-DSKEWER_EXPERIMENTAL_ALE_TESTS=ON` (off by default).
 
 ## Implemented boundary
 
