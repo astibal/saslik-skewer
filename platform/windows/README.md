@@ -199,6 +199,27 @@ readiness, cancellation priority, duplicate binds and handle cleanup. It does
 not alter addresses or routes. Scoped IPv6 address parsing, PMTU policy, socket
 buffer tuning and the actual Tuntom protocol integration remain separate work.
 
+### Shared Tuntom session core
+
+Pass `-DTUNTOM_SOURCE_DIR=/path/to/tuntom` to consume the actual Tuntom headers
+through `skewer-tuntom-session`. The checkout must include the portable
+`packet_types.hpp`, `protocol_constants.hpp` and `info_codec.hpp` split. No
+download or source modification happens during configuration. The GUI does not
+yet link this target. Windows session entropy uses CNG (`bcrypt`); the wire
+codec, handshake, PFS, encryption and replay protection remain Tuntom code.
+The first verified Tuntom revision is `bb5401e` (portable session core).
+
+`tuntom_udp_test.exe` exercises the shared client and server session implementations
+over real Winsock IPv4/IPv6 loopback datagrams. It verifies the four-message PFS
+handshake, encrypted traffic in both directions, tamper/replay rejection and
+wrong-PSK rejection. This is not yet a Windows-to-Linux interoperability test or
+a Wintun-to-remote-host tunnel test. No production key or network route is used.
+
+Remaining transport work includes the Wintun packet pump, session timers/rekey,
+bounded send queues, peer validation, MTU/fragmentation, lease/health supervision,
+and the independently enforced Windows fail-closed policy. Protocol readiness
+alone must never be exposed as proof of protected application connectivity.
+
 ### Remaining integration
 
 1. Port additional controllers behind explicit platform capability interfaces;
