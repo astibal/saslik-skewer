@@ -24,7 +24,7 @@ inline bool decode(const QByteArray& frame, QStringList& arguments)
     // No UID override, shell or CA command. Tunnel operations are session-owned;
     // their payload is validated again by the privileged tunnel worker.
     // Each allowed operation still uses the regular helper's argument validation.
-    static const QStringList allowed{"up", "down", "status", "resume", "guard", "exemptions",
+    static const QStringList allowed{"up", "down", "status", "resume", "guard", "exemptions", "exemptions-reset-tcp",
         "interface-attach", "interface-release", "cleanup-tcp", "preview-tcp",
         "tunnel-start", "tunnel-poll", "tunnel-renew", "tunnel-stop"};
     return allowed.contains(arguments.first());

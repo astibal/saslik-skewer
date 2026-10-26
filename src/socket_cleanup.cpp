@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <optional>
+#include <arpa/inet.h>
 
 namespace {
 QByteArray read(const QString& path) { QFile f(path); return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray{}; }
@@ -81,6 +82,82 @@ bool query(int family, const Socket* target, bool destroy, QVector<Socket>& outp
         }
     }
 }
+}
+
+bool exemptionDestinationChanged(quint32 address, const QStringList& before, const QStringList& after)
+{
+    const auto matches = [address](const QStringList& networks) {
+        for (const auto& network : networks) {
+            const auto parts = network.split('/');
+            in_addr base{};
+            if (inet_pton(AF_INET, parts[0].toLatin1().constData(), &base) != 1) continue;
+            bool ok = true;
+            const int bits = parts.size() == 1 ? 32 : parts[1].toInt(&ok);
+            if (!ok || bits < 0 || bits > 32 || parts.size() > 2) continue;
+            const quint32 mask = bits == 0 ? 0 : 0xffffffffU << (32 - bits);
+            if ((address & mask) == (ntohl(base.s_addr) & mask)) return true;
+        }
+        return false;
+    };
+    return matches(before) != matches(after);
+}
+
+static std::function<int()> prepareScopedExemptionCleanup(uid_t uid, const QSet<quint64>& groups,
+    const QStringList& before, const QStringList& after, QString& error)
+{
+    QVector<Socket> snapshot, selected;
+    if (!query(AF_INET, nullptr, false, snapshot)) {
+        error = "Cannot inspect TCP sockets; exemptions were not changed";
+        return {};
+    }
+    for (const auto& socket : snapshot) {
+        const auto destination = ntohl(socket.message.id.idiag_dst[0]);
+        const auto port = ntohs(socket.message.id.idiag_dport);
+        // These control-plane exceptions do not change with the CIDR list.
+        if (destination == 0x7f000035U && port == 53) continue;
+        bool control = false;
+        for (const auto& entry : before) {
+            if (!entry.startsWith("--local-control=")) continue;
+            const auto endpoint = entry.mid(16).split(':');
+            if (endpoint.size() == 2 && endpoint[1].toUInt() == port
+                && exemptionDestinationChanged(destination, {}, {endpoint[0]})) control = true;
+        }
+        if (control) continue;
+        if (socket.message.idiag_uid == uid && groups.contains(socket.group)
+            && socket.message.idiag_state != 10 && socket.message.idiag_state != 7
+            && exemptionDestinationChanged(destination, before, after))
+            selected << socket;
+    }
+    return [uid, selected] {
+        int closed = 0, failed = 0;
+        for (const auto& socket : selected) {
+            QVector<Socket> fresh, ignored;
+            // Recheck ownership and cgroup, and use the original kernel cookie
+            // so a newly opened connection cannot be mistaken for this socket.
+            if (!query(AF_INET, &socket, false, fresh) || fresh.isEmpty()) continue;
+            if (fresh.size() != 1 || fresh[0].message.idiag_uid != uid || fresh[0].group != socket.group) continue;
+            if (query(AF_INET, &socket, true, ignored)) ++closed;
+            else ++failed;
+        }
+        QTextStream(stdout) << "Changed-destination TCP sockets closed: " << closed
+                            << "; failed: " << failed << '\n';
+        return failed;
+    };
+}
+
+std::function<int()> prepareExemptionCleanup(uid_t uid, const QStringList& before,
+                                           const QStringList& after, QString& error)
+{
+    const auto root = QString("/sys/fs/cgroup/user.slice/user-%1.slice/user@%1.service/skewer.slice/skewer-routed.slice").arg(uid);
+    QSet<quint64> groups;
+    const auto add = [&groups](const QString& path) {
+        struct stat info{};
+        if (!::stat(path.toLocal8Bit().constData(), &info)) groups.insert(info.st_ino);
+    };
+    add(root);
+    QDirIterator dirs(root, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (dirs.hasNext()) add(dirs.next());
+    return prepareScopedExemptionCleanup(uid, groups, before, after, error);
 }
 
 int cleanupSockets(uid_t uid, const QStringList& arguments, bool dry_run, int* count_out)

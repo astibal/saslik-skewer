@@ -223,12 +223,15 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
             if (!InterfaceRouting::state(getuid()).isEmpty()) {
                 error->setText(tr("Release interfaces before changing destination exemptions.")); return;
             }
-            if (routing_.active(currentNextHop())) {
+            QString reset_detail;
+            if (tunnel_selected_ || routing_.active(currentNextHop())) {
                 const auto result = routing_.updateExemptions(normalized, RoutingController::Authorization::Desktop);
                 if (!result.ok) { error->setText(result.detail); return; }
+                if (QSettings().value("connections/cleanupOnAttach", false).toBool()) reset_detail = result.detail;
             }
             QSettings().setValue("routing/exemptions", normalized);
             action_status_->setText(tr("Saved %1 destination exemptions.").arg(normalized.size()));
+            if (!reset_detail.isEmpty()) action_status_->setText(action_status_->text() + ' ' + reset_detail);
             dialog.accept();
         });
         dialog.exec();

@@ -758,7 +758,7 @@ void Tui::preferences()
     struct Option { const char* key; const char* label; int fallback, minimum, maximum; };
     const Option options[] = {
         {"routing/resumeOnStartup", "Resume at startup", 1, 0, 1},
-        {"connections/cleanupOnAttach", "Close old TCP after attach (reconnect not guaranteed)", 0, 0, 1},
+        {"connections/cleanupOnAttach", "Reset affected TCP after attach/exemptions (reconnect not guaranteed)", 0, 0, 1},
         {"refresh/processSeconds", "Process refresh seconds", 5, 2, 60},
         {"refresh/connectionSeconds", "Connections refresh seconds", 5, 2, 60},
         {"refresh/routingSeconds", "Routing refresh seconds", 5, 2, 60},
@@ -773,11 +773,14 @@ void Tui::preferences()
     const int selected = choose("Shared Skewer settings", labels);
     if (selected < 0) return;
     if (selected == int(std::size(options)) + 1) {
-        if (requested_) { status_ = "Disable routing before editing exemptions"; return; }
         const auto text = prompt("Exempt IPv4 addresses/CIDRs, comma-separated (empty clears)");
         QStringList normalized; QString error;
         if (!RoutingPlanner::normalizeExemptions(text.split(',', Qt::SkipEmptyParts), normalized, error)) {
             status_ = error; return;
+        }
+        if (requested_) {
+            const auto result = routing_.updateExemptions(normalized, RoutingController::Authorization::Terminal);
+            if (!result.ok) { status_ = result.detail; return; }
         }
         QSettings().setValue("routing/exemptions", normalized);
     } else if (selected == int(std::size(options))) {

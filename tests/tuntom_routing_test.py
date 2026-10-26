@@ -41,6 +41,18 @@ def inside(helper, driver, uid, net, mount):
         return not any('return' in expr for row in rules['nftables']
                        if row.get('rule', {}).get('chain') == 'guarded'
                        for expr in row['rule'].get('expr', []))
+    def exemptions(*values):
+        result = subprocess.run([helper, 'exemptions', *values], env=environment, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        with open('/run/skewer-route-intent-' + uid + '.json') as saved:
+            intent = json.load(saved)
+        assert intent['tunnel_context'] == 'a' * 64, 'exemptions lost tunnel ownership'
+        assert intent['exemptions'] == list(values)
+
+    def check_exemptions(expected):
+        for name in ('skewer_', 'skewer_guard_'):
+            rules = run('nft', 'list', 'set', 'inet', name + uid, 'bypass_v4')
+            assert (b'198.51.100.0/24' in rules) == expected, rules
     worker = subprocess.Popen([helper, 'serve'], env=environment,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
@@ -50,6 +62,18 @@ def inside(helper, driver, uid, net, mount):
         assert direct.returncode != 0, 'direct up bypassed tunnel ownership'
         assert gate('verified').returncode == 0
         assert routed() and not closed()
+        exemptions('198.51.100.0/24')
+        check_exemptions(True)
+        reset = subprocess.run([helper, 'exemptions-reset-tcp', '198.51.100.0/24'],
+                               env=environment, capture_output=True)
+        assert reset.returncode == 0, reset.stderr
+        assert b'Changed-destination TCP sockets closed: 0' in reset.stdout
+        check_exemptions(True)
+        assert gate('verified').returncode == 0
+        check_exemptions(True)
+        exemptions()
+        check_exemptions(False)
+        exemptions('198.51.100.0/24')
         nat = run('nft', 'list', 'chain', 'inet', 'skewer_' + uid, 'tunnel_snat')
         assert b'snat ip to 10.253.0.6' in nat and b'oifname "skt1c"' in nat
         # Deliberately retain a source from the original host, as OUTPUT
@@ -66,8 +90,13 @@ def inside(helper, driver, uid, net, mount):
         assert gate('waiting').returncode == 0
         time.sleep(2.5)
         assert not routed() and closed(), 'watchdog bypassed lost tunnel verification'
+        exemptions()
+        assert not routed() and closed(), 'editing exemptions reopened unverified tunnel'
+        exemptions('198.51.100.0/24')
+        assert not routed() and closed()
         assert gate('verified').returncode == 0
         assert routed()
+        check_exemptions(True)
         for _ in range(3):
             assert gate('waiting').returncode == 0
             assert not routed() and closed(), 'lost tunnel must remain fail-closed'

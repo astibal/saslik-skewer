@@ -63,8 +63,16 @@ installed. No remote transport is provided yet.
 **Destination exemptions…** accepts up to 256 IPv4 addresses or CIDR ranges.
 They bypass Skewer marking for every attached application and follow the host's
 ordinary routing (which may itself include a VPN). The list is saved and used
-by GUI and TUI routing starts. Live changes replace the nftables set atomically;
-existing connections may break and need reconnecting. No DNS expansion or IPv6
+by GUI and TUI routing starts. Live changes work with both direct routing and
+Tuntom, without restarting the tunnel. Routing and guard sets change in one
+nftables transaction, and the saved exemptions survive routing recovery. During
+a tunnel outage, changes are saved for recovery without opening the guard.
+The optional automatic TCP reset checkbox also applies to exemption changes:
+only existing sockets in the user's routed slice whose destination changes
+between exempt and routed are reset, after successful rule installation.
+Overlapping CIDRs with unchanged effective routing leave sockets untouched.
+With the checkbox off, no sockets are reset. Reconnection is not guaranteed.
+No DNS expansion or IPv6
 exceptions are provided. After upgrading an already active older ruleset,
 disable and enable routing once to create the exemption set.
 

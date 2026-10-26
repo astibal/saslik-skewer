@@ -71,7 +71,8 @@ RoutingResult RoutingController::interfaceChange(const QString& name, int index,
 
 RoutingResult RoutingController::updateExemptions(const QStringList& destinations, Authorization authorization) const
 {
-    QStringList arguments{QStringLiteral("exemptions")};
+    QStringList arguments{QSettings().value("connections/cleanupOnAttach", false).toBool()
+        ? QStringLiteral("exemptions-reset-tcp") : QStringLiteral("exemptions")};
     arguments.append(destinations);
     return invoke(arguments, authorization);
 }
