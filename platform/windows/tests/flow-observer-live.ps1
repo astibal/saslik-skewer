@@ -1,6 +1,7 @@
 param([string]$Directory = 'C:\SkewerDev\flow-test')
 
 $ErrorActionPreference = 'Stop'
+$runId = [guid]::NewGuid().ToString('N')
 # Explicit elevated VM-only test. Never relax signature or antivirus policy.
 $expected = @{
     'WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'
@@ -21,8 +22,8 @@ Write-Output "Driver signature: $($signature.SignerCertificate.Subject)"
 & (Join-Path $Directory 'flow_tracking_test.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Flow tracking normalization test failed' }
 
-$stdout = Join-Path $Directory 'flow-test.stdout.log'
-$stderr = Join-Path $Directory 'flow-test.stderr.log'
+$stdout = Join-Path $Directory ('flow-test-' + $runId + '.stdout.log')
+$stderr = Join-Path $Directory ('flow-test-' + $runId + '.stderr.log')
 $dll = Join-Path $Directory 'WinDivert.dll'
 $test = Start-Process -FilePath (Join-Path $Directory 'flow_observer_test.exe') `
     -ArgumentList @('--live', ('"' + $dll + '"')) -PassThru -NoNewWindow `
@@ -62,8 +63,10 @@ try {
     $child = Start-Process -FilePath (Join-Path $Directory 'flow_observer_test.exe') `
         -ArgumentList @('--child', $prefix) -PassThru -NoNewWindow
     $null = $child.Handle
-    $watchOut = Join-Path $Directory 'watch.stdout.log'
-    $watchErr = Join-Path $Directory 'watch.stderr.log'
+    # Never reuse files: readiness/output must belong to this exact child,
+    # including when another test runs concurrently or a prior run was killed.
+    $watchOut = Join-Path $Directory ('watch-' + $runId + '.stdout.log')
+    $watchErr = Join-Path $Directory ('watch-' + $runId + '.stderr.log')
     $watch = Start-Process -FilePath (Join-Path $Directory 'skewer-flow-watch.exe') `
         -ArgumentList @($child.Id, ('"' + $dll + '"')) -PassThru -NoNewWindow `
         -RedirectStandardOutput $watchOut -RedirectStandardError $watchErr
@@ -90,7 +93,7 @@ try {
     } until ($complete -or [DateTime]::UtcNow -ge $deadline)
     if (-not $complete) { throw 'Watcher omitted a traffic class' }
     if ($output -notmatch 'correlation=observed' -or $output -match 'correlation=unreliable') {
-        throw 'Watcher did not correlate the live fixture events reliably'
+        throw "Watcher did not correlate the live fixture events reliably. Snapshot:`n$output"
     }
     $null = $release.Set()
     if (-not $child.WaitForExit(5000) -or $child.ExitCode -ne 0) {
