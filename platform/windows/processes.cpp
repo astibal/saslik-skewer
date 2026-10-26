@@ -10,19 +10,14 @@ namespace {
     throw std::runtime_error(std::string(operation) + ": Win32 error " + std::to_string(GetLastError()));
 }
 
-std::vector<unsigned char> userSid(HANDLE process) {
-    HANDLE raw = nullptr;
-    if (!OpenProcessToken(process, TOKEN_QUERY, &raw)) {
-        return {};
-    }
-    Handle token(raw);
+std::vector<unsigned char> tokenUserSid(HANDLE token) {
     DWORD length = 0;
-    GetTokenInformation(token.get(), TokenUser, nullptr, 0, &length);
+    GetTokenInformation(token, TokenUser, nullptr, 0, &length);
     if (!length) {
         return {};
     }
     std::vector<unsigned char> information(length);
-    if (!GetTokenInformation(token.get(), TokenUser, information.data(), length, &length)) {
+    if (!GetTokenInformation(token, TokenUser, information.data(), length, &length)) {
         return {};
     }
     auto sid = reinterpret_cast<TOKEN_USER*>(information.data())->User.Sid;
@@ -34,6 +29,38 @@ std::vector<unsigned char> userSid(HANDLE process) {
         return {};
     }
     return result;
+}
+
+std::vector<unsigned char> userSid(HANDLE process) {
+    HANDLE raw = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &raw)) {
+        return {};
+    }
+    Handle token(raw);
+    return tokenUserSid(token.get());
+}
+
+std::vector<unsigned char> authenticatedSid(HANDLE token) {
+    TOKEN_TYPE type{};
+    DWORD size{};
+    if (!token || token == INVALID_HANDLE_VALUE ||
+        !GetTokenInformation(token, TokenType, &type, sizeof(type), &size)) {
+        throw std::invalid_argument("A queryable authenticated token is required");
+    }
+    if (type == TokenImpersonation) {
+        SECURITY_IMPERSONATION_LEVEL level{};
+        if (!GetTokenInformation(token, TokenImpersonationLevel, &level, sizeof(level), &size) ||
+            level < SecurityIdentification) {
+            throw std::invalid_argument("Anonymous client tokens cannot select applications");
+        }
+    } else if (type != TokenPrimary) {
+        throw std::invalid_argument("Unsupported client token type");
+    }
+    const auto sid = tokenUserSid(token);
+    if (sid.empty()) {
+        throw std::runtime_error("Cannot determine authenticated client identity");
+    }
+    return sid;
 }
 
 HANDLE openTarget(ProcessKey expected) {
@@ -121,13 +148,21 @@ ProcessKey processKey(HANDLE process, DWORD pid) {
 }
 
 ProcessTarget::ProcessTarget(ProcessKey expected) : process_(openTarget(expected)), key_(expected) {
-    if (processKey(process_.get(), expected.pid) != expected) {
+    validateOwner(userSid(GetCurrentProcess()));
+}
+
+ProcessTarget::ProcessTarget(ProcessKey expected, HANDLE authenticated_user_token)
+    : process_(openTarget(expected)), key_(expected) {
+    validateOwner(authenticatedSid(authenticated_user_token));
+}
+
+void ProcessTarget::validateOwner(const std::vector<unsigned char>& caller) {
+    if (processKey(process_.get(), key_.pid) != key_) {
         throw std::runtime_error("Selected process identity is stale; refresh the process list");
     }
-    const auto caller = userSid(GetCurrentProcess());
     const auto owner = userSid(process_.get());
     if (caller.empty() || owner.empty() || caller != owner) {
-        throw std::runtime_error("Selected process does not have a verified current-user owner");
+        throw std::runtime_error("Selected process does not belong to the authenticated user");
     }
     executable_ = processExecutable(process_.get());
     if (!running()) {

@@ -56,6 +56,10 @@ private:
 class ProcessTarget final {
 public:
     explicit ProcessTarget(ProcessKey expected);
+    // Service boundary: token must come from authenticated OS IPC, never from
+    // request fields or a caller-supplied SID/PID. Borrowed only during validation.
+    // The service's own account is deliberately not used as the caller identity.
+    ProcessTarget(ProcessKey expected, HANDLE authenticated_user_token);
     ProcessTarget(const ProcessTarget&) = delete;
     ProcessTarget& operator=(const ProcessTarget&) = delete;
 
@@ -66,6 +70,7 @@ public:
     HANDLE waitHandle() const { return process_.get(); }
 
 private:
+    void validateOwner(const std::vector<unsigned char>& caller);
     Handle process_;
     ProcessKey key_;
     std::wstring executable_;

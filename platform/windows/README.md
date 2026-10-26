@@ -18,6 +18,30 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Authenticated selection boundary
+
+`authorizePipeSelection()` obtains the client's OS token from a server-side
+named pipe after the request has been read, reverts impersonation immediately,
+and validates the requested PID plus creation time against the process owner's
+SID. It never accepts a SID or token handle from request fields. The resulting
+`ProcessTarget` pins the process; it does not attach, route or launch anything.
+Anonymous tokens, stale identities, wrong-side pipe handles and foreign-user
+processes are rejected. The worker must enter without existing impersonation;
+failure to revert terminates the process rather than processing more requests
+under an unknown security context.
+
+The live tests use a local owner/SYSTEM-only pipe with remote clients rejected
+and identification-level client tokens. They cover own-process authorization,
+stale/invalid/anonymous rejection and impersonation cleanup. The service lifecycle
+fixture additionally verifies rejection of a LocalService-owned target from the
+invoking user's pipe identity. No new user account or credential is needed.
+
+This is the authorization primitive, not yet a deployed GUI/service protocol.
+The actual endpoint still needs bounded/cancellable message handling, explicit
+ACLs and remote-client rejection, protocol validation and selection lifetime
+management. A SYSTEM service must retain the authenticated selection instead of
+reopening it through a current-user-only observer constructor.
+
 ### Service lifecycle host (not yet the routing service)
 
 `runService()` hosts one worker in an own-process Windows service. SCM stop and

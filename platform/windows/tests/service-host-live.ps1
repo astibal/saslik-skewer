@@ -23,7 +23,14 @@ try {
         $service = Get-Service $name
         try {
             $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(10))
-            if (-not $failure) { Stop-Service $name }
+            if (-not $failure) {
+                # Run as the invoking user against the LocalService fixture.
+                # A privileged caller still must not select another user's PID.
+                $running = Get-CimInstance Win32_Service -Filter "Name='$name'"
+                & (Join-Path $Directory 'selection_auth_test.exe') --foreign $running.ProcessId
+                if ($LASTEXITCODE -ne 0) { throw 'Foreign-user selection authorization failed' }
+                Stop-Service $name
+            }
             $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(15))
         } finally { $service.Dispose() }
         $state = Get-CimInstance Win32_Service -Filter "Name='$name'"
