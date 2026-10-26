@@ -2,6 +2,7 @@
 #include "wintun_device.hpp"
 #include <deque>
 #include <iostream>
+#include <memory>
 
 namespace {
 using namespace skewer::windows;
@@ -83,22 +84,34 @@ private:
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
-    if (argc != 3 || std::wstring_view(argv[1]) != L"--live") {
-        std::cerr << "Usage: tunnel_pump_live --live ABSOLUTE_WINTUN_DLL\n";
+    const bool remote = argc == 4 && std::wstring_view(argv[1]) == L"--remote";
+    if (!remote && (argc != 3 || std::wstring_view(argv[1]) != L"--live")) {
+        std::cerr << "Usage: tunnel_pump_live --live ABSOLUTE_WINTUN_DLL\n"
+                     "   or: tunnel_pump_live --remote ABSOLUTE_WINTUN_DLL IPV4_PEER\n";
         return 2;
     }
     try {
         const auto name = L"SkewerLive-" + std::to_wstring(GetCurrentProcessId());
         WintunDevice device(loadWintun(argv[2]), name);
         EchoPeer echo;
-        UdpEndpoint client_udp(UdpAddress::numeric("127.0.0.1", 0));
+        UdpEndpoint client_udp(UdpAddress::numeric(remote ? "0.0.0.0" : "127.0.0.1", 0));
         UdpEndpoint server_udp(UdpAddress::numeric("127.0.0.1", 0));
         tuntom::ascon::key_type key{};
-        if (!tuntom::platform::random_bytes(key.data(), key.size())) {
+        if (remote) {
+            // Inherit the test PSK through the environment, never argv or logs.
+            key = tuntom::parse_master_key();
+        } else if (!tuntom::platform::random_bytes(key.data(), key.size())) {
             throw std::runtime_error("Test session entropy failed");
         }
-        TunnelPump client(device, client_udp, server_udp.localAddress(), 42, key);
-        TunnelPump server(echo, server_udp, client_udp.localAddress(), 42, key, true);
+        const std::wstring peer_text = remote ? argv[3] : L"";
+        const auto peer =
+            remote ? UdpAddress::numeric(std::string(peer_text.begin(), peer_text.end()).c_str(), 40242)
+                   : server_udp.localAddress();
+        TunnelPump client(device, client_udp, peer, remote ? 242 : 42, key);
+        std::unique_ptr<TunnelPump> server;
+        if (!remote) {
+            server = std::make_unique<TunnelPump>(echo, server_udp, client_udp.localAddress(), 42, key, true);
+        }
         tuntom::secure_zero(key.data(), key.size());
         std::wcout << L"ADAPTER " << name << std::endl;
         const auto deadline = TunnelPump::Clock::now() + std::chrono::seconds(45);
@@ -106,14 +119,17 @@ int wmain(int argc, wchar_t** argv) {
         while (TunnelPump::Clock::now() < deadline) {
             const auto now = TunnelPump::Clock::now();
             client.step(now);
-            server.step(now);
-            if (client.counters().rx >= 3 && echo.replies >= 3) {
+            if (server) {
+                server->step(now);
+            }
+            if (client.counters().rx >= 3 && (remote || echo.replies >= 3)) {
                 if (!completed) {
                     completed = now;
                 }
                 if (now - *completed >= std::chrono::seconds(1)) {
                     std::cout << "PASS live Wintun encrypted ICMP: tx=" << client.counters().tx
-                              << " rx=" << client.counters().rx << " replies=" << echo.replies << std::endl;
+                              << " rx=" << client.counters().rx << " peer=" << (remote ? "Linux" : "loopback")
+                              << std::endl;
                     return 0;
                 }
             }

@@ -80,6 +80,14 @@ void TunnelPump::receive(Time now) {
         if (packet.type >= tuntom::PacketType::auth_challenge) {
             throw std::runtime_error("VPN AUTH/config extensions are not supported by this transport yet");
         }
+        if (packet.type == tuntom::PacketType::ping && packet.message_id != 0 && healthy(now)) {
+            // Reply only to authenticated probes; preserve the peer's correlation ID.
+            tuntom::Packet reply;
+            reply.type = tuntom::PacketType::pong;
+            reply.tunnel_id = id_;
+            reply.message_id = packet.message_id;
+            send(session_.encode(reply));
+        }
         if (packet.type != tuntom::PacketType::data) {
             continue;
         }
@@ -139,11 +147,14 @@ void TunnelPump::step(Time now) try {
     send(flight);
     receive(now);
     session_.cleanup(now);
-    // Keep authenticated liveness going even while the data gate is closed.
+    // Linux keepalives are less frequent than our health deadline. Solicit an
+    // authenticated reply instead of assuming that outgoing traffic proves life.
+    // Continue probing while the data gate is closed so the peer can recover.
     if (confirmed_ && session_.ready() && now - last_keepalive_ >= std::chrono::seconds(1)) {
         tuntom::Packet keepalive;
-        keepalive.type = tuntom::PacketType::keepalive;
+        keepalive.type = tuntom::PacketType::ping;
         keepalive.tunnel_id = id_;
+        keepalive.message_id = ++message_id_;
         send(session_.encode(keepalive));
         last_keepalive_ = now;
     }

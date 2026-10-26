@@ -219,7 +219,7 @@ a Wintun-to-remote-host tunnel test. No production key or network route is used.
 
 `skewer-tunnel-pump` connects a `PacketDevice` (implemented by `WintunDevice`)
 to the shared session and a fixed UDP peer. A single worker handles bounded
-16-packet batches, handshake/rekey timers, authenticated keepalives and a
+16-packet batches, handshake/rekey timers, authenticated PING/PONG probes and a
 five-second receive-health deadline. Cancellation and errors invalidate health.
 The worker borrows its device, socket and stop event; stop/join it before
 destroying them. Run one pump per session, never call `step` concurrently with
@@ -237,6 +237,8 @@ terminate the worker; this is a fixed-peer PSK transport only.
 `tunnel_pump_test.exe` uses real IPv4/IPv6 loopback UDP and an in-memory packet
 device. It tests inner IPv4/IPv6 transfer, unconfirmed/stale-session drops,
 foreign peers, MTU/invalid headers, full device rings, session recovery and stop.
+An idle-peer regression answers only probes (no unsolicited keepalives), then
+stops answering to verify that the receive-health deadline still closes.
 Wintun driver I/O is separately covered by `wintun_device_test`.
 
 The explicit elevated VM-only probe `tunnel_pump_live.exe` exercises the combined
@@ -254,7 +256,23 @@ cleanup and unchanged IPv4/IPv6 default routes, retaining per-run logs.
 This probe is deliberately excluded from CTest, never installs a default route
 or changes host firewall policy, and must not run on a production host. It proves
 kernel-to-Wintun-to-session-to-UDP-to-echo and return-path integration only, not
-remote interoperability, TCP/UDP application behavior or leak protection.
+TCP/UDP application behavior or leak protection.
+
+For actual Linux interoperability, add `-RemotePeer <numeric IPv4>` to the
+PowerShell script and supply a disposable 32-hex `TUNTOM_SECRET` in its
+environment. This selects tunnel ID 242, UDP port 40242, and disables the local
+echo session. Prepare a real Linux Tuntom server with inner MTU 1280, default
+encrypted/PFS mode and PMTUD disabled. Its TUN must have `198.18.254.2/30` inside
+an isolated network namespace, with no forwarding or Internet route. Restrict
+the test UDP port to the Windows VM and bound the server lifetime; remove the
+test namespace and firewall rule afterwards. Never reuse a deployment key.
+The script waits seven idle seconds before pinging, exercising liveness beyond
+the five-second health deadline. Keys are not placed in process arguments.
+
+Validated on the development Windows VM against the Linux Tuntom daemon on
+RHINO: real Wintun -> encrypted UDP -> Linux TUN -> kernel ICMP echo replies.
+This remote test covers inner IPv4; live IPv6 and application interception are
+not yet validated. It does not configure the Linux server automatically.
 
 Remaining integration includes adapter addressing/routes, outbound fragmentation
 and PMTU, leases, VPN AUTH/config, supervisor/GUI integration and independently

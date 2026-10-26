@@ -1,4 +1,5 @@
 #include "tunnel_pump.hpp"
+#include <array>
 #include <deque>
 #include <iostream>
 
@@ -45,6 +46,59 @@ std::vector<uint8_t> packet(bool ipv6, size_t size = 128) {
     result[ipv6 ? 4 : 2] = static_cast<uint8_t>(length >> 8);
     result[ipv6 ? 5 : 3] = static_cast<uint8_t>(length);
     return result;
+}
+
+void testQuietPeer(const char* ip) {
+    TestDevice device;
+    UdpEndpoint client_udp(UdpAddress::numeric(ip, 0)), peer_udp(UdpAddress::numeric(ip, 0));
+    tuntom::ascon::key_type key{};
+    key.fill(9);
+    TunnelPump client(device, client_udp, peer_udp.localAddress(), 42, key);
+    tuntom::SessionProtocol peer(42, key, true, TunnelPump::inner_mtu, true, 300, true);
+    auto now = TunnelPump::Clock::now();
+    unsigned replies = 0;
+    const auto cycle = [&] {
+        client.step(now);
+        std::array<uint8_t, 65536> buffer{};
+        for (unsigned batch = 0; batch != 16; ++batch) {
+            const auto datagram = peer_udp.receive(buffer);
+            if (!datagram) {
+                break;
+            }
+            tuntom::Packet input;
+            std::vector<uint8_t> scratch;
+            const auto result = peer.receive(buffer.data(), datagram->size, input, scratch, now);
+            if (!result.reply.empty()) {
+                require(peer_udp.send(result.reply, client_udp.localAddress()), "Handshake reply failed");
+            }
+            // Model a Linux peer that sends no unsolicited keepalives during
+            // our five-second health window, but answers authenticated probes.
+            if (result.data && input.type == tuntom::PacketType::ping && input.message_id != 0) {
+                tuntom::Packet pong;
+                pong.type = tuntom::PacketType::pong;
+                pong.tunnel_id = 42;
+                pong.message_id = input.message_id;
+                require(peer_udp.send(peer.encode(pong), client_udp.localAddress()), "Probe reply failed");
+                ++replies;
+            }
+        }
+        Sleep(1);
+    };
+    for (unsigned attempt = 0; attempt != 200 && !client.healthy(now); ++attempt) {
+        cycle();
+    }
+    require(client.healthy(now), "Quiet peer handshake failed");
+    for (unsigned second = 0; second != 12; ++second) {
+        now += std::chrono::seconds(1);
+        for (unsigned attempt = 0; attempt != 10; ++attempt) {
+            cycle();
+        }
+        require(client.healthy(now), "Responsive idle peer was declared unhealthy");
+    }
+    require(replies >= 12, "Periodic authenticated PING probes missing");
+    now += TunnelPump::health_timeout;
+    require(!client.healthy(now), "Silent peer remained healthy without replies");
+    std::cout << "PASS: quiet peer liveness " << ip << '\n';
 }
 
 void test(const char* ip) {
@@ -143,6 +197,8 @@ int main() {
     try {
         test("127.0.0.1");
         test("::1");
+        testQuietPeer("127.0.0.1");
+        testQuietPeer("::1");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

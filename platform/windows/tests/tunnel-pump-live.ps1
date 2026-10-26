@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Directory)
+param([Parameter(Mandatory=$true)][string]$Directory, [string]$RemotePeer = '')
 $ErrorActionPreference = 'Stop'
 $executable = Join-Path $Directory 'tunnel_pump_live.exe'
 $dll = Join-Path $Directory 'wintun.dll'
@@ -17,7 +17,17 @@ if (@($selected).Count -ne 1 -or $selected.DestinationPrefix -ne '0.0.0.0/0') {
 $runId = [guid]::NewGuid().ToString('N')
 $stdout = Join-Path $Directory "live-$runId.out"
 $stderr = Join-Path $Directory "live-$runId.err"
-$process = Start-Process -FilePath $executable -ArgumentList @('--live', "`"$dll`"") `
+$arguments = @('--live', "`"$dll`"")
+if ($RemotePeer) {
+    $parsedPeer = $null
+    if (![System.Net.IPAddress]::TryParse($RemotePeer, [ref]$parsedPeer) -or
+        $parsedPeer.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw 'Remote peer must be a numeric IPv4 address'
+    }
+    if ($env:TUNTOM_SECRET -notmatch '^[0-9a-fA-F]{32}$') { throw 'Missing test TUNTOM_SECRET' }
+    $arguments = @('--remote', "`"$dll`"", $parsedPeer.ToString())
+}
+$process = Start-Process -FilePath $executable -ArgumentList $arguments `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
 # Keep the native handle open: Windows PowerShell may otherwise lose ExitCode
 # when a short-lived child exits before it opens the handle lazily.
@@ -44,6 +54,9 @@ try {
         Start-Sleep -Milliseconds 100
     } while ((Get-Date) -lt $addressDeadline)
     if ($address.AddressState -ne 'Preferred') { throw 'Test address did not finish DAD' }
+    # Cross the pump's health deadline before data traffic. A Linux peer's
+    # slower unsolicited keepalive must not make an idle tunnel unusable.
+    if ($RemotePeer) { Start-Sleep -Seconds 7 }
     # A freshly configured adapter may still be converging in the Windows stack.
     # Count three individually successful requests, not ping's partial-success exit.
     $successes = 0
