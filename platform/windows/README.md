@@ -367,6 +367,21 @@ resolver traffic are not implicitly included. Events can be lost under load;
 these observations must **not** authorize traffic or provide a kill switch.
 This phase neither diverts packets nor integrates the observer into the GUI.
 
+For manual diagnostics, the same opt-in build provides a console command:
+
+```powershell
+.\skewer-flow-watch.exe 1234 C:\SkewerDev\flow-test\WinDivert.dll
+```
+
+Run it elevated as the same user as the target. It prints OPEN/CLOSE events to
+stdout and readiness/termination messages to stderr. IPv6 endpoints are bracketed;
+each record contains the pinned PID, creation time and endpoint ID. Ctrl+C or
+Ctrl+Break cancels observation without stopping the application. Target exit
+ends observation; the command never switches to a new process reusing its PID.
+Redirected output can contain sensitive network endpoints: retain it accordingly.
+This is a diagnostic console, not a privileged IPC service or production installer.
+`--self-test` validates arguments without loading a DLL or requiring elevation.
+
 The opt-in `tests/flow-observer-live.ps1` runs `flow_observer_test.exe` in an
 elevated disposable Windows VM. Put the official **2.2.2-A x64** DLL, SYS and
 LICENSE next to the executable. The script verifies pinned DLL/SYS SHA-256
@@ -374,7 +389,9 @@ hashes and a valid driver signature before running. First open may install the
 driver; never disable driver-signature checks or antivirus to make it work.
 The test checks two instances of the same image, loopback TCP/UDP IPv4/IPv6,
 event decoding, timeout continuation, cancellation, target exit and pending-I/O
-destruction. It is excluded from unattended CTest. Closing the handles removes
+destruction, plus the `skewer-flow-watch.exe` command against a synchronized
+fixture. Put that executable in the test directory too. The live tests are
+excluded from unattended CTest. Closing the handles removes
 their filters; the script deliberately does not delete the shared driver service.
 
 Use the official [WinDivert 2.2.2 release](https://github.com/basil00/WinDivert/releases/tag/v2.2.2)

@@ -134,6 +134,13 @@ if(SKEWER_WINDOWS_FLOW)
         target_link_options(flow_observer_test PRIVATE -municode -static -static-libgcc -static-libstdc++)
     endif()
     # Driver installation is opt-in and VM-only, never an unattended CTest.
+    add_executable(skewer-flow-watch flow_watch.cpp)
+    target_link_libraries(skewer-flow-watch PRIVATE skewer-flow-observer)
+    if(MINGW)
+        target_compile_options(skewer-flow-watch PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        target_link_options(skewer-flow-watch PRIVATE -municode -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME flow_watch_arguments COMMAND skewer-flow-watch --self-test)
 endif()
 
 if(SKEWER_WINDOWS_APP)
