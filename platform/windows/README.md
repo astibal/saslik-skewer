@@ -215,10 +215,36 @@ handshake, encrypted traffic in both directions, tamper/replay rejection and
 wrong-PSK rejection. This is not yet a Windows-to-Linux interoperability test or
 a Wintun-to-remote-host tunnel test. No production key or network route is used.
 
-Remaining transport work includes the Wintun packet pump, session timers/rekey,
-bounded send queues, peer validation, MTU/fragmentation, lease/health supervision,
-and the independently enforced Windows fail-closed policy. Protocol readiness
-alone must never be exposed as proof of protected application connectivity.
+### Experimental packet pump
+
+`skewer-tunnel-pump` connects a `PacketDevice` (implemented by `WintunDevice`)
+to the shared session and a fixed UDP peer. A single worker handles bounded
+16-packet batches, handshake/rekey timers, authenticated keepalives and a
+five-second receive-health deadline. Cancellation and errors invalidate health.
+The worker borrows its device, socket and stop event; stop/join it before
+destroying them. Run one pump per session, never call `step` concurrently with
+`run` or inspect counters concurrently without owner-side synchronization.
+
+This initial transport has a fixed **1280-byte inner MTU**. The future adapter
+setup must configure that MTU before routing traffic to it. Larger outbound
+packets are counted/dropped, not fragmented or silently queued. Inbound fragments
+use Tuntom's bounded reassembly. UDP/device backpressure drops packets and is
+counted; there is no pending data queue to survive key changes or reconnects.
+Only the configured address/port is accepted, with IP header length checks before
+device injection. VPN AUTH/config extensions are explicitly unsupported and
+terminate the worker; this is a fixed-peer PSK transport only.
+
+`tunnel_pump_test.exe` uses real IPv4/IPv6 loopback UDP and an in-memory packet
+device. It tests inner IPv4/IPv6 transfer, unconfirmed/stale-session drops,
+foreign peers, MTU/invalid headers, full device rings, session recovery and stop.
+Wintun driver I/O is separately covered by `wintun_device_test`; the combined
+pump has **not yet been exercised with routed application traffic on Wintun**.
+
+Remaining integration includes adapter addressing/routes, outbound fragmentation
+and PMTU, leases, VPN AUTH/config, supervisor/GUI integration and independently
+enforced Windows fail-closed policy. The GUI does not enable this transport.
+Protocol/pump health alone must never be exposed as proof of protected application
+connectivity, and the pump itself is not a kernel kill switch.
 
 ### Remaining integration
 

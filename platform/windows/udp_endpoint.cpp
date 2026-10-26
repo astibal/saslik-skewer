@@ -1,6 +1,7 @@
 #include "udp_endpoint.hpp"
 
 #include <limits>
+#include <cstring>
 #include <stdexcept>
 #include <system_error>
 
@@ -45,6 +46,24 @@ uint16_t UdpAddress::port() const {
         return ntohs(reinterpret_cast<const sockaddr_in*>(&address_)->sin_port);
     }
     return ntohs(reinterpret_cast<const sockaddr_in6*>(&address_)->sin6_port);
+}
+
+bool UdpAddress::operator==(const UdpAddress& other) const {
+    if (family() != other.family() || port() != other.port()) {
+        return false;
+    }
+    if (family() == AF_INET) {
+        const auto* left = reinterpret_cast<const sockaddr_in*>(&address_);
+        const auto* right = reinterpret_cast<const sockaddr_in*>(&other.address_);
+        return left->sin_addr.s_addr == right->sin_addr.s_addr;
+    }
+    if (family() == AF_INET6) {
+        const auto* left = reinterpret_cast<const sockaddr_in6*>(&address_);
+        const auto* right = reinterpret_cast<const sockaddr_in6*>(&other.address_);
+        return left->sin6_scope_id == right->sin6_scope_id &&
+               std::memcmp(&left->sin6_addr, &right->sin6_addr, sizeof(in6_addr)) == 0;
+    }
+    return false;
 }
 
 UdpEndpoint::UdpEndpoint(const UdpAddress& local) {

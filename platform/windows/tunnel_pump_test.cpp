@@ -1,0 +1,151 @@
+#include "tunnel_pump.hpp"
+#include <deque>
+#include <iostream>
+
+using namespace skewer::windows;
+namespace {
+void require(bool value, const char* message) {
+    if (!value) {
+        throw std::runtime_error(message);
+    }
+}
+
+class TestDevice final : public PacketDevice {
+public:
+    HANDLE event{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+    std::deque<std::vector<uint8_t>> outgoing, incoming;
+    bool full{};
+    TestDevice() { require(event != nullptr, "Event creation failed"); }
+    ~TestDevice() override { CloseHandle(event); }
+    HANDLE readEvent() const override { return event; }
+    std::optional<size_t> readPacket(std::span<uint8_t> buffer) override {
+        if (outgoing.empty()) {
+            ResetEvent(event);
+            return std::nullopt;
+        }
+        const auto packet = std::move(outgoing.front());
+        outgoing.pop_front();
+        require(packet.size() <= buffer.size(), "Test packet overflow");
+        std::copy(packet.begin(), packet.end(), buffer.begin());
+        return packet.size();
+    }
+    bool writePacket(std::span<const uint8_t> packet) override {
+        if (full) {
+            return false;
+        }
+        incoming.emplace_back(packet.begin(), packet.end());
+        return true;
+    }
+};
+
+std::vector<uint8_t> packet(bool ipv6, size_t size = 128) {
+    std::vector<uint8_t> result(size, 0);
+    result[0] = ipv6 ? 0x60 : 0x45;
+    const auto length = ipv6 ? size - 40 : size;
+    result[ipv6 ? 4 : 2] = static_cast<uint8_t>(length >> 8);
+    result[ipv6 ? 5 : 3] = static_cast<uint8_t>(length);
+    return result;
+}
+
+void test(const char* ip) {
+    TestDevice client_device, server_device;
+    UdpEndpoint client_udp(UdpAddress::numeric(ip, 0)), server_udp(UdpAddress::numeric(ip, 0));
+    tuntom::ascon::key_type key{};
+    key.fill(7);
+    TunnelPump client(client_device, client_udp, server_udp.localAddress(), 42, key);
+    TunnelPump server(server_device, server_udp, client_udp.localAddress(), 42, key, true);
+    auto now = TunnelPump::Clock::now();
+    client_device.outgoing.push_back(packet(false));
+    client.step(now);
+    require(client.counters().not_ready == 1, "Unconfirmed egress was not dropped");
+    const auto cycle = [&] {
+        client.step(now);
+        server.step(now);
+    };
+    for (unsigned attempt = 0; attempt != 200 && !(client.healthy(now) && server.healthy(now)); ++attempt) {
+        cycle();
+        Sleep(1);
+    }
+    require(client.healthy(now) && server.healthy(now), "Pump handshake failed");
+    require(server_device.incoming.empty(), "Pre-handshake data leaked");
+    for (const bool ipv6 : {false, true}) {
+        const auto data = packet(ipv6);
+        client_device.outgoing.push_back(data);
+        server_device.outgoing.push_back(data);
+        for (unsigned attempt = 0;
+             attempt != 100 && (client_device.incoming.empty() || server_device.incoming.empty());
+             ++attempt) {
+            cycle();
+            Sleep(1);
+        }
+        require(!client_device.incoming.empty() && client_device.incoming.front() == data,
+                "Return data failed");
+        require(!server_device.incoming.empty() && server_device.incoming.front() == data,
+                "Forward data failed");
+        client_device.incoming.clear();
+        server_device.incoming.clear();
+    }
+    UdpEndpoint stranger(UdpAddress::numeric(ip, 0));
+    require(stranger.send(packet(false), client_udp.localAddress()), "Foreign send failed");
+    for (unsigned attempt = 0; attempt != 100 && client.counters().foreign_peer == 0; ++attempt) {
+        client.step(now);
+        Sleep(1);
+    }
+    require(client.counters().foreign_peer == 1, "Foreign peer not rejected");
+    client_device.outgoing.push_back(packet(false, 1400));
+    client.step(now);
+    require(client.counters().oversized == 1, "Oversized egress accepted");
+    client_device.outgoing.push_back({0x45});
+    client.step(now);
+    require(client.counters().invalid == 1, "Truncated IP header accepted");
+    server_device.full = true;
+    client_device.outgoing.push_back(packet(false));
+    for (unsigned attempt = 0; attempt != 100 && server.counters().backpressure == 0; ++attempt) {
+        cycle();
+        Sleep(1);
+    }
+    require(server.counters().backpressure == 1, "Full device ring ignored");
+    // Stop servicing the server. No cached confirmed state may keep data open.
+    now += TunnelPump::health_timeout + std::chrono::seconds(1);
+    require(!client.healthy(now), "Stale tunnel remained healthy");
+    const auto dropped = client.counters().not_ready;
+    client_device.outgoing.push_back(packet(false));
+    client.step(now);
+    require(client.counters().not_ready == dropped + 1, "Traffic escaped after health timeout");
+    server_device.full = false;
+    // Advance the monotonic clock through idle restart/rekey without sleeping.
+    now += std::chrono::minutes(3);
+    for (unsigned attempt = 0; attempt != 200; ++attempt) {
+        cycle();
+        if (client.healthy(now) && server.healthy(now)) {
+            break;
+        }
+        Sleep(1);
+    }
+    require(client.healthy(now) && server.healthy(now), "Session did not recover after idle restart");
+    server_device.incoming.clear();
+    client_device.outgoing.push_back(packet(true));
+    for (unsigned attempt = 0; attempt != 100 && server_device.incoming.empty(); ++attempt) {
+        cycle();
+        Sleep(1);
+    }
+    require(!server_device.incoming.empty(), "New session did not carry data");
+    HANDLE stop = CreateEventW(nullptr, TRUE, TRUE, nullptr);
+    require(stop != nullptr, "Stop event failed");
+    client.run(stop);
+    CloseHandle(stop);
+    require(!client.healthy(now), "Stopped worker retained healthy status");
+    std::cout << "PASS: packet pump " << ip << '\n';
+}
+} // namespace
+
+int main() {
+    try {
+        test("127.0.0.1");
+        test("::1");
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << "FAIL: " << error.what() << '\n';
+        return 1;
+    }
+}

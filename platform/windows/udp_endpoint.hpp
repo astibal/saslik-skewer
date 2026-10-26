@@ -16,6 +16,7 @@ public:
     static UdpAddress numeric(const std::string& ip, uint16_t port);
     int family() const { return address_.ss_family; }
     uint16_t port() const;
+    bool operator==(const UdpAddress& other) const;
 
 private:
     friend class UdpEndpoint;

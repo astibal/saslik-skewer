@@ -1,6 +1,7 @@
 #pragma once
 
 #include <wintun.h>
+#include "packet_device.hpp"
 #include <memory>
 #include <optional>
 #include <span>
@@ -28,18 +29,19 @@ struct WintunApi {
 // No PATH/current-directory lookup or automatic driver download is performed.
 std::shared_ptr<const WintunApi> loadWintun(const std::wstring& absolute_dll);
 
-class WintunDevice final {
+class WintunDevice final : public PacketDevice {
 public:
     enum class Wait { Ready, Cancelled, Timeout };
     WintunDevice(std::shared_ptr<const WintunApi> api, const std::wstring& name, DWORD capacity = 0x400000);
-    ~WintunDevice();
+    ~WintunDevice() override;
     WintunDevice(const WintunDevice&) = delete;
     WintunDevice& operator=(const WintunDevice&) = delete;
 
     // Read host egress for encapsulation; write decapsulated ingress to the host.
     // An empty receive and a full send ring are normal backpressure, not success.
-    std::optional<size_t> readPacket(std::span<BYTE> buffer);
-    bool writePacket(std::span<const BYTE> packet);
+    std::optional<size_t> readPacket(std::span<BYTE> buffer) override;
+    bool writePacket(std::span<const BYTE> packet) override;
+    HANDLE readEvent() const override { return read_event_; }
     Wait waitReadable(HANDLE cancellation, DWORD timeout_ms) const;
     NET_LUID luid() const;
 
