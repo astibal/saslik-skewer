@@ -216,4 +216,45 @@ SelectionResult serveSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {
     // Do not FlushFileBuffers: a peer that never reads must not block shutdown.
     return result;
 }
+
+SelectionStatus exchangeSelection(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
+                                  HANDLE cancel, DWORD timeout_ms) {
+    if (!timeout_ms || timeout_ms > 60000 || !cancel || cancel == INVALID_HANDLE_VALUE) {
+        throw std::invalid_argument("Invalid client exchange budget or cancellation event");
+    }
+    const auto deadline = GetTickCount64() + timeout_ms;
+    auto server = verifySelectionService(pipe, service_name);
+    auto request = encodeSelectionRequest(target);
+    {
+        Operation write(pipe);
+        if (write.transfer(request.data(), request.size(), true, cancel, deadline) != request.size()) {
+            throw std::runtime_error("Incomplete selection request");
+        }
+    }
+    SelectionReply reply{};
+    {
+        Operation read(pipe);
+        if (read.transfer(reply.data(), reply.size(), false, cancel, deadline) != reply.size()) {
+            throw std::runtime_error("Incomplete selection reply");
+        }
+    }
+    if (WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
+        throw std::runtime_error("Selection service exited during exchange");
+    }
+    return decodeSelectionReply(reply);
+}
+
+void finishSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {
+    if (!timeout_ms || timeout_ms > 60000) {
+        throw std::invalid_argument("Invalid selection finish budget");
+    }
+    std::uint8_t unexpected{};
+    try {
+        Operation read(pipe);
+        read.transfer(&unexpected, 1, false, cancel, GetTickCount64() + timeout_ms);
+    } catch (const std::runtime_error&) {
+        // Peer close, cancellation, timeout or I/O failure all retire this
+        // connection. There is deliberately no second request on the stream.
+    }
+}
 } // namespace skewer::windows

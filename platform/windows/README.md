@@ -579,6 +579,18 @@ VM tests currently cover a valid pinned local server and rejection of wrong
 PID, stale creation time, the wrong pipe endpoint and a missing service.
 Successful SCM-worker/GUI integration remains untested and is not enabled.
 
+`tests/selection-service-live.ps1` now exercises a real temporary SCM worker
+and authenticated client twice, then verifies clean service stop. It copies the
+fixture under Program Files and removes only its own uniquely named service.
+The fixture runs as LocalSystem solely to read the trusted launcher's token;
+the launcher's PID and creation time are administrator-provided service arguments,
+not IPC input. Production session discovery is not implemented by this fixture.
+`exchangeSelection` verifies SCM before transmitting and retains the server
+process through the bounded exchange. `finishSelection` waits briefly for peer
+close before disconnecting, avoiding lost buffered replies without blocking
+indefinitely in `FlushFileBuffers`. These paths are VM-tested; GUI integration
+and persistent routing selections remain pending. No routing policy is installed.
+
 ### Remaining integration
 
 The independent [`platform/traffic`](../traffic/README.md) module now decodes

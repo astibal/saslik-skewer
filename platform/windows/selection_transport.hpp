@@ -22,4 +22,12 @@ std::unique_ptr<Handle> verifySelectionService(HANDLE pipe, const std::wstring& 
 // On any error the caller must disconnect/close this connection, never reuse it.
 // cancel is a caller-owned manual-reset event, valid for the entire call.
 SelectionResult serveSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms);
+// Client pipe must already be connected and opened FILE_FLAG_OVERLAPPED.
+// Authenticates the SCM server before sending, checks the retained process
+// after receiving, and never reconnects. Close the pipe after the exchange.
+SelectionStatus exchangeSelection(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
+                                  HANDLE cancel, DWORD timeout_ms);
+// Wait briefly for the client to close after consuming its reply. This avoids
+// discarding buffered replies on immediate DisconnectNamedPipe, without Flush.
+void finishSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms);
 } // namespace skewer::windows
