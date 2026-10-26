@@ -49,6 +49,28 @@ private:
     HANDLE value_;
 };
 
+// A checked reference to exactly one current-user process instance. Acquiring
+// it neither changes network policy nor grants terminate/inject privileges.
+// The handle remains bound to that process object after exit; it never follows
+// a recycled PID. Separate consumers can use this identity without a tunnel.
+class ProcessTarget final {
+public:
+    explicit ProcessTarget(ProcessKey expected);
+    ProcessTarget(const ProcessTarget&) = delete;
+    ProcessTarget& operator=(const ProcessTarget&) = delete;
+
+    const ProcessKey& key() const { return key_; }
+    const std::wstring& executable() const { return executable_; }
+    bool running() const;
+    // Borrowed wait handle: do not close it or retain it beyond this object.
+    HANDLE waitHandle() const { return process_.get(); }
+
+private:
+    Handle process_;
+    ProcessKey key_;
+    std::wstring executable_;
+};
+
 Snapshot scanCurrentUser();
 ProcessKey processKey(HANDLE process, DWORD pid);
 std::wstring quoteArgument(std::wstring_view argument);

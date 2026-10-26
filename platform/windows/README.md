@@ -282,6 +282,23 @@ connectivity, and the pump itself is not a kernel kill switch.
 
 ### Reusable application traffic policy (experimental)
 
+`ProcessTarget` is the transport-independent reference used to validate a
+selected process instance. It opens a non-inheritable query/synchronize handle,
+checks the snapshot's PID and creation time, verifies current-user ownership,
+and records the executable path. A stale or exited selection fails rather than
+silently adopting the current occupant of a PID. The borrowed wait handle lets
+an event-driven supervisor observe exit without a high-frequency process scan.
+Destroying this reference closes only its handle, never the application.
+
+This is a current-user API, not yet a privileged service authorization boundary.
+A future service must obtain the requesting identity from authenticated IPC,
+not trust a SID/PID supplied by the GUI. `running()` is a point-in-time check;
+holding a process handle does not freeze execution or prevent a subsequent exit.
+It also does not label packets or convert an image-based WFP filter into a
+per-instance filter. The process self-test covers two instances of the same EXE,
+stale creation timestamps, mismatched handle/PID pairs, non-inheritance, handle
+cleanup and exit code `STILL_ACTIVE`. It does not force real OS PID reuse.
+
 Application selection, enforcement, interception and traffic consumption are
 separate responsibilities. The policy library must not depend on Qt, Saslik,
 Tuntom, Wintun or a remote endpoint. A future interceptor may feed a tunnel,

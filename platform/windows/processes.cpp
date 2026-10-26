@@ -36,6 +36,32 @@ std::vector<unsigned char> userSid(HANDLE process) {
     return result;
 }
 
+HANDLE openTarget(ProcessKey expected) {
+    if (expected.pid == 0 || expected.created == 0) {
+        throw std::invalid_argument("Process selection requires PID and creation time");
+    }
+    // Inheritance is disabled: unrelated launched applications must not retain
+    // our reference or gain access to another selected process.
+    const auto process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, expected.pid);
+    if (!process) {
+        fail("Open selected process");
+    }
+    return process;
+}
+
+std::wstring processExecutable(HANDLE process) {
+    std::wstring path(32768, L'\0');
+    DWORD size = static_cast<DWORD>(path.size());
+    if (!QueryFullProcessImageNameW(process, 0, path.data(), &size)) {
+        fail("Read selected process executable");
+    }
+    if (size == 0) {
+        throw std::runtime_error("Selected process has no executable identity");
+    }
+    path.resize(size);
+    return path;
+}
+
 struct WindowsContext {
     std::unordered_map<DWORD, Process*> processes;
     bool failed{};
@@ -80,11 +106,46 @@ BOOL CALLBACK collectWindow(HWND window, LPARAM parameter) {
 } // namespace
 
 ProcessKey processKey(HANDLE process, DWORD pid) {
+    const auto actual_pid = GetProcessId(process);
+    if (!actual_pid) {
+        fail("GetProcessId");
+    }
+    if (actual_pid != pid) {
+        throw std::invalid_argument("Process handle does not match the requested PID");
+    }
     FILETIME creation{}, exit{}, kernel{}, user{};
     if (!GetProcessTimes(process, &creation, &exit, &kernel, &user)) {
         fail("GetProcessTimes");
     }
     return {pid, (std::uint64_t(creation.dwHighDateTime) << 32) | creation.dwLowDateTime};
+}
+
+ProcessTarget::ProcessTarget(ProcessKey expected) : process_(openTarget(expected)), key_(expected) {
+    if (processKey(process_.get(), expected.pid) != expected) {
+        throw std::runtime_error("Selected process identity is stale; refresh the process list");
+    }
+    const auto caller = userSid(GetCurrentProcess());
+    const auto owner = userSid(process_.get());
+    if (caller.empty() || owner.empty() || caller != owner) {
+        throw std::runtime_error("Selected process does not have a verified current-user owner");
+    }
+    executable_ = processExecutable(process_.get());
+    if (!running()) {
+        throw std::runtime_error("Selected process has already exited");
+    }
+}
+
+bool ProcessTarget::running() const {
+    // STILL_ACTIVE is also a legal exit code. The process object's signalled
+    // state is authoritative and does not confuse that code with liveness.
+    const auto state = WaitForSingleObject(process_.get(), 0);
+    if (state == WAIT_FAILED) {
+        fail("Wait for selected process");
+    }
+    if (state != WAIT_TIMEOUT && state != WAIT_OBJECT_0) {
+        throw std::runtime_error("Unexpected selected-process wait result");
+    }
+    return state == WAIT_TIMEOUT;
 }
 
 Snapshot scanCurrentUser() {

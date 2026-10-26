@@ -88,11 +88,16 @@ void testCommandLine() {
     require(rejected, "Embedded NUL accepted");
 }
 
-void testProcessSnapshot() {
+std::wstring testExecutable() {
     std::wstring executable(32768, L'\0');
     DWORD size = GetModuleFileNameW(nullptr, executable.data(), static_cast<DWORD>(executable.size()));
     require(size && size < executable.size(), "Cannot resolve test executable");
     executable.resize(size);
+    return executable;
+}
+
+void testProcessSnapshot() {
+    const auto executable = testExecutable();
     Child child{launch(executable, {L"--child"})};
     const auto expected_child = processKey(child.information.hProcess, child.information.dwProcessId);
     const auto expected_self = processKey(GetCurrentProcess(), GetCurrentProcessId());
@@ -135,6 +140,63 @@ void testProcessSnapshot() {
     }
 }
 
+void testProcessTarget() {
+    const auto executable = testExecutable();
+    Child first{launch(executable, {L"--child"})};
+    Child second{launch(executable, {L"--child"})};
+    const auto first_key = processKey(first.information.hProcess, first.information.dwProcessId);
+    const auto second_key = processKey(second.information.hProcess, second.information.dwProcessId);
+    ProcessTarget selected(first_key);
+    ProcessTarget other(second_key);
+    require(selected.key() == first_key && other.key() == second_key && selected.key() != other.key(),
+            "Same-image instances were merged");
+    require(selected.executable() == other.executable(), "Test children do not share an executable");
+    require(selected.running() && other.running(), "Live target reported as exited");
+    DWORD flags{};
+    require(GetHandleInformation(selected.waitHandle(), &flags), "Cannot inspect selection handle");
+    require((flags & HANDLE_FLAG_INHERIT) == 0, "Selection handle is inheritable");
+
+    const auto rejected = [](ProcessKey key) {
+        try {
+            ProcessTarget invalid(key);
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    require(rejected({0, first_key.created}), "Zero PID accepted");
+    require(rejected({first_key.pid, 0}), "Missing creation time accepted");
+    require(rejected({first_key.pid, first_key.created + 1}), "Stale process identity accepted");
+    bool mismatch_rejected = false;
+    try {
+        processKey(first.information.hProcess, second_key.pid);
+    } catch (const std::invalid_argument&) {
+        mismatch_rejected = true;
+    }
+    require(mismatch_rejected, "Foreign handle/PID pair accepted");
+
+    DWORD before{}, after{};
+    require(GetProcessHandleCount(GetCurrentProcess(), &before), "Cannot count selection handles");
+    for (unsigned attempt = 0; attempt != 32; ++attempt) {
+        ProcessTarget temporary(first_key);
+        require(rejected({first_key.pid, first_key.created + 1}), "Repeated stale identity accepted");
+    }
+    require(GetProcessHandleCount(GetCurrentProcess(), &after), "Cannot recount selection handles");
+    require(after == before, "Selection success/failure leaked handles");
+    require(selected.running(), "Dropping a reference terminated the application");
+
+    // Only terminate our own fixture by its original handle, never by PID.
+    // Exit code 259 must not be confused with a process that is still running.
+    require(TerminateProcess(first.information.hProcess, STILL_ACTIVE), "Cannot stop test child");
+    require(WaitForSingleObject(selected.waitHandle(), 5000) == WAIT_OBJECT_0, "Exit was not signalled");
+    require(!selected.running(), "Exit code STILL_ACTIVE fooled process liveness");
+    require(selected.key() == first_key, "Selected identity changed after exit");
+    require(rejected(first_key), "Exited process accepted as a fresh selection");
+    require(other.running(), "Another instance was affected by selected process exit");
+    std::cout << "PASS: pinned process targets, stale identity rejection, instance separation, exit and "
+                 "handle lifetime\n";
+}
+
 void testHandleLifetime() {
     // Repeated polling must not leak process, token or snapshot handles.
     DWORD before = 0, after = 0;
@@ -149,6 +211,7 @@ void testHandleLifetime() {
 void selfTest() {
     testCommandLine();
     testProcessSnapshot();
+    testProcessTarget();
     testHandleLifetime();
     std::cout << "PASS: quoting, Unicode/JSON, invalid arguments, launch, identity, parent linkage, repeated "
                  "scan and handle lifetime\n";
