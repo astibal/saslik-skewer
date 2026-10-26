@@ -609,3 +609,14 @@ assigned to an application merely from FLOW events.
 
 The Linux executable uses the shared shell/page with its existing controllers.
 Existing Linux release packaging is unchanged; Windows packaging is not ready.
+
+### Verified selection handoff
+
+The flow observer and tracked observer accept ownership of a `ProcessTarget`
+already authenticated at the IPC boundary. The service can move
+`SelectionResult::target` directly into the observer without reopening its PID
+or comparing the user against SYSTEM. The same pinned handle supplies identity
+and exit notification for the observer lifetime. The tracked layer no longer
+opens a second copy of the process. The current-user convenience constructor
+remains available to diagnostics. Missing/dead selections are rejected before
+loading WinDivert; correlation remains diagnostic, not packet authorization.

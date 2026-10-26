@@ -37,6 +37,10 @@ public:
     // Load only from an absolute, trusted local installation directory. The
     // official driver beside the DLL may be installed on first open (admin).
     FlowObserver(const std::wstring& dll_path, ProcessKey target);
+    // Service path: consume the authenticated IPC selection without reopening
+    // its PID or comparing its owner against the service's own account.
+    FlowObserver(const std::wstring& dll_path, std::unique_ptr<ProcessTarget> target);
+    bool targetRunning() const;
     ~FlowObserver();
     FlowObserver(const FlowObserver&) = delete;
     FlowObserver& operator=(const FlowObserver&) = delete;

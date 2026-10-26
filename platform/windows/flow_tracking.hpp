@@ -14,11 +14,11 @@ skewer::traffic::FlowIndex::Update recordFlow(skewer::traffic::FlowIndex& index,
 class TrackedFlowObserver final {
 public:
     TrackedFlowObserver(const std::wstring& dll, ProcessKey process);
+    TrackedFlowObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process);
     FlowObserver::Result next(HANDLE cancellation, DWORD timeout_ms);
     skewer::traffic::FlowIndex::Match lookup(skewer::traffic::PacketTuple tuple);
 
 private:
-    ProcessTarget target_;
     FlowObserver observer_;
     skewer::traffic::FlowIndex index_;
 };

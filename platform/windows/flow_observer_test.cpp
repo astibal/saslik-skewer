@@ -190,11 +190,24 @@ void observeTraffic(TrackedFlowObserver& observer, HANDLE cancellation, ProcessK
 }
 
 void liveTest(const std::wstring& dll) {
+    bool rejected_null{};
+    try {
+        // Must reject before loading any DLL or opening a WinDivert handle.
+        FlowObserver invalid(L"not-a-dll", std::unique_ptr<ProcessTarget>{});
+    } catch (const std::invalid_argument& error) {
+        rejected_null = std::string(error.what()) == "Flow observer requires a live verified process";
+    }
+    require(rejected_null, "Missing authenticated selection was not rejected first");
     Child selected, other;
     Handle cancellation(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancellation), "Create observer cancellation event");
     {
-        TrackedFlowObserver observer(dll, selected.key());
+        HANDLE raw{};
+        require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw), "Open authenticated fixture token");
+        Handle token(raw);
+        auto target = std::make_unique<ProcessTarget>(selected.key(), token.get());
+        TrackedFlowObserver observer(dll, std::move(target));
+        require(!target, "Observer did not take selection ownership");
         other.start();
         other.waitDone();
         require(observer.next(cancellation.get(), 250).status == FlowObserver::Status::Timeout,

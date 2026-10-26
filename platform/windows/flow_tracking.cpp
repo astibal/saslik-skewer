@@ -43,7 +43,10 @@ FlowIndex::Update recordFlow(FlowIndex& index, const FlowEvent& event, FlowIndex
 }
 
 TrackedFlowObserver::TrackedFlowObserver(const std::wstring& dll, ProcessKey process)
-    : target_(process), observer_(dll, process) {}
+    : TrackedFlowObserver(dll, std::make_unique<ProcessTarget>(process)) {}
+
+TrackedFlowObserver::TrackedFlowObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process)
+    : observer_(dll, std::move(process)) {}
 
 FlowObserver::Result TrackedFlowObserver::next(HANDLE cancellation, DWORD timeout_ms) {
     try {
@@ -64,7 +67,7 @@ FlowObserver::Result TrackedFlowObserver::next(HANDLE cancellation, DWORD timeou
 }
 FlowIndex::Match TrackedFlowObserver::lookup(PacketTuple tuple) {
     try {
-        if (!target_.running()) {
+        if (!observer_.targetRunning()) {
             index_.invalidate();
         }
     } catch (...) {

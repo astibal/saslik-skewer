@@ -63,14 +63,21 @@ FlowEndpoint endpoint(const Api& api, const UINT32* address, UINT16 port) {
 
 class FlowObserver::Impl final {
 public:
-    Impl(const std::wstring& path, ProcessKey key)
-        : target_(key), api_(path), event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
+    static std::unique_ptr<ProcessTarget> checked(std::unique_ptr<ProcessTarget> target) {
+        if (!target || !target->running()) {
+            throw std::invalid_argument("Flow observer requires a live verified process");
+        }
+        return target;
+    }
+    Impl(const std::wstring& path, std::unique_ptr<ProcessTarget> target)
+        : target_(checked(std::move(target))), api_(path),
+          event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
         if (!event_) {
             fail("Create flow read event");
         }
         // No caller-supplied filter language and no path-to-PID inference.
         const auto filter =
-            "processId == " + std::to_string(key.pid) + " and (protocol == 6 or protocol == 17)";
+            "processId == " + std::to_string(target_->key().pid) + " and (protocol == 6 or protocol == 17)";
         handle_ = api_.open(filter.c_str(), WINDIVERT_LAYER_FLOW, 0,
                             WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
         if (handle_ == INVALID_HANDLE_VALUE) {
@@ -83,12 +90,14 @@ public:
         api_.close(handle_);
     }
 
+    bool targetRunning() const { return target_->running(); }
+
     Result next(HANDLE cancellation, DWORD timeout_ms) {
         if (terminal_) {
             return {*terminal_, std::nullopt};
         }
         // Avoid starting new I/O for an already cancelled/exited selection.
-        const HANDLE controls[]{cancellation, target_.waitHandle()};
+        const HANDLE controls[]{cancellation, target_->waitHandle()};
         const auto control = WaitForMultipleObjects(2, controls, FALSE, 0);
         if (control == WAIT_OBJECT_0 || control == WAIT_OBJECT_0 + 1) {
             return finish(control == WAIT_OBJECT_0 ? Status::Cancelled : Status::TargetExited);
@@ -99,7 +108,7 @@ public:
         if (!pending_) {
             beginRead();
         }
-        const HANDLE events[]{cancellation, target_.waitHandle(), event_.get()};
+        const HANDLE events[]{cancellation, target_->waitHandle(), event_.get()};
         const auto ready = WaitForMultipleObjects(3, events, FALSE, timeout_ms);
         switch (ready) {
         case WAIT_OBJECT_0:
@@ -163,7 +172,7 @@ private:
             fail("Complete flow read", error);
         }
         if (address_length_ != sizeof(address_) || address_.Layer != WINDIVERT_LAYER_FLOW ||
-            address_.Flow.ProcessId != target_.key().pid ||
+            address_.Flow.ProcessId != target_->key().pid ||
             (address_.Event != WINDIVERT_EVENT_FLOW_ESTABLISHED &&
              address_.Event != WINDIVERT_EVENT_FLOW_DELETED) ||
             (address_.Flow.Protocol != 6 && address_.Flow.Protocol != 17)) {
@@ -172,7 +181,7 @@ private:
         FlowEvent event;
         event.kind = address_.Event == WINDIVERT_EVENT_FLOW_ESTABLISHED ? FlowEvent::Kind::Established
                                                                         : FlowEvent::Kind::Deleted;
-        event.process = target_.key();
+        event.process = target_->key();
         event.endpoint_id = address_.Flow.EndpointId;
         event.parent_endpoint_id = address_.Flow.ParentEndpointId;
         event.timestamp_ticks = address_.Timestamp;
@@ -185,7 +194,7 @@ private:
         return {Status::Event, std::move(event)};
     }
 
-    ProcessTarget target_;
+    std::unique_ptr<ProcessTarget> target_;
     Api api_;
     Handle event_;
     HANDLE handle_{INVALID_HANDLE_VALUE};
@@ -197,7 +206,12 @@ private:
 };
 
 FlowObserver::FlowObserver(const std::wstring& path, ProcessKey target)
-    : impl_(std::make_unique<Impl>(path, target)) {}
+    : FlowObserver(path, std::make_unique<ProcessTarget>(target)) {}
+FlowObserver::FlowObserver(const std::wstring& path, std::unique_ptr<ProcessTarget> target)
+    : impl_(std::make_unique<Impl>(path, std::move(target))) {}
+bool FlowObserver::targetRunning() const {
+    return impl_->targetRunning();
+}
 FlowObserver::~FlowObserver() = default;
 
 FlowObserver::Result FlowObserver::next(HANDLE cancellation, DWORD timeout_ms) {
