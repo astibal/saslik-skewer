@@ -230,6 +230,8 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
     // Start observing before creating traffic. A selected-PID observer proves
     // correlation only, not the absence of another process sharing a tuple.
     traffic::TrackedFlowObserver observer(path, identity);
+    traffic::FlowObserver attempts(path, std::make_unique<ProcessTarget>(identity),
+                                   traffic::FlowObserver::Mode::ConnectAttempts);
     Handle cancellation(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancellation), "Create observer cancellation event");
     const auto open = resolve<decltype(&WinDivertOpen)>(dll, "WinDivertOpen");
@@ -312,6 +314,12 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         require(parsed.status == skewer::traffic::TupleStatus::Parsed && parsed.tuple.has_value(),
                 "Decode captured packet tuple");
         if (tcp) {
+            const auto attempt = attempts.next(cancellation.get(), 2000);
+            require(attempt.status == traffic::FlowObserver::Status::Event && attempt.event &&
+                        attempt.event->kind == traffic::FlowEvent::Kind::ConnectAttempt &&
+                        attempt.event->process == identity &&
+                        traffic::flowTuple(*attempt.event) == parsed.tuple,
+                    "Reusable CONNECT observer did not match the held SYN");
             Handle socket_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
             require(static_cast<bool>(socket_event), "Create CONNECT event");
             WINDIVERT_ADDRESS connect_address{};
@@ -399,6 +407,8 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                 stats.captured_bytes > stats.injected_bytes,
             "Capture counters mismatch");
     require(SetEvent(cancellation.get()), "Signal capture cancellation");
+    require(attempts.next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
+            "CONNECT observer ignored cancellation");
     require(capture.next(cancellation.get(), 100).status == traffic::PacketCapture::Status::Cancelled,
             "Capture did not cancel");
     require(ResetEvent(cancellation.get()), "Reset cancellation fixture");

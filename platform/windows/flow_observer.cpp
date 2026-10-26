@@ -69,16 +69,23 @@ public:
         }
         return target;
     }
-    Impl(const std::wstring& path, std::unique_ptr<ProcessTarget> target)
-        : target_(checked(std::move(target))), api_(path),
+    Impl(const std::wstring& path, std::unique_ptr<ProcessTarget> target, Mode mode)
+        : target_(checked(std::move(target))), mode_(mode), api_(path),
           event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
         if (!event_) {
             fail("Create flow read event");
         }
         // No caller-supplied filter language and no path-to-PID inference.
-        const auto filter =
+        if (mode != Mode::EstablishedFlows && mode != Mode::ConnectAttempts) {
+            throw std::invalid_argument("Invalid observer mode");
+        }
+        auto filter =
             "processId == " + std::to_string(target_->key().pid) + " and (protocol == 6 or protocol == 17)";
-        handle_ = api_.open(filter.c_str(), WINDIVERT_LAYER_FLOW, 0,
+        if (mode == Mode::ConnectAttempts) {
+            filter += " and event == CONNECT";
+        }
+        handle_ = api_.open(filter.c_str(),
+                            mode == Mode::ConnectAttempts ? WINDIVERT_LAYER_SOCKET : WINDIVERT_LAYER_FLOW, 0,
                             WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
         if (handle_ == INVALID_HANDLE_VALUE) {
             fail("Open passive WinDivert flow observer");
@@ -171,6 +178,27 @@ private:
         if (!ok) {
             fail("Complete flow read", error);
         }
+        if (mode_ == Mode::ConnectAttempts) {
+            if (address_length_ != sizeof(address_) || address_.Layer != WINDIVERT_LAYER_SOCKET ||
+                address_.Event != WINDIVERT_EVENT_SOCKET_CONNECT ||
+                address_.Socket.ProcessId != target_->key().pid ||
+                (address_.Socket.Protocol != 6 && address_.Socket.Protocol != 17)) {
+                throw std::runtime_error("Unexpected WinDivert CONNECT metadata");
+            }
+            FlowEvent event;
+            event.kind = FlowEvent::Kind::ConnectAttempt;
+            event.process = target_->key();
+            event.endpoint_id = address_.Socket.EndpointId;
+            event.parent_endpoint_id = address_.Socket.ParentEndpointId;
+            event.timestamp_ticks = address_.Timestamp;
+            event.protocol = address_.Socket.Protocol;
+            event.ipv6 = address_.IPv6;
+            event.outbound = address_.Outbound;
+            event.loopback = address_.Loopback;
+            event.local = endpoint(api_, address_.Socket.LocalAddr, address_.Socket.LocalPort);
+            event.remote = endpoint(api_, address_.Socket.RemoteAddr, address_.Socket.RemotePort);
+            return {Status::Event, std::move(event)};
+        }
         if (address_length_ != sizeof(address_) || address_.Layer != WINDIVERT_LAYER_FLOW ||
             address_.Flow.ProcessId != target_->key().pid ||
             (address_.Event != WINDIVERT_EVENT_FLOW_ESTABLISHED &&
@@ -195,6 +223,7 @@ private:
     }
 
     std::unique_ptr<ProcessTarget> target_;
+    const Mode mode_;
     Api api_;
     Handle event_;
     HANDLE handle_{INVALID_HANDLE_VALUE};
@@ -205,10 +234,10 @@ private:
     std::optional<Status> terminal_;
 };
 
-FlowObserver::FlowObserver(const std::wstring& path, ProcessKey target)
-    : FlowObserver(path, std::make_unique<ProcessTarget>(target)) {}
-FlowObserver::FlowObserver(const std::wstring& path, std::unique_ptr<ProcessTarget> target)
-    : impl_(std::make_unique<Impl>(path, std::move(target))) {}
+FlowObserver::FlowObserver(const std::wstring& path, ProcessKey target, Mode mode)
+    : FlowObserver(path, std::make_unique<ProcessTarget>(target), mode) {}
+FlowObserver::FlowObserver(const std::wstring& path, std::unique_ptr<ProcessTarget> target, Mode mode)
+    : impl_(std::make_unique<Impl>(path, std::move(target), mode)) {}
 bool FlowObserver::targetRunning() const {
     return impl_->targetRunning();
 }

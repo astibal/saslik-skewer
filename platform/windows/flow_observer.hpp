@@ -13,7 +13,7 @@ struct FlowEndpoint {
 };
 
 struct FlowEvent {
-    enum class Kind { Established, Deleted };
+    enum class Kind { Established, Deleted, ConnectAttempt };
     Kind kind{};
     ProcessKey process;
     std::uint64_t endpoint_id{}, parent_endpoint_id{};
@@ -28,6 +28,9 @@ struct FlowEvent {
 // The driver may drop events under load, so this is not a security authority.
 class FlowObserver final {
 public:
+    // CONNECT attempts precede establishment and may fail. Never feed them
+    // into an established-flow index or treat them as unique packet ownership.
+    enum class Mode { EstablishedFlows, ConnectAttempts };
     enum class Status { Event, Timeout, Cancelled, TargetExited };
     struct Result {
         Status status;
@@ -36,10 +39,11 @@ public:
 
     // Load only from an absolute, trusted local installation directory. The
     // official driver beside the DLL may be installed on first open (admin).
-    FlowObserver(const std::wstring& dll_path, ProcessKey target);
+    FlowObserver(const std::wstring& dll_path, ProcessKey target, Mode mode = Mode::EstablishedFlows);
     // Service path: consume the authenticated IPC selection without reopening
     // its PID or comparing its owner against the service's own account.
-    FlowObserver(const std::wstring& dll_path, std::unique_ptr<ProcessTarget> target);
+    FlowObserver(const std::wstring& dll_path, std::unique_ptr<ProcessTarget> target,
+                 Mode mode = Mode::EstablishedFlows);
     bool targetRunning() const;
     ~FlowObserver();
     FlowObserver(const FlowObserver&) = delete;

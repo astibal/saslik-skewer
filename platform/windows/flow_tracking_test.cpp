@@ -63,6 +63,12 @@ void testUpdates() {
     require(recordFlow(index, event, {}) == FlowIndex::Update::Unreliable, "Negative time accepted");
     index.reset();
     event = sample();
+    event.kind = FlowEvent::Kind::ConnectAttempt;
+    require(recordFlow(index, event, {}) == FlowIndex::Update::Unreliable &&
+                index.lookup(tuple, {}).status == FlowIndex::Status::Unreliable,
+            "CONNECT attempt was accepted as an established flow");
+    index.reset();
+    event = sample();
     event.remote.address = "invalid";
     recordFlow(index, event, {});
     require(index.lookup(tuple, {}).status == FlowIndex::Status::Unreliable, "Bad conversion retained index");

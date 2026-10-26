@@ -63,6 +63,15 @@ accept while the SYN is held. It does not complete/reinject a TCP handshake.
 CONNECT attempts remain separate from established FLOW records; the fixture
 reuses only endpoint normalization, not FLOW-cache insertion semantics.
 
+The reusable `FlowObserver::Mode::ConnectAttempts` now supplies these events
+from a passive SOCKET handle. It consumes the same pinned, authenticated
+process selection as the FLOW observer, supports cancellation and process exit,
+and labels events explicitly `ConnectAttempt`. The first-SYN fixture compares
+its output with the held IPv4/IPv6 SYN as well as the independent raw SDK read.
+A regression test rejects CONNECT records in the established-flow index.
+This is observation, not a blocking/resumable connect hook. Socket lifecycle,
+ambiguous ownership and missing-event policy remain routing integration work.
+
 Next integration must handle bounded waiting, unknown and ambiguous ownership,
 process exit/reuse, socket lifecycle, wildcard/shared endpoints and non-loopback
 traffic before these observations can drive application routing.
