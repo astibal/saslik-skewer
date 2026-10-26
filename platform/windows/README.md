@@ -55,8 +55,13 @@ these are capability notices, not implemented backends.
 
 The Windows application polls on a worker thread every three seconds by default, with no
 overlapping scans and no polling while minimized. It exposes launch progress,
-errors and the returned PID, and learns executable-path completions from the
-inventory. The initial launcher accepts an executable path only, not arguments.
+errors and the returned PID, and learns name/path completions from the inventory.
+Visible application names take precedence over renderer/helper labels. Distinct
+executable paths remain separate even when their names match. Up to 256 entries
+are retained in memory for the current session, including exited applications;
+this history is not written to disk. Selecting a completion inserts its actual
+executable path, never its display label. The initial launcher accepts an
+executable path only, not arguments.
 It never edits browser profiles or requests elevation. Successful process
 creation does not prove that a singleton application opened a new instance.
 Closing the window does not terminate applications it launched. The shared
@@ -109,6 +114,8 @@ Run it on Windows with `QT_QPA_PLATFORM=offscreen`, `Qt6Test.dll` and
 parent cycles, reused PIDs, refresh state, search and launcher suggestions.
 `application_shell_test.exe` covers shared tabs, disabled action defaults,
 version, preferences hook, resizing and geometry persistence.
+`launch_catalog_test.exe` covers name/path matching, keyboard selection, distinct
+installations, stable refresh and bounded session-only history.
 
 `tests/application_smoke.ps1` must run in an interactive desktop session with
 Skewer already open. It launches Notepad, checks error/success feedback,

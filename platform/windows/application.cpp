@@ -1,5 +1,6 @@
 #include "processes.hpp"
 #include "process_browser.hpp"
+#include "launch_catalog.hpp"
 #include "ui/application_shell.hpp"
 #include "ui/application_page.hpp"
 #include <QApplication>
@@ -9,7 +10,6 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QStringListModel>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -133,11 +133,9 @@ private:
         path_ = new QLineEdit(this);
         path_->setAccessibleName(tr("Application executable"));
         path_->setPlaceholderText(
-            tr("Executable path (no arguments yet); or choose a previously seen application…"));
-        suggestions_ = new QStringListModel(this);
-        auto* completer = new QCompleter(suggestions_, this);
-        completer->setCaseSensitivity(Qt::CaseInsensitive);
-        completer->setFilterMode(Qt::MatchContains);
+            tr("Find a seen application by name, or enter an executable path (no arguments yet)…"));
+        suggestions_ = new skewer::ui::LaunchCatalog(this);
+        auto* completer = new skewer::ui::ApplicationCompleter(suggestions_, this);
         path_->setCompleter(completer);
         auto* browse = new QPushButton(tr("Browse…"), this);
         start_ = new QPushButton(tr("Launch"), this);
@@ -195,7 +193,7 @@ private:
             return;
         }
         browser_->setProcesses(result.records);
-        suggestions_->setStringList(browser_->launchSuggestions());
+        suggestions_->remember(result.records);
         status_->setText(tr("%1 user processes; %2 inaccessible entries. %3")
                              .arg(result.records.size())
                              .arg(result.inaccessible)
@@ -243,7 +241,7 @@ private:
     skewer::ui::ProcessBrowser* browser_{};
     QLineEdit* path_{};
     QPushButton* start_{};
-    QStringListModel* suggestions_{};
+    skewer::ui::LaunchCatalog* suggestions_{};
     QLabel* launch_status_{};
     QLabel* status_{};
     QFutureWatcher<ScanResult> scan_watcher_;
