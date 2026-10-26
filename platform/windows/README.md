@@ -367,6 +367,16 @@ resolver traffic are not implicitly included. Events can be lost under load;
 these observations must **not** authorize traffic or provide a kill switch.
 This phase neither diverts packets nor integrates the observer into the GUI.
 
+`TrackedFlowObserver` now combines those events with the portable flow index.
+IPv4/IPv6 endpoint text is normalized into network-order bytes using InetPton,
+with family mismatches and malformed input rejected. Cancellation, process exit
+or a read failure invalidates retained correlation; lookup also checks the pinned
+process handle before returning a result. The wrapper never resets a lost epoch
+automatically. Index capacity/expiration limits remain visible as `Unreliable`.
+This observer sees only its selected PID: absence of another owner is **not**
+proof that no unobserved process shares the tuple. No ownership authorization or
+live packet interception is inferred from these diagnostic matches.
+
 For manual diagnostics, the same opt-in build provides a console command:
 
 ```powershell
@@ -375,7 +385,10 @@ For manual diagnostics, the same opt-in build provides a console command:
 
 Run it elevated as the same user as the target. It prints OPEN/CLOSE events to
 stdout and readiness/termination messages to stderr. IPv6 endpoints are bracketed;
-each record contains the pinned PID, creation time and endpoint ID. Ctrl+C or
+each record contains the pinned PID, creation time and endpoint ID, plus
+`correlation=observed|unknown|ambiguous|unreliable` after applying that event.
+This is the event's tuple lookup, not a claim that a captured packet was matched.
+Ctrl+C or
 Ctrl+Break cancels observation without stopping the application. Target exit
 ends observation; the command never switches to a new process reusing its PID.
 Redirected output can contain sensitive network endpoints: retain it accordingly.
@@ -390,7 +403,8 @@ driver; never disable driver-signature checks or antivirus to make it work.
 The test checks two instances of the same image, loopback TCP/UDP IPv4/IPv6,
 event decoding, timeout continuation, cancellation, target exit and pending-I/O
 destruction, plus the `skewer-flow-watch.exe` command against a synchronized
-fixture. Put that executable in the test directory too. The live tests are
+fixture. Put that executable and `flow_tracking_test.exe` in the test directory
+too; normalization tests run without loading the driver. The live tests are
 excluded from unattended CTest. Closing the handles removes
 their filters; the script deliberately does not delete the shared driver service.
 
@@ -401,8 +415,8 @@ See the [FLOW API documentation](https://github.com/basil00/WinDivert/blob/v2.2.
 ### Remaining integration
 
 The independent [`platform/traffic`](../traffic/README.md) module now decodes
-bounded IPv4/IPv6 TCP/UDP packet tuples. It is tested on both platforms but is not
-yet wired to capture or authorization; unrecognized packets cannot safely be
+bounded IPv4/IPv6 TCP/UDP packet tuples. Its flow index consumes live FLOW events,
+but packet capture and authorization are not yet wired; unrecognized packets cannot safely be
 assigned to an application merely from FLOW events.
 
 1. Port additional controllers behind explicit platform capability interfaces;

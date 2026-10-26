@@ -1,4 +1,4 @@
-#include "flow_observer.hpp"
+#include "flow_tracking.hpp"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -41,14 +41,30 @@ DWORD parsePid(std::wstring_view text) {
     return value;
 }
 
-void printEvent(const FlowEvent& event) {
+void printEvent(const FlowEvent& event, skewer::traffic::FlowIndex::Status status) {
+    const char* correlation = "unreliable";
+    using Status = skewer::traffic::FlowIndex::Status;
+    switch (status) {
+    case Status::Unknown:
+        correlation = "unknown";
+        break;
+    case Status::Observed:
+        correlation = "observed";
+        break;
+    case Status::Ambiguous:
+        correlation = "ambiguous";
+        break;
+    case Status::Unreliable:
+        break;
+    }
     // Addresses are formatted by WinDivert, never application-supplied text.
     std::cout << (event.kind == FlowEvent::Kind::Established ? "OPEN " : "CLOSE ")
               << "pid=" << event.process.pid << " created=" << event.process.created
               << " endpoint=" << event.endpoint_id << (event.protocol == 6 ? " TCP " : " UDP ")
               << (event.ipv6 ? "IPv6 " : "IPv4 ") << '[' << event.local.address << "]:" << event.local.port
               << (event.outbound ? " -> " : " <- ") << '[' << event.remote.address
-              << "]:" << event.remote.port << (event.loopback ? " loopback" : "") << std::endl;
+              << "]:" << event.remote.port << (event.loopback ? " loopback" : "")
+              << " correlation=" << correlation << std::endl;
 }
 
 void watch(DWORD pid, const std::wstring& dll) {
@@ -59,7 +75,7 @@ void watch(DWORD pid, const std::wstring& dll) {
         throw std::runtime_error("Cannot open target PID (Win32 " + std::to_string(GetLastError()) + ")");
     }
     const auto key = processKey(selected.get(), pid);
-    FlowObserver observer(dll, key);
+    TrackedFlowObserver observer(dll, key);
     std::cerr << "Watching PID " << key.pid << " (creation " << key.created << ").\n"
               << "Passive, future flows only; children and existing sockets are not included.\n"
               << "Events may be lost under load. This is not a routing/security decision source.\n"
@@ -67,7 +83,10 @@ void watch(DWORD pid, const std::wstring& dll) {
     for (;;) {
         const auto result = observer.next(stop_event, INFINITE);
         if (result.status == FlowObserver::Status::Event) {
-            printEvent(*result.event);
+            const auto tuple = flowTuple(*result.event);
+            const auto status =
+                tuple ? observer.lookup(*tuple).status : skewer::traffic::FlowIndex::Status::Unreliable;
+            printEvent(*result.event, status);
             if (!std::cout) {
                 throw std::runtime_error("Cannot write flow output");
             }

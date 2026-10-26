@@ -18,6 +18,9 @@ if ($signature.Status -ne 'Valid') {
 }
 Write-Output "Driver signature: $($signature.SignerCertificate.Subject)"
 
+& (Join-Path $Directory 'flow_tracking_test.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Flow tracking normalization test failed' }
+
 $stdout = Join-Path $Directory 'flow-test.stdout.log'
 $stderr = Join-Path $Directory 'flow-test.stderr.log'
 $dll = Join-Path $Directory 'WinDivert.dll'
@@ -86,6 +89,9 @@ try {
         if (-not $complete) { Start-Sleep -Milliseconds 50 }
     } until ($complete -or [DateTime]::UtcNow -ge $deadline)
     if (-not $complete) { throw 'Watcher omitted a traffic class' }
+    if ($output -notmatch 'correlation=observed' -or $output -match 'correlation=unreliable') {
+        throw 'Watcher did not correlate the live fixture events reliably'
+    }
     $null = $release.Set()
     if (-not $child.WaitForExit(5000) -or $child.ExitCode -ne 0) {
         throw 'Watcher fixture did not finish successfully'

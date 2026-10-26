@@ -1,6 +1,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include "flow_observer.hpp"
+#include "flow_tracking.hpp"
 #include <rpc.h>
 #include <array>
 #include <chrono>
@@ -143,7 +143,7 @@ void childMain(const std::wstring& prefix) {
     require(WaitForSingleObject(release.get(), 30000) == WAIT_OBJECT_0, "Fixture release deadline");
 }
 
-void observeTraffic(FlowObserver& observer, HANDLE cancellation, ProcessKey key) {
+void observeTraffic(TrackedFlowObserver& observer, HANDLE cancellation, ProcessKey key) {
     std::array<bool, 4> established{};
     bool deleted = false;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -163,6 +163,19 @@ void observeTraffic(FlowObserver& observer, HANDLE cancellation, ProcessKey key)
         const auto index = (event.ipv6 ? 2 : 0) + (event.protocol == IPPROTO_UDP ? 1 : 0);
         if (event.kind == FlowEvent::Kind::Established) {
             established[index] = true;
+            const auto tuple = flowTuple(event);
+            require(tuple.has_value(), "Live flow address conversion failed");
+            require(tuple->source_port == event.local.port && tuple->destination_port == event.remote.port,
+                    "Live flow ports changed byte order");
+            require(event.ipv6 ? tuple->source[15] == 1 && tuple->source[0] == 0
+                               : tuple->source[0] == 127 && tuple->source[3] == 1,
+                    "Live loopback binary address mismatch");
+            const auto owner = observer.lookup(*tuple);
+            require(owner.status == skewer::traffic::FlowIndex::Status::Observed && owner.process &&
+                        owner.process->pid == key.pid && owner.process->created == key.created,
+                    "Live flow did not reach the correlation index");
+            require(observer.lookup(tuple->reversed()).process == owner.process,
+                    "Reverse live flow lost its owner");
         } else {
             deleted = true;
         }
@@ -181,7 +194,7 @@ void liveTest(const std::wstring& dll) {
     Handle cancellation(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancellation), "Create observer cancellation event");
     {
-        FlowObserver observer(dll, selected.key());
+        TrackedFlowObserver observer(dll, selected.key());
         other.start();
         other.waitDone();
         require(observer.next(cancellation.get(), 250).status == FlowObserver::Status::Timeout,
@@ -192,20 +205,24 @@ void liveTest(const std::wstring& dll) {
         require(SetEvent(cancellation.get()), "Cancel observer");
         require(observer.next(cancellation.get(), 1000).status == FlowObserver::Status::Cancelled,
                 "Cancellation did not take precedence");
+        require(observer.lookup({}).status == skewer::traffic::FlowIndex::Status::Unreliable,
+                "Cancelled observation retained correlation context");
         require(ResetEvent(cancellation.get()), "Reset fixture cancellation");
         require(observer.next(cancellation.get(), 0).status == FlowObserver::Status::Cancelled,
                 "Cancelled observer restarted itself");
     }
     {
-        FlowObserver observer(dll, selected.key());
+        TrackedFlowObserver observer(dll, selected.key());
         require(observer.next(cancellation.get(), 0).status == FlowObserver::Status::Timeout,
                 "Idle read did not pend");
         selected.finish();
+        require(observer.lookup({}).status == skewer::traffic::FlowIndex::Status::Unreliable,
+                "Target exit retained correlation context before the next read");
         require(observer.next(cancellation.get(), 1000).status == FlowObserver::Status::TargetExited,
                 "Exited target did not retire its observer");
     }
     {
-        FlowObserver observer(dll, other.key());
+        TrackedFlowObserver observer(dll, other.key());
         require(observer.next(cancellation.get(), 0).status == FlowObserver::Status::Timeout,
                 "Idle read did not pend");
         // Destruction must cancel and drain this pending request safely.

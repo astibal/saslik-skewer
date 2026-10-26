@@ -3,8 +3,8 @@
 ## Observed flow index
 
 `skewer-flow-index` correlates decoded tuples with explicitly supplied flow
-observations. It is a diagnostic primitive, not yet connected to the Windows
-observer or a live packet capture. Its key includes PID, process creation time
+observations. The Windows `TrackedFlowObserver` now feeds it live FLOW events;
+live packet capture is not yet connected. Its key includes PID, process creation time
 and endpoint ID; it never derives process ownership from an executable name.
 Both directions share a canonical tuple. Multiple sockets of one process still
 have one observed owner; distinct process identities produce `Ambiguous`.
