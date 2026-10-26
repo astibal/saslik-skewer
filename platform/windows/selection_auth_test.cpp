@@ -1,5 +1,7 @@
 #include "processes.hpp"
 #include "selection_auth.hpp"
+#include "selection_request.hpp"
+#include "selection_transport.hpp"
 #include <sddl.h>
 #include <iostream>
 #include <stdexcept>
@@ -19,6 +21,113 @@ template <typename Action> void rejects(Action action, const char* message) {
         rejected = true;
     }
     require(rejected, message);
+}
+void transportTest() {
+    const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
+    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+        const auto name = L"\\\\.\\pipe\\SkewerTransportFixture-" + std::to_wstring(key.pid) + L"-" +
+                          std::to_wstring(scenario);
+        PSECURITY_DESCRIPTOR raw{};
+        require(ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;GA;;;SY)(A;;GRGW;;;OW)",
+                                                                     SDDL_REVISION_1, &raw, nullptr),
+                "Pipe ACL");
+        std::shared_ptr<void> descriptor(raw, [](void* p) { LocalFree(p); });
+        SECURITY_ATTRIBUTES security{sizeof(security), raw, FALSE};
+        Handle server(CreateNamedPipeW(
+            name.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 128, 128,
+            0, &security));
+        require(static_cast<bool>(server), "Create transport pipe");
+        Handle client(CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                                  SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr));
+        require(static_cast<bool>(client), "Connect transport client");
+        Handle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        OVERLAPPED connection{};
+        connection.hEvent = event.get();
+        require(ConnectNamedPipe(server.get(), &connection) || GetLastError() == ERROR_PIPE_CONNECTED,
+                "Accept transport client");
+        Handle cancel(CreateEventW(nullptr, TRUE, scenario == 2, nullptr));
+        require(static_cast<bool>(cancel), "Create cancellation event");
+        if (scenario != 1 && scenario != 2) {
+            const auto encoded = encodeSelectionRequest(key);
+            auto bytes = std::vector<std::uint8_t>(encoded.begin(), encoded.end());
+            if (scenario == 3) {
+                bytes.push_back(0);
+            }
+            if (scenario == 4) {
+                bytes.pop_back();
+            }
+            DWORD count{};
+            require(WriteFile(client.get(), bytes.data(), bytes.size(), &count, nullptr) &&
+                        count == bytes.size(),
+                    "Send transport request");
+        }
+        if (scenario >= 1 && scenario <= 3) {
+            rejects([&] { serveSelection(server.get(), cancel.get(), 50); },
+                    "Idle, cancelled or oversized request accepted");
+            continue;
+        }
+        auto result = serveSelection(server.get(), cancel.get(), 2000);
+        const auto expected = scenario == 0 ? SelectionStatus::Verified : SelectionStatus::InvalidRequest;
+        require(decodeSelectionReply(result.reply) == expected && bool(result.target) == (scenario == 0),
+                "Wrong transport result");
+        SelectionReply reply{};
+        DWORD count{};
+        require(ReadFile(client.get(), reply.data(), reply.size(), &count, nullptr) &&
+                    count == reply.size() && decodeSelectionReply(reply) == expected,
+                "Transport reply lost");
+    }
+}
+void listenerTest() {
+    HANDLE raw{};
+    require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw), "Listener token");
+    Handle token(raw);
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(static_cast<bool>(cancel), "Listener cancel event");
+    const auto suffix = L"Test-" + std::to_wstring(GetCurrentProcessId());
+    rejects([&] { createSelectionPipe(L"../unsafe", token.get()); }, "Unsafe name accepted");
+    {
+        auto pipe = createSelectionPipe(suffix, token.get());
+        rejects([&] { createSelectionPipe(suffix, token.get()); }, "Duplicate server accepted");
+        rejects([&] { acceptSelection(pipe->get(), cancel.get(), 25); }, "Idle accept did not time out");
+    }
+    {
+        auto pipe = createSelectionPipe(suffix, token.get());
+        SetEvent(cancel.get());
+        rejects([&] { acceptSelection(pipe->get(), cancel.get(), 100); }, "Cancelled accept succeeded");
+        ResetEvent(cancel.get());
+    }
+    auto pipe = createSelectionPipe(suffix, token.get());
+    const auto name = L"\\\\.\\pipe\\SkewerSelection-" + suffix;
+    Handle client(
+        CreateFileW(name.c_str(), FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA,
+                    0, nullptr, OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr));
+    require(static_cast<bool>(client), "Connect ACL-restricted listener");
+    acceptSelection(pipe->get(), cancel.get(), 1000);
+    const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
+    auto server_identity = verifySelectionServer(client.get(), key);
+    require(WaitForSingleObject(server_identity->get(), 0) == WAIT_TIMEOUT, "Server pin lost");
+    auto stale_server = key;
+    ++stale_server.created;
+    rejects([&] { verifySelectionServer(client.get(), stale_server); }, "Stale server accepted");
+    auto wrong_server = key;
+    wrong_server.pid ^= 1;
+    rejects([&] { verifySelectionServer(client.get(), wrong_server); }, "Different server accepted");
+    rejects([&] { verifySelectionServer(pipe->get(), key); }, "Server-side endpoint accepted");
+    rejects([&] { verifySelectionService(client.get(), L"SkewerMissingService-Test"); },
+            "Unregistered service accepted");
+    rejects([&] { verifySelectionService(client.get(), L"bad/name"); }, "Invalid service name accepted");
+    const auto request = encodeSelectionRequest(key);
+    DWORD count{};
+    require(WriteFile(client.get(), request.data(), request.size(), &count, nullptr) &&
+                count == request.size(),
+            "Write listener request");
+    auto result = serveSelection(pipe->get(), cancel.get(), 1000);
+    require(result.target && result.target->key() == key, "Listener selection failed");
+    SelectionReply reply{};
+    require(ReadFile(client.get(), reply.data(), reply.size(), &count, nullptr) && count == reply.size() &&
+                decodeSelectionReply(reply) == SelectionStatus::Verified,
+            "Listener reply failed");
 }
 void test() {
     const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
@@ -51,6 +160,51 @@ void test() {
     // Handle lifetime is independent of the borrowed authorization token.
     require(own.running(), "Pinned process was lost");
 }
+void requestTest() {
+    for (auto status :
+         {SelectionStatus::Verified, SelectionStatus::InvalidRequest, SelectionStatus::Denied}) {
+        const auto reply = encodeSelectionReply(status);
+        require(decodeSelectionReply(reply) == status, "Reply status changed");
+        for (std::size_t size = 0; size < reply.size(); ++size) {
+            rejects([&] { decodeSelectionReply(std::span(reply).first(size)); }, "Short reply accepted");
+        }
+        for (unsigned i = 0; i < reply.size(); ++i) {
+            auto bad = reply;
+            bad[i] = 0xff;
+            rejects([&] { decodeSelectionReply(bad); }, "Invalid reply accepted");
+        }
+    }
+    auto malformed = processSelectionRequest(INVALID_HANDLE_VALUE, {});
+    require(!malformed.target && decodeSelectionReply(malformed.reply) == SelectionStatus::InvalidRequest,
+            "Malformed request reached authorization");
+    const ProcessKey key{0x12345678, 0x123456789abcdef0ULL};
+    const auto encoded = encodeSelectionRequest(key);
+    require(encoded[8] == 0x78 && encoded[11] == 0x12 && encoded[12] == 0xf0 && encoded[19] == 0x12,
+            "Incorrect wire byte order");
+    require(decodeSelectionRequest(encoded) == key, "Request identity changed");
+    for (std::size_t size = 0; size < encoded.size(); ++size) {
+        rejects([&] { decodeSelectionRequest(std::span(encoded).first(size)); },
+                "Truncated request accepted");
+    }
+    auto extended = std::vector<std::uint8_t>(encoded.begin(), encoded.end());
+    extended.push_back(0);
+    rejects([&] { decodeSelectionRequest(extended); }, "Trailing bytes accepted");
+    for (unsigned i = 0; i < 8; ++i) {
+        auto bad = encoded;
+        bad[i] ^= 0xff;
+        rejects([&] { decodeSelectionRequest(bad); }, "Unknown header accepted");
+    }
+    for (const auto invalid : {ProcessKey{0, 1}, ProcessKey{1, 0}}) {
+        rejects([&] { encodeSelectionRequest(invalid); }, "Incomplete identity encoded");
+        auto bad = encoded;
+        const unsigned begin = invalid.pid ? 12 : 8;
+        const unsigned end = invalid.pid ? 20 : 12;
+        for (unsigned i = begin; i < end; ++i) {
+            bad[i] = 0;
+        }
+        rejects([&] { decodeSelectionRequest(bad); }, "Incomplete wire identity accepted");
+    }
+}
 void pipeTest(const ProcessKey* foreign = nullptr) {
     const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
     const auto name = L"\\\\.\\pipe\\SkewerAuthFixture-" + std::to_wstring(key.pid) + L"-" +
@@ -71,20 +225,39 @@ void pipeTest(const ProcessKey* foreign = nullptr) {
     require(static_cast<bool>(client), "Connect identification-level client");
     require(ConnectNamedPipe(server.get(), nullptr) || GetLastError() == ERROR_PIPE_CONNECTED,
             "Accept local client");
-    const std::uint8_t request = 1;
+    const auto request = encodeSelectionRequest(key);
     DWORD transferred{};
-    require(WriteFile(client.get(), &request, sizeof(request), &transferred, nullptr) && transferred == 1,
+    require(WriteFile(client.get(), request.data(), request.size(), &transferred, nullptr) &&
+                transferred == request.size(),
             "Write fixture request");
-    std::uint8_t received{};
-    require(ReadFile(server.get(), &received, sizeof(received), &transferred, nullptr) && transferred == 1,
+    SelectionRequest received{};
+    require(ReadFile(server.get(), received.data(), received.size(), &transferred, nullptr) &&
+                transferred == received.size(),
             "Read fixture request");
-    auto selected = authorizePipeSelection(server.get(), key);
+    auto selected = authorizePipeSelection(server.get(), decodeSelectionRequest(received));
     require(selected->running() && selected->key() == key, "Pipe identity did not authorize its process");
+    auto result = processSelectionRequest(server.get(), received);
+    require(result.target && result.target->key() == key && result.target->running() &&
+                decodeSelectionReply(result.reply) == SelectionStatus::Verified,
+            "Dispatcher did not retain verified target");
+    require(WriteFile(server.get(), result.reply.data(), result.reply.size(), &transferred, nullptr) &&
+                transferred == result.reply.size(),
+            "Write selection reply");
+    SelectionReply reply{};
+    require(ReadFile(client.get(), reply.data(), reply.size(), &transferred, nullptr) &&
+                transferred == reply.size() && decodeSelectionReply(reply) == SelectionStatus::Verified,
+            "Client did not receive verified reply");
     auto stale = key;
     ++stale.created;
+    auto denied = processSelectionRequest(server.get(), encodeSelectionRequest(stale));
+    require(!denied.target && decodeSelectionReply(denied.reply) == SelectionStatus::Denied,
+            "Stale request reported success");
     rejects([&] { authorizePipeSelection(server.get(), stale); }, "Pipe accepted stale process");
     rejects([&] { authorizePipeSelection(client.get(), key); }, "Client handle accepted as server");
     if (foreign) {
+        auto other = processSelectionRequest(server.get(), encodeSelectionRequest(*foreign));
+        require(!other.target && decodeSelectionReply(other.reply) == SelectionStatus::Denied,
+                "Dispatcher accepted foreign process");
         rejects([&] { authorizePipeSelection(server.get(), *foreign); }, "Foreign-user process accepted");
     }
     HANDLE token{};
@@ -97,6 +270,9 @@ void pipeTest(const ProcessKey* foreign = nullptr) {
 int main(int argc, char** argv) {
     try {
         test();
+        requestTest();
+        transportTest();
+        listenerTest();
         if (argc == 1) {
             pipeTest();
         } else {

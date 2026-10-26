@@ -511,6 +511,74 @@ Use the official [WinDivert 2.2.2 release](https://github.com/basil00/WinDivert/
 and retain its LICENSE when distributing its files (LGPLv3/GPLv2 dual license).
 See the [FLOW API documentation](https://github.com/basil00/WinDivert/blob/v2.2.2/doc/windivert.html).
 
+### Selection request framing
+
+`selection_request.hpp` defines a strict 20-byte, little-endian request:
+`SKWR` (4 bytes), version `1` (u16), operation `1` (u16: validate selection),
+PID (u32), process creation time (u64, Windows FILETIME units). Both identity
+fields must be nonzero. Unknown headers, truncated messages and trailing bytes
+are rejected. Encoding is explicit and independent of native structure padding.
+
+The named-pipe authorization fixture now transmits and decodes this message
+before checking the OS client token. This is **not** a routing command or a
+deployed GUI/service protocol yet. A production server must enforce message
+boundaries (including rejecting `ERROR_MORE_DATA`), bounded/cancellable I/O,
+an explicit local ACL and server authentication. Never trust a request-provided
+user identity. Persistent selection ownership and production transport remain pending.
+
+The reply is exactly 8 bytes: `SKWA`, version `1` (u16), status (u8),
+reserved zero (u8). Status is `0` verified, `1` invalid request, or `2` denied.
+Unknown statuses and malformed replies are rejected. A verified reply is never
+a claim that routing is enabled. Use one outstanding request per connection;
+there is no multiplexing or request ID in version 1.
+
+`processSelectionRequest` validates an already-read message and authenticates
+the pipe client, returning both the reply and the pinned target on success.
+Stale, inaccessible and foreign targets share the denied response; internal
+programming errors propagate. The caller must retain the target, not reopen its
+PID as SYSTEM, and recheck liveness when using it. This dispatcher performs no
+I/O or policy changes. The VM fixture tests the request/reply round trip.
+
+`serveSelection` adds one bounded exchange on an already-connected overlapped,
+message-mode server pipe. Read and write share a 1..60000 ms budget and a
+manual-reset cancellation event. Pending I/O is cancelled and drained before
+buffers are released. Oversized messages fail the connection; short messages
+receive an invalid-request reply. The caller must close/disconnect on failure.
+No blocking `FlushFileBuffers` is used. The budget bounds I/O waits, not the
+synchronous OS process/token queries or kernel cancellation completion.
+
+`createSelectionPipe` creates an exclusive local message endpoint with a
+protected DACL: SYSTEM has full access and the user from a trusted setup token
+has specific read/write rights, excluding creation of another pipe instance.
+Clients request `FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES |
+FILE_WRITE_EA`, not `GENERIC_WRITE` (which includes instance creation rights).
+Names accept only a short alphanumeric/dash/underscore suffix. Remote clients
+are rejected. The service must obtain the setup token from trusted session
+configuration, never from a request. First-instance protection does not replace
+server authentication: a squatter can still preoccupy an unused name.
+
+`acceptSelection` waits with a bounded timeout and cancellation, draining pending
+connect I/O on failure. Keep the endpoint handle alive for its lifetime and
+disconnect failed clients before reusing it. Tests cover exclusive creation,
+invalid names, idle accept timeout, pre-set cancellation, ACL-compatible client
+connection and authenticated request/reply, plus short/oversized messages.
+This is still a library, not a deployed service: the SCM worker loop, server
+authentication by the GUI and persistent selection management remain pending.
+
+Client-side `verifySelectionServer` checks the connected pipe's server PID,
+creation time and liveness and returns a retained process handle.
+`verifySelectionService` obtains the expected PID from the locally installed,
+running own-process service, pins that process, verifies the pipe and rechecks
+SCM. The service name must be trusted application configuration; service
+installation and executable permissions are part of this trust boundary.
+This does not defend against an administrator replacing the service.
+Call verification before sending any request and retain the handle throughout
+the exchange. Never reconnect silently after verification.
+
+VM tests currently cover a valid pinned local server and rejection of wrong
+PID, stale creation time, the wrong pipe endpoint and a missing service.
+Successful SCM-worker/GUI integration remains untested and is not enabled.
+
 ### Remaining integration
 
 The independent [`platform/traffic`](../traffic/README.md) module now decodes

@@ -2,6 +2,25 @@
 #include <stdexcept>
 
 namespace skewer::windows {
+SelectionResult processSelectionRequest(HANDLE pipe, std::span<const std::uint8_t> request) {
+    ProcessKey key{};
+    try {
+        key = decodeSelectionRequest(request);
+    } catch (const std::invalid_argument&) {
+        return {encodeSelectionReply(SelectionStatus::InvalidRequest), nullptr};
+    }
+    try {
+        auto target = authorizePipeSelection(pipe, key);
+        return {encodeSelectionReply(SelectionStatus::Verified), std::move(target)};
+    } catch (const std::runtime_error&) {
+        // Do not disclose whether another user's process exists. Stale,
+        // inaccessible and foreign identities have the same public outcome.
+        return {encodeSelectionReply(SelectionStatus::Denied), nullptr};
+    }
+    // Programming errors (wrong pipe endpoint, nested impersonation) propagate
+    // to the service rather than masquerading as ordinary client rejection.
+}
+
 std::unique_ptr<ProcessTarget> authorizePipeSelection(HANDLE pipe, ProcessKey requested) {
     DWORD flags{};
     if (!GetNamedPipeInfo(pipe, &flags, nullptr, nullptr, nullptr) || !(flags & PIPE_SERVER_END)) {
