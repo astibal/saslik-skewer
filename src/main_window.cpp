@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "ui/application_page.hpp"
 #include "routing_guard.hpp"
 #include "privileged_session.hpp"
 #include "interface_routing.hpp"
@@ -80,51 +81,14 @@
 MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
                        std::function<RoutingResult()> resume_routing,
                        std::function<RoutingResult()> authorize_session)
-    : QMainWindow(parent)
+    : skewer::ui::ApplicationShell(QStringLiteral(SKEWER_VERSION), parent)
 {
-    setWindowTitle(tr("Skewer"));
-    resize(980, 680);
-    QSettings settings;
-    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
-    auto* settings_menu = menuBar()->addMenu(tr("Settings"));
-    auto* preferences = settings_menu->addAction(tr("Preferences…"));
-    preferences->setObjectName("preferencesAction");
-    connect(preferences, &QAction::triggered, this, [this] {
+    connect(preferencesAction(), &QAction::triggered, this, [this] {
         PreferencesDialog dialog(this);
         if (dialog.exec() == QDialog::Accepted) applyPreferences();
     });
-    settings_menu->addSeparator();
-    close_to_tray_ = settings_menu->addAction(tr("Close to system tray"));
-    close_to_tray_->setObjectName("closeToTray");
-    close_to_tray_->setCheckable(true);
-    close_to_tray_->setChecked(settings.value(QStringLiteral("window/closeToTray"), true).toBool());
-    connect(close_to_tray_, &QAction::toggled, this, [](bool enabled) {
-        QSettings().setValue(QStringLiteral("window/closeToTray"), enabled);
-    });
-    tray_ = new QSystemTrayIcon(this);
-    tray_->setObjectName("skewerTray");
-    tray_->setToolTip(tr("Skewer"));
-    auto* tray_menu = new QMenu(this);
-    const auto restore = [this] { showNormal(); raise(); activateWindow(); };
-    connect(tray_menu->addAction(tr("Show Skewer")), &QAction::triggered, this, restore);
-    tray_menu->addSeparator();
-    const auto quit = [this] {
-        // Exiting the UI never releases applications or disables routing.
-        quitting_ = true;
-        close();
-        QApplication::quit();
-    };
-    connect(tray_menu->addAction(tr("Quit")), &QAction::triggered, this, quit);
-    connect(settings_menu->addAction(tr("Quit")), &QAction::triggered, this, quit);
-    tray_->setContextMenu(tray_menu);
-    connect(tray_, &QSystemTrayIcon::activated, this, [restore](QSystemTrayIcon::ActivationReason reason) {
-        if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) restore();
-    });
-    updateTrayIcon();
-    tray_->show();
-
-    auto* central = new QWidget(this);
-    auto* tabs = new QTabWidget(this);
+    auto* central = new skewer::ui::ApplicationPage(this);
+    auto* tabs = pages();
     auto* ca_panel = ca_panel_ = new CaTrustPanel(tabs);
     auto* runtime_trust = new RuntimeTrustPanel(tabs);
     tabs->addTab(central, tr("Applications"));
@@ -134,20 +98,8 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
             [tabs, ca_panel] { tabs->setCurrentWidget(ca_panel); });
     connect(ca_panel, &CaTrustPanel::certificateChanged,
             runtime_trust, &RuntimeTrustPanel::setCertificate);
-    auto* layout = new QVBoxLayout(central);
-    layout->setContentsMargins(18, 18, 18, 14);
-    layout->setSpacing(10);
-
-    auto* title = new QLabel(tr("Skewer applications through Saslik"), central);
-    QFont title_font = title->font();
-    title_font.setPointSize(title_font.pointSize() + 5);
-    title_font.setBold(true);
-    title->setFont(title_font);
-    layout->addWidget(title);
-
-    search_ = new QLineEdit(central);
-    search_->setPlaceholderText(tr("Find an application or process…"));
-    search_->setClearButtonEnabled(true);
+    auto* layout = central->top;
+    search_ = central->search;
     auto* routing_box = new QGroupBox(central);
     routing_box->setAccessibleName(tr("Routing"));
     auto* routing_layout = new QHBoxLayout(routing_box);
@@ -558,10 +510,6 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     QTimer::singleShot(0, info, poll_status);
     connect(routing_up_, &QPushButton::clicked, this, &MainWindow::activateRouting);
     connect(routing_down_, &QPushButton::clicked, this, &MainWindow::deactivateRouting);
-    auto* version_label = new QLabel(QStringLiteral("Skewer %1").arg(QString::fromLatin1(SKEWER_VERSION)), this);
-    version_label->setObjectName("applicationVersion");
-    version_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    statusBar()->addWidget(version_label);
     routing_status_bar_ = new QLabel(this);
     routing_status_bar_->setObjectName("routingStatusBar");
     routing_status_bar_->installEventFilter(this);
@@ -592,7 +540,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     filtered_model_->setFilterCaseSensitivity(Qt::CaseInsensitive);
     filtered_model_->setFilterKeyColumn(-1);
 
-    tree_ = new QTreeView(central);
+    tree_ = central->tree;
     tree_->setModel(filtered_model_);
     tree_->setAlternatingRowColors(true);
     tree_->setUniformRowHeights(true);
@@ -606,20 +554,9 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     tree_->setColumnWidth(ApplicationModel::CaColumn, 150);
     tree_->setColumnWidth(ApplicationModel::CommandColumn, 500);
     tree_->setColumnWidth(ApplicationModel::ConnectionsColumn, 90);
-    layout->addWidget(search_);
-    layout->addWidget(tree_, 1);
-
-    auto* actions = new QHBoxLayout;
-    action_status_ = new QLabel(tr("Select an application to manage its routing."), central);
-    action_status_->setObjectName(QStringLiteral("actionStatus"));
-    route_button_ = new QPushButton(tr("Attach to Skewer"), central);
-    release_button_ = new QPushButton(tr("Release"), central);
-    route_button_->setEnabled(false);
-    release_button_->setEnabled(false);
-    actions->addWidget(action_status_, 1);
-    actions->addWidget(release_button_);
-    actions->addWidget(route_button_);
-    layout->addLayout(actions);
+    action_status_ = central->action_status;
+    route_button_ = central->attach;
+    release_button_ = central->release;
     connect(tree_->selectionModel(), &QItemSelectionModel::currentChanged,
             this, &MainWindow::updateSelection);
     connect(route_button_, &QPushButton::clicked, this, &MainWindow::routeSelection);
@@ -635,6 +572,7 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     connect(search_, &QLineEdit::textChanged, filtered_model_,
             &QSortFilterProxyModel::setFilterFixedString);
 
+    layout = central->footer;
     layout->addWidget(new Launcher(central));
     auto* launcher = new QHBoxLayout;
     auto* shell_button = new QPushButton(tr("Shell…"), central);
@@ -972,44 +910,11 @@ void MainWindow::openConnectUrl(const QString& connect_url)
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     QSettings settings;
-    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("routing/nextHop"), next_hop_->text().trimmed());
     settings.setValue(QStringLiteral("routing/saslikUrl"), saslik_url_->text().trimmed());
     settings.setValue(QStringLiteral("routing/mode"),
                       usesSaslikUrl() ? QStringLiteral("saslik") : QStringLiteral("gateway"));
-    if (!quitting_ && close_to_tray_->isChecked() && QSystemTrayIcon::isSystemTrayAvailable()) {
-        event->ignore();
-        hide();
-        return;
-    }
-    QMainWindow::closeEvent(event);
-}
-
-void MainWindow::updateTrayIcon()
-{
-    if (!tray_) return;
-    QIcon icon(QStringLiteral(":/icons/skewer.svg"));
-    if (palette().color(QPalette::Window).lightness() < 128) {
-        // Reuse the fork geometry, tinting its alpha mask for dark desktops.
-        QIcon monochrome;
-        for (const int size : {16, 22, 24, 32, 48, 64, 128}) {
-            QPixmap pixmap = icon.pixmap(size, size);
-            QPainter painter(&pixmap);
-            painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-            painter.fillRect(pixmap.rect(), palette().color(QPalette::WindowText));
-            painter.end();
-            monochrome.addPixmap(pixmap);
-        }
-        icon = monochrome;
-    }
-    setWindowIcon(icon);
-    tray_->setIcon(icon);
-}
-
-void MainWindow::changeEvent(QEvent* event)
-{
-    QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange) updateTrayIcon();
+    skewer::ui::ApplicationShell::closeEvent(event);
 }
 
 void MainWindow::activateRouting()

@@ -101,6 +101,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.saslik.skewer.policy
 
 include(CTest)
 if(BUILD_TESTING)
+    add_subdirectory(platform/common)
     add_executable(socket_cleanup_test tests/socket_cleanup_test.cpp src/socket_cleanup.cpp)
     target_include_directories(socket_cleanup_test PRIVATE src)
     target_link_libraries(socket_cleanup_test PRIVATE Qt6::Core)
