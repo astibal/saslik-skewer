@@ -139,6 +139,46 @@ native Qt Windows style. No routing or full functional parity is claimed.
 
 ## Next milestones
 
+### Wintun OS boundary (experimental, not connected to routing)
+
+`wintun_device` provides RAII adapter/session ownership, nonblocking packet I/O,
+backpressure and cancellable waits. It uses the official Wintun SDK dynamically;
+the library remains loaded until its last device is destroyed. Reads release
+their ring slots even when the caller's buffer is too small. The Wintun read
+event is borrowed and is never closed by Skewer. Stop and join all I/O workers
+before destroying a device.
+
+This library does **not** yet port the Tuntom transport, install a kill switch,
+assign IP addresses, configure DNS or change routes. It is deliberately not
+linked into the GUI. No production Windows routing is enabled by this step.
+
+Obtain the official Wintun 0.14.1 SDK from
+[wintun.net](https://www.wintun.net/). The archive SHA-256 is
+`07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`.
+Keep the SDK's license with the DLL; this repository does not redistribute it.
+Add these options to the Windows cross-build configuration (paths must be
+visible inside the build environment):
+
+```sh
+-DSKEWER_WINDOWS_TUN=ON -DWINTUN_INCLUDE_DIR=/path/to/wintun/include
+```
+
+`wintun_device_test.exe` runs deterministic tests with an injected API and no
+driver or elevation. The explicit live probe requires administrator rights and
+creates a uniquely named test adapter, then closes it:
+
+```powershell
+.\wintun_device_test.exe --live C:\TrustedInstall\wintun.dll
+```
+
+Run the live probe only in the development VM. Verify the DLL's Authenticode
+signature first; the loader restricts search paths but does not authenticate the
+binary itself. A future privileged service must use an administrator-controlled
+installation path, never a DLL path supplied by an untrusted GUI request. Closing
+the probe removes its adapter but does not uninstall the shared Wintun driver.
+
+### Remaining integration
+
 1. Port additional controllers behind explicit platform capability interfaces;
    do not expose Linux-specific helpers or settings as working Windows features.
 2. Add desktop application identity/icons, launcher completion, and explicit
