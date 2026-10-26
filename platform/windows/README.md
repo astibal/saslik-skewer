@@ -280,6 +280,54 @@ enforced Windows fail-closed policy. The GUI does not enable this transport.
 Protocol/pump health alone must never be exposed as proof of protected application
 connectivity, and the pump itself is not a kernel kill switch.
 
+### Reusable application traffic policy (experimental)
+
+Application selection, enforcement, interception and traffic consumption are
+separate responsibilities. The policy library must not depend on Qt, Saslik,
+Tuntom, Wintun or a remote endpoint. A future interceptor may feed a tunnel,
+another forwarding backend or an observation consumer; it must not implicitly
+remove the guard when that consumer disconnects. Readiness and explicit Release
+belong to the policy owner, not the packet consumer's destructor.
+
+The first implemented primitive is `traffic::AppImageBlock` in the independent
+`skewer-app-egress-guard` library. It blocks new outbound ALE authorizations for
+an absolute executable path, across **all instances and users of that image**.
+It does not pretend that an image identity is a process-instance identity.
+No PID selection, child tracking, packet diversion or tunnel exception exists
+in this primitive. The GUI does not use it.
+
+The caller supplies and persists a unique policy GUID. Both address-family
+filters and their private sublayer are installed in one WFP transaction with
+persistent lifetime. Closing the engine or destroying the C++ object does not
+release them. `release()` is explicit and verifies the stored image identity
+and filter shape before deleting only that policy's objects, transactionally.
+An incomplete or conflicting policy fails visibly, not as a successful attach.
+Administrative access is required; this is not an authenticated IPC service.
+
+Run `platform/windows/tests/app-egress-guard-live.ps1 -Directory <test directory>`
+only in the elevated development VM, with `app_egress_guard_test.exe` present.
+The script creates two uniquely named copies of the fixture, checks loopback
+IPv4/IPv6 TCP and UDP, arms only one copy, forcibly terminates its policy owner,
+checks TCP `WSAEACCES` and UDP nondelivery for the selected copy, verifies the other
+copy is unaffected, and explicitly releases the policy in `finally`.
+It also checks idempotent arm and rejection of release by a different image.
+No browser, SSH service, host default route or production application is touched.
+Logs and fixture copies remain for inspection. If cleanup fails, the script
+prints the exact release command; retain that executable until cleanup succeeds.
+The live policy test is intentionally excluded from unattended CTest runs.
+
+This is **not yet the per-instance fail-closed backend**. Remaining acceptance
+includes physical egress capture, existing connections, shared DNS, spawned
+children, instance identity/PID reuse, interface exceptions, restart/lease
+behavior, and reboot/early-boot coverage. A successful `installed()` reports
+the filter definitions, not end-to-end protection against every bypass.
+
+WFP references: [object lifetime](https://learn.microsoft.com/en-us/windows/win32/fwp/object-management),
+[ALE authorization layers](https://learn.microsoft.com/en-us/windows/win32/fwp/ale-layers).
+Older MinGW headers omit the three standard GUIDs and persistence flag used
+here; their local ABI constants match Microsoft's
+[SDK metadata](https://github.com/microsoft/win32metadata/tree/main/generation/WinSDK/RecompiledIdlHeaders).
+
 ### Remaining integration
 
 1. Port additional controllers behind explicit platform capability interfaces;

@@ -60,8 +60,11 @@ equivalent to selecting one running application instance.
 Wintun supplies packet I/O, not application selection or a kill switch. WFP
 dynamic-session objects are deleted when the owning session closes: a dynamic
 block filter alone therefore cannot implement the required crash protection.
-The concrete persistent guard/callout design and instance-level matching remain
-to be implemented and tested; do not assume WinDivert alone provides them.
+The isolated `traffic::AppImageBlock` primitive now implements persistent
+block-only image rules independently of any tunnel. Its scope is deliberately
+all instances of an executable, not one selected process. Instance-level
+matching, interception, and a production guard/callout design remain to be
+implemented and tested; do not assume WinDivert alone provides them.
 
 ## Acceptance tests
 
