@@ -25,6 +25,40 @@ public:
     SOCKET handle;
 };
 
+void setReceiveTimeout(SOCKET socket, DWORD milliseconds) {
+    require(setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&milliseconds),
+                       sizeof(milliseconds)) == 0,
+            "Set test receive deadline");
+}
+
+void expectBlocked(SOCKET listener, bool tcp, int result, int error) {
+    if (tcp || result == SOCKET_ERROR) {
+        // A refused TCP connection is not evidence of enforcement.
+        require(result == SOCKET_ERROR && error == WSAEACCES, "Expected WFP access denial");
+        return;
+    }
+    // Unconnected UDP may report successful buffering before WFP's
+    // asynchronous ALE decision. Observe delivery, not sendto alone.
+    setReceiveTimeout(listener, 500);
+    char data{};
+    const auto received = recv(listener, &data, 1, 0);
+    require(received == SOCKET_ERROR && WSAGetLastError() == WSAETIMEDOUT,
+            "Blocked UDP reached its listener");
+}
+
+void expectDelivered(SOCKET listener, bool tcp, int result) {
+    require(result != SOCKET_ERROR, "Unselected/released application lost connectivity");
+    if (tcp) {
+        const auto accepted = accept(listener, nullptr, nullptr);
+        require(accepted != INVALID_SOCKET, "Accept test connection");
+        closesocket(accepted);
+        return;
+    }
+    setReceiveTimeout(listener, 1000);
+    char data{};
+    require(recv(listener, &data, 1, 0) == 1 && data == 'x', "UDP was not delivered");
+}
+
 void probe(int family, bool tcp, bool blocked) {
     const auto type = tcp ? SOCK_STREAM : SOCK_DGRAM;
     Socket listener(family, type), sender(family, type);
@@ -51,35 +85,9 @@ void probe(int family, bool tcp, bool blocked) {
         tcp ? connect(sender.handle, endpoint, length) : sendto(sender.handle, "x", 1, 0, endpoint, length);
     const int error = result == SOCKET_ERROR ? WSAGetLastError() : 0;
     if (blocked) {
-        if (tcp || result == SOCKET_ERROR) {
-            // A refused TCP connection is not evidence of enforcement.
-            require(result == SOCKET_ERROR && error == WSAEACCES, "Expected WFP access denial");
-        } else {
-            // Unconnected UDP may report successful buffering before WFP's
-            // asynchronous ALE decision. Observe delivery, not sendto alone.
-            DWORD timeout = 500;
-            require(setsockopt(listener.handle, SOL_SOCKET, SO_RCVTIMEO,
-                               reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
-                    "Set blocked UDP observation deadline");
-            char data{};
-            const auto received = recv(listener.handle, &data, 1, 0);
-            require(received == SOCKET_ERROR && WSAGetLastError() == WSAETIMEDOUT,
-                    "Blocked UDP reached its listener");
-        }
+        expectBlocked(listener.handle, tcp, result, error);
     } else {
-        require(result != SOCKET_ERROR, "Unselected/released application lost connectivity");
-        if (tcp) {
-            const auto accepted = accept(listener.handle, nullptr, nullptr);
-            require(accepted != INVALID_SOCKET, "Accept test connection");
-            closesocket(accepted);
-        } else {
-            DWORD timeout = 1000;
-            require(setsockopt(listener.handle, SOL_SOCKET, SO_RCVTIMEO,
-                               reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
-                    "Set test receive deadline");
-            char data{};
-            require(recv(listener.handle, &data, 1, 0) == 1 && data == 'x', "UDP was not delivered");
-        }
+        expectDelivered(listener.handle, tcp, result);
     }
     std::cout << "PASS " << (family == AF_INET ? "IPv4 " : "IPv6 ") << (tcp ? "TCP " : "UDP ")
               << (blocked ? "blocked" : "delivered") << '\n';
@@ -109,6 +117,47 @@ void validateInputs() {
     AppImageBlock valid(id, executable()); // Construction never changes WFP policy.
     std::cout << "PASS policy input validation (no policy installed)" << std::endl;
 }
+
+void runProbes(std::wstring_view expected) {
+    require(expected == L"allowed" || expected == L"blocked", "Invalid probe expectation");
+    WSADATA data{};
+    require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "Start Winsock");
+    struct Cleanup {
+        ~Cleanup() { WSACleanup(); }
+    } cleanup;
+    for (const auto family : {AF_INET, AF_INET6}) {
+        for (const auto tcp : {true, false}) {
+            probe(family, tcp, expected == L"blocked");
+        }
+    }
+}
+
+void runPolicyCommand(std::wstring_view mode, wchar_t* policy_id) {
+    require(mode == L"--live-arm-wait" || mode == L"--live-status" || mode == L"--live-release",
+            "Unknown command; no policy changed");
+    GUID id{};
+    require(UuidFromStringW(reinterpret_cast<RPC_WSTR>(policy_id), &id) == RPC_S_OK, "Invalid policy ID");
+    AppImageBlock guard(id, executable());
+    if (mode == L"--live-release") {
+        guard.release();
+        guard.release(); // Explicit release is idempotent, including an absent policy.
+        require(!guard.installed(), "Guard remains after explicit release");
+        std::cout << "PASS released" << std::endl;
+        return;
+    }
+    if (mode == L"--live-status") {
+        require(guard.installed(), "Guard is absent");
+        std::cout << "PASS installed" << std::endl;
+        return;
+    }
+    guard.arm();
+    guard.arm(); // Reapplying the same policy must be idempotent.
+    require(guard.installed(), "Guard missing after commit");
+    std::cout << "ARMED" << std::endl;
+    // The harness kills this exact process, then verifies kernel protection.
+    // Do not release on exit, including this bounded fixture timeout.
+    Sleep(60000);
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -121,43 +170,10 @@ int wmain(int argc, wchar_t** argv) {
                            "--live-arm-wait|--live-status|--live-release GUID");
         const std::wstring mode = argv[1];
         if (mode == L"--probe") {
-            const std::wstring expected = argv[2];
-            require(expected == L"allowed" || expected == L"blocked", "Invalid probe expectation");
-            WSADATA data{};
-            require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "Start Winsock");
-            struct Cleanup {
-                ~Cleanup() { WSACleanup(); }
-            } cleanup;
-            for (const auto family : {AF_INET, AF_INET6}) {
-                for (const auto tcp : {true, false}) {
-                    probe(family, tcp, expected == L"blocked");
-                }
-            }
-            return 0;
+            runProbes(argv[2]);
+        } else {
+            runPolicyCommand(mode, argv[2]);
         }
-        require(mode == L"--live-arm-wait" || mode == L"--live-status" || mode == L"--live-release",
-                "Unknown command; no policy changed");
-        GUID id{};
-        require(UuidFromStringW(reinterpret_cast<RPC_WSTR>(argv[2]), &id) == RPC_S_OK, "Invalid policy ID");
-        AppImageBlock guard(id, executable());
-        if (mode == L"--live-release") {
-            guard.release();
-            require(!guard.installed(), "Guard remains after explicit release");
-            std::cout << "PASS released" << std::endl;
-            return 0;
-        }
-        if (mode == L"--live-status") {
-            require(guard.installed(), "Guard is absent");
-            std::cout << "PASS installed" << std::endl;
-            return 0;
-        }
-        guard.arm();
-        guard.arm(); // Reapplying the same policy must be idempotent.
-        require(guard.installed(), "Guard missing after commit");
-        std::cout << "ARMED" << std::endl;
-        // The harness kills this exact process, then verifies kernel protection.
-        // Do not release on exit, including this bounded fixture timeout.
-        Sleep(60000);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << std::endl;
