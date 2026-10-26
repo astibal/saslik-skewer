@@ -345,6 +345,42 @@ Older MinGW headers omit the three standard GUIDs and persistence flag used
 here; their local ABI constants match Microsoft's
 [SDK metadata](https://github.com/microsoft/win32metadata/tree/main/generation/WinSDK/RecompiledIdlHeaders).
 
+### Passive per-instance flow observation
+
+`skewer-flow-observer` is an optional native library, independent of Qt and
+Tuntom. Enable `SKEWER_WINDOWS_FLOW=ON` and set `WINDIVERT_INCLUDE_DIR` to the
+official WinDivert SDK's `include` directory. No SDK binary is vendored or
+automatically downloaded. The DLL is loaded from an explicit trusted absolute
+local path; its installation directory must not be writable by untrusted users
+when a privileged caller loads it.
+
+The observer pins an existing current-user `ProcessTarget` (PID plus creation
+time), opens a numeric PID filter at WinDivert's read-only, sniffing FLOW layer,
+and returns TCP/UDP establishment/deletion metadata for IPv4 and IPv6. It waits
+on overlapped I/O, cancellation and process exit, without a polling loop. A
+timeout keeps the read pending; cancellation/destruction drains that request
+before its storage is freed. Cancellation or target exit permanently retires
+the observer. It does not terminate or move the selected application.
+
+Only future flows are observed. Existing sockets, child processes and shared
+resolver traffic are not implicitly included. Events can be lost under load;
+these observations must **not** authorize traffic or provide a kill switch.
+This phase neither diverts packets nor integrates the observer into the GUI.
+
+The opt-in `tests/flow-observer-live.ps1` runs `flow_observer_test.exe` in an
+elevated disposable Windows VM. Put the official **2.2.2-A x64** DLL, SYS and
+LICENSE next to the executable. The script verifies pinned DLL/SYS SHA-256
+hashes and a valid driver signature before running. First open may install the
+driver; never disable driver-signature checks or antivirus to make it work.
+The test checks two instances of the same image, loopback TCP/UDP IPv4/IPv6,
+event decoding, timeout continuation, cancellation, target exit and pending-I/O
+destruction. It is excluded from unattended CTest. Closing the handles removes
+their filters; the script deliberately does not delete the shared driver service.
+
+Use the official [WinDivert 2.2.2 release](https://github.com/basil00/WinDivert/releases/tag/v2.2.2)
+and retain its LICENSE when distributing its files (LGPLv3/GPLv2 dual license).
+See the [FLOW API documentation](https://github.com/basil00/WinDivert/blob/v2.2.2/doc/windivert.html).
+
 ### Remaining integration
 
 1. Port additional controllers behind explicit platform capability interfaces;
