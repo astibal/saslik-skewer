@@ -78,3 +78,22 @@ truncation of basic packets, contradictory lengths, fragmentation, extension
 bounds/options, and a seeded 30,000-input hostile corpus. The same executable runs
 on Windows without elevation or a network driver. This corpus is regression
 coverage, not exhaustive fuzzing or proof that all packet formats are supported.
+# Bounded pending packets
+
+`PendingPackets<Context>` owns captured bytes and fixed-size capture metadata
+while attribution is pending. It is single-consumer and noncopyable, independent
+of Windows, Qt and Tuntom. Limits cover packet count and retained payload/metadata
+bytes (not allocator overhead). New packets are rejected when full; existing
+entries are not evicted to make room. Deadlines use a monotonic clock and are
+checked on hold/take or explicit `expire()` calls; the service must schedule
+expiry while idle. No background thread is created by this container.
+
+Tickets are never reused within a queue lifetime. Consumption is one-shot and
+cannot revive expired entries. `stop()` discards everything and permanently
+rejects further input; it does not drain packets onto the network. A new observer
+epoch requires a new queue and must not reuse the old epoch's tickets.
+
+This is storage, not authorization: `take()` does not prove ownership, select a
+route or check tunnel readiness. A service must make those decisions separately.
+The Windows VM fixture uses it for captured UDP and TCP SYN packets; it is not
+yet wired into a production interception service.
