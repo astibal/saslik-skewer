@@ -177,6 +177,28 @@ binary itself. A future privileged service must use an administrator-controlled
 installation path, never a DLL path supplied by an untrusted GUI request. Closing
 the probe removes its adapter but does not uninstall the shared Wintun driver.
 
+### UDP transport foundation
+
+`skewer-windows-udp` provides nonblocking Winsock datagrams for numeric IPv4
+and IPv6 endpoints. It owns Winsock/socket/event lifetime, prevents inherited
+socket handles and duplicate local binds, preserves source addresses, and treats
+truncation as an error. Empty datagrams are distinct from an empty receive queue.
+There is no implicit DNS lookup, peer migration, authentication or route setup.
+
+The wait operation combines cancellation, network events and an optional borrowed
+packet-device event. Stop wins over simultaneous readiness. Network readiness is
+advisory (including write readiness); callers must handle would-block and use
+bounded receive batches so other work is not starved. Socket events are reset
+atomically using Winsock's event enumeration, not `ResetEvent`. One I/O worker
+owns the endpoint; stop and join it before destruction. A future Wintun supervisor
+must keep any borrowed packet-device event alive throughout each wait.
+
+`udp_endpoint_test.exe` needs neither elevation nor a driver. It uses IPv4 and
+IPv6 loopback to test packet/reply integrity, empty/truncated/oversized datagrams,
+readiness, cancellation priority, duplicate binds and handle cleanup. It does
+not alter addresses or routes. Scoped IPv6 address parsing, PMTU policy, socket
+buffer tuning and the actual Tuntom protocol integration remain separate work.
+
 ### Remaining integration
 
 1. Port additional controllers behind explicit platform capability interfaces;
