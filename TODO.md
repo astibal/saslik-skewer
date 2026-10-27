@@ -39,6 +39,11 @@ Whole-host routing is an explicit alternative to application selection, for both
 Linux and Windows. It is not enabled yet and does not implicitly include traffic
 forwarded from VMs, bridges or other machines.
 
+The initial portable `routing_scope.hpp` admission model is unit-tested but not
+wired into IPC, UI or route mutation. It keeps empty application selection inert,
+requires separate backend capability and authorization for whole-host scope,
+and rejects invalid enum values. This does not complete the activation checklist.
+
 - [ ] Expose routing scope (selected applications / whole host) independently
   from transport (direct next hop / Tuntom). Require explicit privileged consent
   for whole-host activation; never infer it from an empty application selection.
