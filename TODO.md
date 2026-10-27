@@ -33,6 +33,41 @@ Keep the build-only `platform/windows/driver` prototype for possible later work.
 Do not load, package or require it for the first release. Revisit only if strict
 per-instance protection surviving service failure becomes a product requirement.
 
+## Target: whole-host routing through Saslik
+
+Whole-host routing is an explicit alternative to application selection, for both
+Linux and Windows. It is not enabled yet and does not implicitly include traffic
+forwarded from VMs, bridges or other machines.
+
+- [ ] Expose routing scope (selected applications / whole host) independently
+  from transport (direct next hop / Tuntom). Require explicit privileged consent
+  for whole-host activation; never infer it from an empty application selection.
+- [ ] Support direct routing through a reachable Saslik gateway and tunnelled
+  routing to a remote Saslik. Validate the return path before reporting ready.
+- [ ] Before redirecting host traffic, preserve the tunnel peer's underlay path
+  using the original gateway/interface. Exempt only required transport/control
+  traffic; do not blanket-exempt every application talking to the peer address.
+- [ ] Handle endpoint changes, DNS bootstrap and physical interface/gateway
+  changes without recursively sending tunnel traffic into its own adapter.
+  Install and verify the replacement underlay path before retiring the old one.
+- [ ] Define visible local-network and infrastructure exemptions (loopback,
+  DHCP, IPv6 neighbour discovery, control plane); do not silently exempt all
+  private networks. Route normal DNS through the chosen path.
+- [ ] Cover IPv4 and IPv6. Unsupported families/protocols must be explicitly
+  blocked or rejected, never silently bypass a claimed whole-host mode.
+- [ ] Keep host data traffic blocked during tunnel loss while the worker lives;
+  permit only the bounded recovery/control paths. No automatic direct fallback.
+- [ ] Make activation, scope switching and rollback transactional. Remove only
+  Skewer-owned changes, preserving concurrent DHCP, VPN and administrator updates.
+- [ ] Distinguish pause/block from explicit Release host, which intentionally
+  restores normal routing. GUI closure must do neither. Document worker-crash
+  behavior separately; no stronger guarantees than the tested backend provides.
+- [ ] Test real egress, peer relocation, DHCP renewal, reconnect, return traffic,
+  DNS and coexistence with another VPN in an isolated VM with console access.
+
+This is a target capability, not permission to change the development host's
+default routes. Initial implementation tests use isolated VMs and rollback.
+
 ## Enterprise: interface traffic through Tuntom (deferred)
 
 - [ ] Route selected interface/VM ingress through the authenticated Tuntom

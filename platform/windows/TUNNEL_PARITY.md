@@ -59,6 +59,32 @@ their own tunnel. Application identity must resist PID reuse and preserve
 instance boundaries. An executable-path-only firewall rule is not by itself
 equivalent to selecting one running application instance.
 
+## Planned whole-host scope
+
+The target also includes whole-host routing, independently selectable from
+direct-next-hop versus tunnel transport. Application mode must continue to leave
+unselected applications alone; whole-host mode intentionally includes their host
+traffic after explicit authorization. Forwarded VM/bridge traffic remains a
+separate feature. See the whole-host acceptance checklist in `TODO.md`.
+
+Tunnel activation must first retain a verified underlay route to the peer via
+the pre-existing gateway/interface, then establish narrowly scoped transport and
+control-plane exemptions, verify the tunnel data path, and finally admit host
+traffic to it. Endpoint relocation or interface changes repeat this sequence
+while keeping host traffic blocked. An exemption is not permission for arbitrary
+applications to bypass through the same peer IP. DNS bootstrap and recovery need
+explicit bounded exceptions, distinct from normal host DNS traffic.
+
+The worker owns routing/protection independently of the GUI. Tunnel failure
+must not restore the ordinary default path while protection is active. Explicit
+Release host intentionally restores normal routing; pause keeps traffic blocked.
+Rollback removes only owned changes and must not overwrite newer DHCP/VPN/admin
+state. The WinDivert owner-failure limitation still applies and must be measured
+for this scope too; this feature does not promise a persistent kernel kill switch.
+
+No whole-host route changes are currently enabled. Acceptance testing must use
+an isolated VM with out-of-band console access before exposing this control.
+
 ## Windows implementation order
 
 1. Run the existing platform-independent policy and protocol tests on Windows.
