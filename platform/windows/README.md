@@ -18,6 +18,17 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Authenticated routing capability queries
+
+`exchangeScopeProbe()` queries application or whole-host scope through the same
+SCM-authenticated, bounded IPC exchange as process validation. It derives the
+caller identity locally and does not attach processes or modify policy. Both
+scopes currently report `ScopeUnsupported`; transport/authentication failures
+are separate errors. A process `Verified` reply is never treated as a routing
+capability. The live selection-service fixture tests both queries against a
+temporary LocalSystem service and verifies clean shutdown. This is backend
+integration groundwork, not an enabled GUI routing control.
+
 ### Paired control client
 
 `SKEWER_WINDOWS_PAIRING=ON` builds `skewer-control` from the same TLS 1.3 PSK

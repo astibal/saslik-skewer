@@ -27,6 +27,11 @@ SelectionResult serveSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms);
 // after receiving, and never reconnects. Close the pipe after the exchange.
 SelectionStatus exchangeSelection(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
                                   HANDLE cancel, DWORD timeout_ms);
+// Read-only capability query, with the same SCM authentication and deadline.
+// Caller identity is derived locally, not accepted from a GUI-supplied PID.
+// ScopeUnsupported is distinct from transport failure or denied authorization.
+SelectionStatus exchangeScopeProbe(HANDLE pipe, const std::wstring& service_name,
+                                   skewer::traffic::RoutingScope scope, HANDLE cancel, DWORD timeout_ms);
 // Wait briefly for the client to close after consuming its reply. This avoids
 // discarding buffered replies on immediate DisconnectNamedPipe, without Flush.
 void finishSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms);

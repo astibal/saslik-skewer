@@ -37,6 +37,16 @@ inline SelectionStatus decodeSelectionReply(std::span<const std::uint8_t> bytes)
     return static_cast<SelectionStatus>(bytes[6]);
 }
 
+// A process-validation reply is not a capability grant. Version 1 has no
+// positive routing capability; a future backend must explicitly extend it.
+inline SelectionStatus decodeScopeReply(std::span<const std::uint8_t> bytes) {
+    const auto status = decodeSelectionReply(bytes);
+    if (status == SelectionStatus::Verified) {
+        throw std::invalid_argument("Process verification is not routing capability");
+    }
+    return status;
+}
+
 inline SelectionRequest encodeSelectionRequest(ProcessKey key) {
     if (!key.pid || !key.created) {
         throw std::invalid_argument("Selection requires a complete process identity");

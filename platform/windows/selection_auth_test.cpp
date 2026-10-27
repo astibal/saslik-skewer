@@ -171,6 +171,11 @@ void requestTest() {
                         SelectionStatus::ScopeUnsupported}) {
         const auto reply = encodeSelectionReply(status);
         require(decodeSelectionReply(reply) == status, "Reply status changed");
+        if (status == SelectionStatus::Verified) {
+            rejects([&] { decodeScopeReply(reply); }, "Process verification granted routing capability");
+        } else {
+            require(decodeScopeReply(reply) == status, "Scope failure status changed");
+        }
         for (std::size_t size = 0; size < reply.size(); ++size) {
             rejects([&] { decodeSelectionReply(std::span(reply).first(size)); }, "Short reply accepted");
         }

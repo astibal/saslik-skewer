@@ -31,6 +31,11 @@ try {
     Start-Sleep -Milliseconds 100
     & $exe --client $name
     if ($LASTEXITCODE -ne 0) { throw 'Second selection exchange failed' }
+    foreach ($scope in @('--scope-applications', '--scope-host')) {
+        Start-Sleep -Milliseconds 100
+        & $exe $scope $name
+        if ($LASTEXITCODE -ne 0) { throw "Authenticated scope probe failed: $scope" }
+    }
     Stop-Service $name
     $service = Get-Service $name
     try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10)) }

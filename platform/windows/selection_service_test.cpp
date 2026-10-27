@@ -17,7 +17,8 @@ int wmain(int argc, wchar_t** argv) {
                 std::wstring::npos) {
             throw std::invalid_argument("Invalid fixture service name");
         }
-        if (mode == L"--client" && argc == 3) {
+        const bool scope_client = mode == L"--scope-applications" || mode == L"--scope-host";
+        if ((mode == L"--client" || scope_client) && argc == 3) {
             const auto path = L"\\\\.\\pipe\\SkewerSelection-" + name;
             Handle pipe(CreateFileW(
                 path.c_str(), FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA, 0,
@@ -31,13 +32,24 @@ int wmain(int argc, wchar_t** argv) {
                 throw std::runtime_error("Cannot enable message reads");
             }
             Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
-            const auto result = exchangeSelection(
-                pipe.get(), name, processKey(GetCurrentProcess(), GetCurrentProcessId()), stop.get(), 3000);
-            if (result != SelectionStatus::Verified) {
+            const auto result =
+                scope_client ? exchangeScopeProbe(pipe.get(), name,
+                                                  mode == L"--scope-host"
+                                                      ? skewer::traffic::RoutingScope::WholeHost
+                                                      : skewer::traffic::RoutingScope::Applications,
+                                                  stop.get(), 3000)
+                             : exchangeSelection(pipe.get(), name,
+                                                 processKey(GetCurrentProcess(), GetCurrentProcessId()),
+                                                 stop.get(), 3000);
+            const auto expected =
+                scope_client ? SelectionStatus::ScopeUnsupported : SelectionStatus::Verified;
+            if (result != expected) {
                 throw std::runtime_error("Selection rejected");
             }
-            std::cout
-                << "PASS: SCM-authenticated service verified client process; routing remains disabled\n";
+            std::cout << (scope_client
+                              ? "PASS: SCM-authenticated scope probe reports unsupported; no routing grant\n"
+                              : "PASS: SCM-authenticated service verified client process; routing remains "
+                                "disabled\n");
             return 0;
         }
         if (mode != L"--service" || argc != 5) {

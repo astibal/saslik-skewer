@@ -217,14 +217,14 @@ SelectionResult serveSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {
     return result;
 }
 
-SelectionStatus exchangeSelection(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
-                                  HANDLE cancel, DWORD timeout_ms) {
+namespace {
+SelectionReply exchangeRequest(HANDLE pipe, const std::wstring& service_name, SelectionRequest request,
+                               HANDLE cancel, DWORD timeout_ms) {
     if (!timeout_ms || timeout_ms > 60000 || !cancel || cancel == INVALID_HANDLE_VALUE) {
         throw std::invalid_argument("Invalid client exchange budget or cancellation event");
     }
     const auto deadline = GetTickCount64() + timeout_ms;
     auto server = verifySelectionService(pipe, service_name);
-    auto request = encodeSelectionRequest(target);
     {
         Operation write(pipe);
         if (write.transfer(request.data(), request.size(), true, cancel, deadline) != request.size()) {
@@ -241,7 +241,21 @@ SelectionStatus exchangeSelection(HANDLE pipe, const std::wstring& service_name,
     if (WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
         throw std::runtime_error("Selection service exited during exchange");
     }
-    return decodeSelectionReply(reply);
+    return reply;
+}
+} // namespace
+
+SelectionStatus exchangeSelection(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
+                                  HANDLE cancel, DWORD timeout_ms) {
+    return decodeSelectionReply(
+        exchangeRequest(pipe, service_name, encodeSelectionRequest(target), cancel, timeout_ms));
+}
+
+SelectionStatus exchangeScopeProbe(HANDLE pipe, const std::wstring& service_name,
+                                   skewer::traffic::RoutingScope scope, HANDLE cancel, DWORD timeout_ms) {
+    const auto caller = processKey(GetCurrentProcess(), GetCurrentProcessId());
+    return decodeScopeReply(
+        exchangeRequest(pipe, service_name, encodeScopeProbe(caller, scope), cancel, timeout_ms));
 }
 
 void finishSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {

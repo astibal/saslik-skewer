@@ -91,8 +91,11 @@ followed by the caller PID/creation time. The service authenticates that identit
 against the pipe token. It currently returns `ScopeUnsupported` for both scopes:
 integrated routing is not exposed yet. No target handle is returned to the worker
 and no policy is changed. Existing process validation messages/replies are
-unchanged; older servers reject the new operation instead of guessing. Client
-exchange helpers and GUI capability display remain to be wired up.
+unchanged; older servers reject the new operation instead of guessing. The client
+exchange helper now pins the SCM service identity, derives its own PID/birth,
+and shares the bounded, cancellable transport with selection validation. A
+`Verified` process reply is rejected for a scope query rather than interpreted
+as routing support. GUI capability display remains to be wired up.
 
 ## Windows implementation order
 
