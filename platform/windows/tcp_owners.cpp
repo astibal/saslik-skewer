@@ -44,9 +44,7 @@ void appendTable(ULONG family, std::vector<TcpOwnerRow>& rows, Convert convert) 
         for (DWORD i = 0; i < count; ++i) {
             Value row{};
             std::memcpy(&row, bytes.data() + offset + i * sizeof(Value), sizeof(row));
-            if (row.dwOwningPid) {
-                rows.push_back(convert(row));
-            }
+            rows.push_back(convert(row));
         }
         return;
     }
@@ -91,7 +89,7 @@ std::vector<std::uint32_t> tcpOwnerCandidates(std::span<const TcpOwnerRow> rows,
     }
     std::vector<std::uint32_t> result;
     for (const auto& row : rows) {
-        if (row.pid && row.tuple == tuple) {
+        if (row.tuple == tuple) {
             result.push_back(row.pid);
         }
     }

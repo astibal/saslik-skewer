@@ -19,7 +19,7 @@ struct TcpOwnerSnapshot {
 TcpOwnerSnapshot captureTcpOwners();
 
 // Outbound tuple only. The caller explicitly reverses inbound packets.
-// Returns distinct observed PIDs, NOT authenticated process identities or
+// Returns distinct observed PIDs (zero means unavailable ownership), NOT authenticated identities or
 // proof of uniqueness. Tables are not atomic with each other or with packets;
 // PID reuse, compartments and concurrent socket changes remain external checks.
 std::vector<std::uint32_t> tcpOwnerCandidates(std::span<const TcpOwnerRow> rows,

@@ -23,6 +23,9 @@ int main() {
                     "Competing owner disappeared or duplicate survived");
             require(tcpOwnerCandidates(rows, tuple.reversed()) == std::vector<std::uint32_t>({7}),
                     "Reverse tuple was treated as outbound");
+            rows.push_back({tuple, 0});
+            require(tcpOwnerCandidates(rows, tuple) == std::vector<std::uint32_t>({0, 42, 99}),
+                    "Unavailable TCP owner was silently discarded");
             tuple.destination_port++;
             require(tcpOwnerCandidates(rows, tuple).empty(), "Different port matched");
             tuple.protocol = 17;

@@ -239,3 +239,18 @@ health for this callback. Deterministic tests exercise changes during resolution
 This closes a stale-precheck window, not an atomic check-and-send guarantee.
 The downstream pump must still reject queued work when its own epoch stops;
 these checks do not turn diagnostic socket evidence into an ownership authority.
+
+### Combined diagnostic decision
+
+`assessOwnerEvidence` combines a lifecycle match for the full PID/creation-time
+identity with all matching snapshot candidates. It reports explicit reasons for
+missing, conflicting, ambiguous, unavailable or stale evidence. Freshness is
+measured from collection start, so a slow query cannot acquire a fresh lease by
+finishing late. Invalid time ordering and malformed observed matches are rejected.
+TCP snapshots now retain PID-zero rows too, rather than hiding unavailable owners.
+
+The VM packet fixture requires corroboration for TCP CONNECT and UDP FLOW plus
+their independent tables. Its one-second age bound is a fixture setting, not a
+production guarantee. `Corroborated` is intentionally not `PacketOwner::Unique`:
+the generic service routing policy and physical-egress acceptance tests remain
+unfinished. No diagnostic decision automatically grants packet release.

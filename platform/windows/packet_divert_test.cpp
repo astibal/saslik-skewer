@@ -2,6 +2,7 @@
 #include "flow_tracking.hpp"
 #include "pending_packets.hpp"
 #include "selected_packets.hpp"
+#include "owner_evidence.hpp"
 #include "tcp_owners.hpp"
 #include "udp_owners.hpp"
 #include "packet_capture.hpp"
@@ -355,6 +356,11 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
             const auto candidates = traffic::tcpOwnerCandidates(snapshot.rows, *parsed.tuple);
             require(std::find(candidates.begin(), candidates.end(), identity.pid) != candidates.end(),
                     "Independent TCP table did not contain held-SYN owner");
+            require(skewer::traffic::assessOwnerEvidence(
+                        {identity.pid, identity.created}, attempts.lookup(*tracked_tuple), candidates, false,
+                        snapshot.started, snapshot.completed, traffic::TcpOwnerSnapshot::Clock::now(),
+                        std::chrono::seconds(1)) == skewer::traffic::OwnerEvidence::Corroborated,
+                    "TCP lifecycle and snapshot did not corroborate fixture ownership");
             Handle socket_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
             require(static_cast<bool>(socket_event), "Create CONNECT event");
             WINDIVERT_ADDRESS connect_address{};
@@ -411,6 +417,11 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         const skewer::traffic::ProcessIdentity expected{identity.pid, identity.created};
         require(owner.status == skewer::traffic::FlowIndex::Status::Observed && owner.process == expected,
                 "Held first packet could not be correlated with fixture process");
+        require(skewer::traffic::assessOwnerEvidence(
+                    expected, owner, udp_candidates.pids, udp_candidates.unknown_owner,
+                    udp_snapshot.started, udp_snapshot.completed, traffic::UdpOwnerSnapshot::Clock::now(),
+                    std::chrono::seconds(1)) == skewer::traffic::OwnerEvidence::Corroborated,
+                "UDP flow and snapshot did not corroborate fixture ownership");
         const auto reverse = observer.lookup(parsed.tuple->reversed());
         require(reverse.status == skewer::traffic::FlowIndex::Status::Observed && reverse.process == expected,
                 "Reverse tuple lost fixture identity");
