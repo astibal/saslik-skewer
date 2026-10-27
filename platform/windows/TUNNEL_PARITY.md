@@ -85,6 +85,15 @@ for this scope too; this feature does not promise a persistent kernel kill switc
 No whole-host route changes are currently enabled. Acceptance testing must use
 an isolated VM with out-of-band console access before exposing this control.
 
+The selection pipe now accepts a read-only scope probe: the existing 20-byte
+version-1 envelope uses byte 6 = 2, byte 7 = scope (0 applications, 1 whole host),
+followed by the caller PID/creation time. The service authenticates that identity
+against the pipe token. It currently returns `ScopeUnsupported` for both scopes:
+integrated routing is not exposed yet. No target handle is returned to the worker
+and no policy is changed. Existing process validation messages/replies are
+unchanged; older servers reject the new operation instead of guessing. Client
+exchange helpers and GUI capability display remain to be wired up.
+
 ## Windows implementation order
 
 1. Run the existing platform-independent policy and protocol tests on Windows.

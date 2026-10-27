@@ -24,7 +24,7 @@ template <typename Action> void rejects(Action action, const char* message) {
 }
 void transportTest() {
     const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
-    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+    for (unsigned scenario = 0; scenario < 7; ++scenario) {
         const auto name = L"\\\\.\\pipe\\SkewerTransportFixture-" + std::to_wstring(key.pid) + L"-" +
                           std::to_wstring(scenario);
         PSECURITY_DESCRIPTOR raw{};
@@ -49,7 +49,11 @@ void transportTest() {
         Handle cancel(CreateEventW(nullptr, TRUE, scenario == 2, nullptr));
         require(static_cast<bool>(cancel), "Create cancellation event");
         if (scenario != 1 && scenario != 2) {
-            const auto encoded = encodeSelectionRequest(key);
+            const auto encoded =
+                scenario >= 5
+                    ? encodeScopeProbe(key, scenario == 5 ? skewer::traffic::RoutingScope::Applications
+                                                          : skewer::traffic::RoutingScope::WholeHost)
+                    : encodeSelectionRequest(key);
             auto bytes = std::vector<std::uint8_t>(encoded.begin(), encoded.end());
             if (scenario == 3) {
                 bytes.push_back(0);
@@ -68,7 +72,9 @@ void transportTest() {
             continue;
         }
         auto result = serveSelection(server.get(), cancel.get(), 2000);
-        const auto expected = scenario == 0 ? SelectionStatus::Verified : SelectionStatus::InvalidRequest;
+        const auto expected = scenario >= 5   ? SelectionStatus::ScopeUnsupported
+                              : scenario == 0 ? SelectionStatus::Verified
+                                              : SelectionStatus::InvalidRequest;
         require(decodeSelectionReply(result.reply) == expected && bool(result.target) == (scenario == 0),
                 "Wrong transport result");
         SelectionReply reply{};
@@ -161,8 +167,8 @@ void test() {
     require(own.running(), "Pinned process was lost");
 }
 void requestTest() {
-    for (auto status :
-         {SelectionStatus::Verified, SelectionStatus::InvalidRequest, SelectionStatus::Denied}) {
+    for (auto status : {SelectionStatus::Verified, SelectionStatus::InvalidRequest, SelectionStatus::Denied,
+                        SelectionStatus::ScopeUnsupported}) {
         const auto reply = encodeSelectionReply(status);
         require(decodeSelectionReply(reply) == status, "Reply status changed");
         for (std::size_t size = 0; size < reply.size(); ++size) {
@@ -178,6 +184,24 @@ void requestTest() {
     require(!malformed.target && decodeSelectionReply(malformed.reply) == SelectionStatus::InvalidRequest,
             "Malformed request reached authorization");
     const ProcessKey key{0x12345678, 0x123456789abcdef0ULL};
+    for (auto scope :
+         {skewer::traffic::RoutingScope::Applications, skewer::traffic::RoutingScope::WholeHost}) {
+        const auto probe = encodeScopeProbe(key, scope);
+        const auto decoded = decodeScopeProbe(probe);
+        require(decoded.caller == key && decoded.scope == scope, "Scope probe changed");
+        rejects([&] { decodeSelectionRequest(probe); }, "Scope probe became process selection");
+        for (std::size_t length = 0; length < probe.size(); ++length) {
+            rejects([&] { decodeScopeProbe(std::span(probe).first(length)); }, "Short probe accepted");
+        }
+        auto malformed_probe = probe;
+        malformed_probe[7] = 2;
+        auto rejected = processSelectionRequest(INVALID_HANDLE_VALUE, malformed_probe);
+        require(decodeSelectionReply(rejected.reply) == SelectionStatus::InvalidRequest && !rejected.target,
+                "Invalid scope reached authentication");
+        auto extended_probe = std::vector<std::uint8_t>(probe.begin(), probe.end());
+        extended_probe.push_back(0);
+        rejects([&] { decodeScopeProbe(extended_probe); }, "Extended probe accepted");
+    }
     const auto encoded = encodeSelectionRequest(key);
     require(encoded[8] == 0x78 && encoded[11] == 0x12 && encoded[12] == 0xf0 && encoded[19] == 0x12,
             "Incorrect wire byte order");

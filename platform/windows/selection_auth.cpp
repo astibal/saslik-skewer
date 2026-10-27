@@ -4,13 +4,19 @@
 namespace skewer::windows {
 SelectionResult processSelectionRequest(HANDLE pipe, std::span<const std::uint8_t> request) {
     ProcessKey key{};
+    const bool scope_probe = request.size() == SelectionRequest{}.size() && request[6] == 2;
     try {
-        key = decodeSelectionRequest(request);
+        key = scope_probe ? decodeScopeProbe(request).caller : decodeSelectionRequest(request);
     } catch (const std::invalid_argument&) {
         return {encodeSelectionReply(SelectionStatus::InvalidRequest), nullptr};
     }
     try {
         auto target = authorizePipeSelection(pipe, key);
+        if (scope_probe) {
+            // No integrated routing backend is exposed yet. Authentication is
+            // not readiness; a probe must not become a process attachment.
+            return {encodeSelectionReply(SelectionStatus::ScopeUnsupported), nullptr};
+        }
         return {encodeSelectionReply(SelectionStatus::Verified), std::move(target)};
     } catch (const std::runtime_error&) {
         // Do not disclose whether another user's process exists. Stale,

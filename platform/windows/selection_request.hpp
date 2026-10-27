@@ -1,5 +1,7 @@
 #pragma once
 #include "processes.hpp"
+#include "../traffic/routing_scope.hpp"
+#include <algorithm>
 #include <array>
 #include <span>
 #include <stdexcept>
@@ -11,11 +13,16 @@ namespace skewer::windows {
 using SelectionRequest = std::array<std::uint8_t, 20>;
 
 // Deliberately no "routed" status: this operation only verifies identity.
-enum class SelectionStatus : std::uint8_t { Verified = 0, InvalidRequest = 1, Denied = 2 };
+enum class SelectionStatus : std::uint8_t {
+    Verified = 0,
+    InvalidRequest = 1,
+    Denied = 2,
+    ScopeUnsupported = 3
+};
 using SelectionReply = std::array<std::uint8_t, 8>;
 
 inline SelectionReply encodeSelectionReply(SelectionStatus status) {
-    if (static_cast<unsigned>(status) > static_cast<unsigned>(SelectionStatus::Denied)) {
+    if (static_cast<unsigned>(status) > static_cast<unsigned>(SelectionStatus::ScopeUnsupported)) {
         throw std::invalid_argument("Unknown selection status");
     }
     return {'S', 'K', 'W', 'A', 1, 0, static_cast<std::uint8_t>(status), 0};
@@ -24,7 +31,7 @@ inline SelectionReply encodeSelectionReply(SelectionStatus status) {
 inline SelectionStatus decodeSelectionReply(std::span<const std::uint8_t> bytes) {
     if (bytes.size() != SelectionReply{}.size() || bytes[0] != 'S' || bytes[1] != 'K' || bytes[2] != 'W' ||
         bytes[3] != 'A' || bytes[4] != 1 || bytes[5] != 0 ||
-        bytes[6] > static_cast<unsigned>(SelectionStatus::Denied) || bytes[7] != 0) {
+        bytes[6] > static_cast<unsigned>(SelectionStatus::ScopeUnsupported) || bytes[7] != 0) {
         throw std::invalid_argument("Invalid selection reply");
     }
     return static_cast<SelectionStatus>(bytes[6]);
@@ -67,5 +74,32 @@ inline ProcessKey decodeSelectionRequest(std::span<const std::uint8_t> bytes) {
         throw std::invalid_argument("Selection requires a complete process identity");
     }
     return key;
+}
+// Operation 2 probes scope support; it never activates routing. Authenticate
+// the supplied caller identity against the pipe token before answering.
+inline SelectionRequest encodeScopeProbe(ProcessKey caller, skewer::traffic::RoutingScope scope) {
+    if (scope != skewer::traffic::RoutingScope::Applications &&
+        scope != skewer::traffic::RoutingScope::WholeHost) {
+        throw std::invalid_argument("Invalid routing scope");
+    }
+    auto request = encodeSelectionRequest(caller);
+    request[6] = 2;
+    request[7] = scope == skewer::traffic::RoutingScope::WholeHost ? 1 : 0;
+    return request;
+}
+struct ScopeProbe {
+    ProcessKey caller;
+    skewer::traffic::RoutingScope scope;
+};
+inline ScopeProbe decodeScopeProbe(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() != SelectionRequest{}.size() || bytes[6] != 2 || bytes[7] > 1) {
+        throw std::invalid_argument("Invalid scope probe");
+    }
+    SelectionRequest normalized{};
+    std::copy(bytes.begin(), bytes.end(), normalized.begin());
+    normalized[6] = 1;
+    normalized[7] = 0;
+    return {decodeSelectionRequest(normalized), bytes[7] == 1 ? skewer::traffic::RoutingScope::WholeHost
+                                                              : skewer::traffic::RoutingScope::Applications};
 }
 } // namespace skewer::windows
