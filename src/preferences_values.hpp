@@ -12,17 +12,24 @@ inline int number(const char* key, int fallback, int minimum, int maximum)
 }
 inline QString tuntomBinary()
 {
-    return QSettings().value("tunnel/binary", "/usr/libexec/saslik/tuntom").toString();
+    const auto configured = QSettings().value("tunnel/binary").toString().trimmed();
+    if (!configured.isEmpty()) return configured;
+    QString error;
+    return Tuntom::detectBinary(error);
 }
 inline bool developmentBinaryAcknowledged()
 {
-    return Tuntom::developmentBinaryAllowed && !tuntomBinary().isEmpty()
-        && QSettings().value("tunnel/developmentAcknowledgedPath").toString() == tuntomBinary();
+    const auto configured = QSettings().value("tunnel/binary").toString().trimmed();
+    return Tuntom::developmentBinaryAllowed && !configured.isEmpty()
+        && QSettings().value("tunnel/developmentAcknowledgedPath").toString() == configured;
 }
 inline QString tunnelPreflightError()
 {
     QString error;
-    if (!Tuntom::checkedBinary(tuntomBinary(), error, developmentBinaryAcknowledged()).isEmpty()) return {};
+    const auto configured = QSettings().value("tunnel/binary").toString().trimmed();
+    const auto binary = configured.isEmpty() ? Tuntom::detectBinary(error)
+        : Tuntom::checkedBinary(configured, error, developmentBinaryAcknowledged());
+    if (!binary.isEmpty()) return {};
     return error + (Tuntom::developmentBinaryAllowed
         ? QString(". Open Preferences > Tunnel to select an installed transport or explicitly acknowledge your development executable.")
         : QString(". Install a protected root-owned tuntom executable, then select it in Preferences > Tunnel. This build does not permit development exceptions."));

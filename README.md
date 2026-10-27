@@ -476,3 +476,12 @@ DNS server. Record the transport state and compare a full support package from
 each phase. A loopback stub resolver remains local; its outbound requests follow
 host routing and configured destination exemptions. Skewer does not rewrite DNS
 server configuration. IPv6 forwarding remains deferred.
+
+Tuntom executable discovery checks `/usr/bin/tuntom`,
+`/usr/libexec/saslik/tuntom`, then `/usr/libexec/tuntom`, accepting only a
+root-owned executable in protected directories. It does not search the user's
+`PATH` or automatically enable development exceptions. An explicitly saved path
+always takes precedence, including a missing path. To enable detection after
+using an older version, clear the executable field in Preferences > Tunnel
+(or enter `auto` in the TUI). Saving unrelated settings keeps detection enabled.
+The detected path is displayed in Preferences and included in support diagnostics.

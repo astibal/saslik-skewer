@@ -33,7 +33,7 @@ int main(int argc, char** argv)
             return dialog.grab().save(QString::fromLocal8Bit(argv[2])) ? 0 : 26;
         }
         auto* path = dialog.findChild<QLineEdit*>("tunnel/binary");
-        if (!path || path->text() != "/usr/libexec/saslik/tuntom") return 2;
+        if (!path || !path->text().isEmpty()) return 2;
         path->setText("/opt/tuntom/tuntom");
         dialog.reject();
         if (QSettings().contains("tunnel/binary")) return 3;
@@ -99,4 +99,27 @@ int main(int argc, char** argv)
         QSettings().setValue("tunnel/binary", executable.fileName()+".other");
         if (Preferences::developmentBinaryAcknowledged()) return 24;
     }
+    // Clearing a custom path re-enables detection; saving unrelated preferences
+    // must not pin today's detected path or retain a development acknowledgement.
+    {
+        PreferencesDialog dialog;
+        dialog.findChild<QLineEdit*>("tunnel/binary")->clear();
+        dialog.findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+        if (dialog.result() != QDialog::Accepted || QSettings().contains("tunnel/binary")
+            || QSettings().contains("tunnel/developmentAcknowledgedPath")) return 27;
+        QString detection_error;
+        if (Preferences::tuntomBinary() != Tuntom::detectBinary(detection_error)) return 28;
+        PreferencesDialog again;
+        again.findChild<QSpinBox*>("refresh/processSeconds")->setValue(14);
+        again.findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+        if (QSettings().contains("tunnel/binary")) return 29;
+    }
+    QSettings().setValue("tunnel/binary", "/missing/explicit/tuntom");
+    if (Preferences::tuntomBinary() != "/missing/explicit/tuntom"
+        || !Preferences::tunnelPreflightError().contains("/missing/explicit/tuntom")) return 30;
+    // Autodetection must never use a user-writable candidate, even in Debug.
+    executable.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    if (!Tuntom::detectBinary(error, {executable.fileName(), temporary.path() + "/absent"}).isEmpty()
+        || !error.contains(executable.fileName()) || !error.contains("absent")) return 31;
+
 }

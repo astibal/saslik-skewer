@@ -95,6 +95,7 @@ inline Files collect(bool full, const QString& version) {
         if (settings.contains(key)) configuration.insert(key, QJsonValue::fromVariant(settings.value(key)));
     QString binaryError;
     const auto binary = Tuntom::checkedBinary(Preferences::tuntomBinary(), binaryError, Preferences::developmentBinaryAcknowledged());
+    configuration.insert("transport_detected_path", Preferences::tuntomBinary());
     configuration.insert("transport_ready", !binary.isEmpty());
     configuration.insert("transport_error", binaryError);
     configuration.insert("host_guard_present", QFile::exists("/run/skewer-host.json"));

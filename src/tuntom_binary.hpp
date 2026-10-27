@@ -1,6 +1,7 @@
 #pragma once
 #include <QDir>
 #include <QFileInfo>
+#include <QStringList>
 #include <sys/stat.h>
 
 namespace Tuntom {
@@ -46,4 +47,22 @@ inline QString checkedBinary(const QString& path, QString& error, bool acknowled
     error.clear();
     return canonical;
 }
+inline QStringList installedBinaryPaths()
+{
+    return {"/usr/bin/tuntom", "/usr/libexec/saslik/tuntom", "/usr/libexec/tuntom"};
+}
+inline QString detectBinary(QString& error, const QStringList& candidates = installedBinaryPaths())
+{
+    QStringList failures;
+    for (const auto& candidate : candidates) {
+        QString reason;
+        // Autodetection never grants a development exception or searches PATH.
+        const auto binary = checkedBinary(candidate, reason);
+        if (!binary.isEmpty()) { error.clear(); return binary; }
+        failures << candidate + ": " + reason;
+    }
+    error = "No trusted Tuntom executable found. Checked: " + failures.join("; ");
+    return {};
+}
+
 }

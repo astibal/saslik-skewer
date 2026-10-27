@@ -74,7 +74,8 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     refresh->addRow(refresh_note);
 
     auto* tunnel = page(tr("Tunnel"));
-    auto* binary = new QLineEdit(Preferences::tuntomBinary(), this);
+    auto* binary = new QLineEdit(settings.value("tunnel/binary").toString(), this);
+    binary->setPlaceholderText(tr("Automatic detection (leave empty)"));
     binary->setObjectName("tunnel/binary");
     auto* row = new QHBoxLayout;
     row->addWidget(binary, 1);
@@ -102,9 +103,9 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     const auto inspect = [binary, check, risk, risk_note, buttons] {
         QString error;
         const auto selected = binary->text().trimmed();
-        const auto path = Tuntom::checkedBinary(selected, error);
+        const auto path = selected.isEmpty() ? Tuntom::detectBinary(error) : Tuntom::checkedBinary(selected, error);
         const bool warning = path.isEmpty() && QFileInfo(selected).exists();
-        check->setText(path.isEmpty() ? tr("Not ready: %1").arg(error) : tr("Executable checks passed: %1").arg(path));
+        check->setText(path.isEmpty() ? tr("Not ready: %1").arg(error) : (selected.isEmpty() ? tr("Automatically detected: %1") : tr("Executable checks passed: %1")).arg(path));
         risk->setVisible(warning && Tuntom::developmentBinaryAllowed);
         risk_note->setVisible(warning);
         risk->setProperty("required", warning && Tuntom::developmentBinaryAllowed);
@@ -129,7 +130,8 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     auto* tunnel_note = new QLabel((Tuntom::developmentBinaryAllowed
         ? tr("Debug build: a development executable is allowed only after acknowledging the warning for its path. ")
         : tr("Release build: requires a root-owned tuntom executable in protected directories. "))
-        + tr("Missing paths may be saved before installation. The new path applies to the next tunnel start; "
+        + tr("Leave the path empty to search /usr/bin/tuntom, /usr/libexec/saslik/tuntom, then /usr/libexec/tuntom. "
+             "Missing paths may be saved before installation. The new path applies to the next tunnel start; "
              "a running tunnel is not restarted."), this);
     tunnel_note->setWordWrap(true);
     tunnel->addRow(tunnel_note);
@@ -181,7 +183,7 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     connect(buttons->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, this, [=] {
         for (const auto& item : toggles) item.widget->setChecked(item.fallback);
         for (const auto& item : numbers) item.widget->setValue(item.fallback);
-        binary->setText("/usr/libexec/saslik/tuntom");
+        binary->clear();
         risk->setChecked(false);
         inspect();
     });
@@ -190,7 +192,7 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
         inspect();
         if (risk->property("required").toBool() && !risk->isChecked()) return;
         const auto path = binary->text().trimmed();
-        if (!QDir::isAbsolutePath(path) || path.contains(QChar::Null)) {
+        if ((!path.isEmpty() && !QDir::isAbsolutePath(path)) || path.contains(QChar::Null)) {
             QMessageBox::warning(this, tr("Tuntom"), tr("Enter an absolute executable path.")); return;
         }
         QSettings saved;
@@ -200,7 +202,8 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         for (const auto& item : toggles) saved.setValue(item.key, item.widget->isChecked());
         for (const auto& item : numbers) saved.setValue(item.key, item.widget->value());
-        saved.setValue("tunnel/binary", path);
+        if (path.isEmpty()) saved.remove("tunnel/binary");
+        else saved.setValue("tunnel/binary", path);
         if (Tuntom::developmentBinaryAllowed && risk->isChecked())
             saved.setValue("tunnel/developmentAcknowledgedPath", path);
         else saved.remove("tunnel/developmentAcknowledgedPath");

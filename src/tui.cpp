@@ -783,7 +783,9 @@ void Tui::preferences()
     QStringList labels;
     for (const auto& option : options) labels << QString("%1: %2").arg(option.label)
         .arg(QSettings().value(option.key, option.fallback).toInt());
-    labels << "Tuntom executable: " + Preferences::tuntomBinary();
+    labels << "Tuntom executable: " + (QSettings().value("tunnel/binary").toString().trimmed().isEmpty()
+        ? "auto: " + (Preferences::tuntomBinary().isEmpty() ? QString("not found") : Preferences::tuntomBinary())
+        : Preferences::tuntomBinary());
     labels << "Destination exemptions";
     const int selected = choose("Shared Skewer settings", labels);
     if (selected < 0) return;
@@ -796,8 +798,15 @@ void Tui::preferences()
         }
         QSettings().setValue("routing/exemptions", normalized);
     } else if (selected == int(std::size(options))) {
-        const auto path = prompt("Absolute Tuntom executable path");
+        const auto path = prompt("Absolute Tuntom executable path, or auto");
         if (path.isEmpty()) return;
+        if (path == "auto") {
+            QSettings().remove("tunnel/binary");
+            QSettings().remove("tunnel/developmentAcknowledgedPath");
+            const auto error = Preferences::tunnelPreflightError();
+            status_ = error.isEmpty() ? "Automatic Tuntom detection enabled: " + Preferences::tuntomBinary() : error;
+            return;
+        }
         QString error;
         bool development = false;
         if (Tuntom::checkedBinary(path, error).isEmpty() && Tuntom::developmentBinaryAllowed)
