@@ -1,5 +1,8 @@
 #include "selection_transport.hpp"
 #include "service_host.hpp"
+#include "selection_registry.hpp"
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 
 using namespace skewer::windows;
@@ -18,7 +21,23 @@ int wmain(int argc, wchar_t** argv) {
             throw std::invalid_argument("Invalid fixture service name");
         }
         const bool scope_client = mode == L"--scope-applications" || mode == L"--scope-host";
-        if ((mode == L"--client" || scope_client) && argc == 3) {
+        const auto number = [](const wchar_t* text) {
+            const std::wstring input(text);
+            if (input.empty() || input.find_first_not_of(L"0123456789") != std::wstring::npos) {
+                throw std::invalid_argument("Invalid process identity");
+            }
+            return std::stoull(input);
+        };
+        const bool target_client = mode == L"--client-target" && argc == 5;
+        if (((mode == L"--client" || scope_client) && argc == 3) || target_client) {
+            auto target = processKey(GetCurrentProcess(), GetCurrentProcessId());
+            if (target_client) {
+                const auto pid = number(argv[3]), birth = number(argv[4]);
+                if (!pid || pid > MAXDWORD || !birth) {
+                    throw std::invalid_argument("Invalid client target identity");
+                }
+                target = {static_cast<DWORD>(pid), birth};
+            }
             const auto path = L"\\\\.\\pipe\\SkewerSelection-" + name;
             Handle pipe(CreateFileW(
                 path.c_str(), FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA, 0,
@@ -32,15 +51,13 @@ int wmain(int argc, wchar_t** argv) {
                 throw std::runtime_error("Cannot enable message reads");
             }
             Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
-            const auto result =
-                scope_client ? exchangeScopeProbe(pipe.get(), name,
-                                                  mode == L"--scope-host"
-                                                      ? skewer::traffic::RoutingScope::WholeHost
-                                                      : skewer::traffic::RoutingScope::Applications,
-                                                  stop.get(), 3000)
-                             : exchangeSelection(pipe.get(), name,
-                                                 processKey(GetCurrentProcess(), GetCurrentProcessId()),
-                                                 stop.get(), 3000);
+            const auto result = scope_client
+                                    ? exchangeScopeProbe(pipe.get(), name,
+                                                         mode == L"--scope-host"
+                                                             ? skewer::traffic::RoutingScope::WholeHost
+                                                             : skewer::traffic::RoutingScope::Applications,
+                                                         stop.get(), 3000)
+                                    : exchangeSelection(pipe.get(), name, target, stop.get(), 3000);
             const auto expected =
                 scope_client ? SelectionStatus::ScopeUnsupported : SelectionStatus::Verified;
             if (result != expected) {
@@ -55,13 +72,6 @@ int wmain(int argc, wchar_t** argv) {
         if (mode != L"--service" || argc != 5) {
             throw std::invalid_argument("Invalid fixture mode");
         }
-        const auto number = [](const wchar_t* text) {
-            const std::wstring input(text);
-            if (input.empty() || input.find_first_not_of(L"0123456789") != std::wstring::npos) {
-                throw std::invalid_argument("Invalid process identity");
-            }
-            return std::stoull(input);
-        };
         const auto pid = number(argv[3]), birth = number(argv[4]);
         if (!pid || pid > MAXDWORD || !birth) {
             throw std::invalid_argument("Invalid process identity");
@@ -79,18 +89,32 @@ int wmain(int argc, wchar_t** argv) {
             }
             Handle token(raw);
             auto pipe = createSelectionPipe(name, token.get());
+            wchar_t module[32768]{};
+            const auto length = GetModuleFileNameW(nullptr, module, 32768);
+            if (!length || length >= 32768) {
+                return 53;
+            }
+            std::ofstream log(std::filesystem::path(module).parent_path() / (name + L".status"));
+            log.exceptions(std::ios::badbit | std::ios::failbit);
+            SelectionRegistry selected;
             const auto end = GetTickCount64() + 60000;
             while (WaitForSingleObject(stop, 0) == WAIT_TIMEOUT && GetTickCount64() < end) {
                 try {
                     acceptSelection(pipe->get(), stop, 500);
                     auto result = serveSelection(pipe->get(), stop, 3000);
+                    if (result.target) {
+                        // Fixture-only retention: the validation protocol still
+                        // grants no network policy or routed status to clients.
+                        selected.retain(std::move(result.target));
+                    }
                     finishSelection(pipe->get(), stop, 1000);
-                    // This fixture validates identity only, never installs policy.
-                    // The verified target lives through completion of the reply.
                 } catch (const std::runtime_error&) {
                     // Isolate a failed or idle connection from the next client.
                 }
                 DisconnectNamedPipe(pipe->get());
+                selected.reap();
+                log << "after_disconnect live=" << selected.snapshot().size() << " routing_ready=false"
+                    << std::endl;
             }
             return 0;
         });

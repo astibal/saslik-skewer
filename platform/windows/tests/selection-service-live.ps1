@@ -36,6 +36,17 @@ try {
         & $exe $scope $name
         if ($LASTEXITCODE -ne 0) { throw "Authenticated scope probe failed: $scope" }
     }
+    # The short-lived IPC client selects this long-lived launcher, then exits.
+    # Its disconnect must not erase the service-owned, pinned selection.
+    Start-Sleep -Milliseconds 100
+    & $exe --client-target $name $PID $birth
+    if ($LASTEXITCODE -ne 0) { throw 'Retained target selection failed' }
+    Start-Sleep -Milliseconds 700
+    $status = Join-Path $root ($name + '.status')
+    if ((Get-Content $status -Tail 1) -ne 'after_disconnect live=1 routing_ready=false') {
+        throw 'Service lost the selected target after its IPC client disconnected'
+    }
+    Write-Output 'PASS: service retains selected process after selecting client exits; no routing claim'
     Stop-Service $name
     $service = Get-Service $name
     try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10)) }

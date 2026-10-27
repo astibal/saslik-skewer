@@ -20,6 +20,20 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ### Authenticated routing capability queries
 
+The service-worker `SelectionRegistry` retains already-authorized process handles
+independently of IPC connection lifetime. Membership uses PID plus creation time;
+each remove/re-add creates a new generation so stale queued work or releases
+cannot affect a later selection. Capacity is bounded, dead processes are excluded
+from live snapshots, and releasing/destroying the registry never terminates an
+application. It has one owner thread and no global locks. This is desired-selection
+bookkeeping, not an installed interception policy or a routing readiness signal.
+
+`selection_registry_test` checks duplicate retries, capacity, stale identities,
+generations, process exit and non-terminating release using an owned child process.
+The live service fixture also retains an authorized long-lived target after the
+short-lived selecting IPC client exits. This fixture retention is not a new
+production Attach command; GUI Attach stays disabled pending packet enforcement.
+
 `exchangeScopeProbe()` queries application or whole-host scope through the same
 SCM-authenticated, bounded IPC exchange as process validation. It derives the
 caller identity locally and does not attach processes or modify policy. Both
