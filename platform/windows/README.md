@@ -28,6 +28,24 @@ Windows pairing files are DPAPI-protected for the invoking user; plaintext files
 are rejected. This does not yet give a SYSTEM service access to the credentials:
 that handoff must use authenticated IPC, not machine-wide credential storage.
 
+`skewer-control report skewer://HOST:PORT/pair` sends an authenticated presence
+report and remembers the successfully validated endpoint for the GUI. The
+Windows **Saslik** tab resumes reporting every ten seconds, including while
+minimized. Network I/O runs off the UI thread. Stop reporting and closing the
+window leave pairing, applications and routing untouched; Saslik marks presence
+offline after its report timeout (currently thirty seconds).
+
+The device list is populated by reports, not enrollment alone. Reports contain
+the hostname and Skewer version, with empty CA observations until Windows trust
+inventory is implemented. Online presence must not be interpreted as active
+application routing or successful CA installation. Invitations must only be
+submitted through the pairing command's stdin, not the endpoint field.
+
+`client_report_test` covers the minimal report schema, empty trust observations,
+and rejection of invitation-bearing endpoints without leaking their contents.
+`tests/client-report-smoke.ps1` runs on the interactive Windows desktop and
+checks accepted reports, renewal while minimized, and stop/start controls.
+
 Build the pinned OpenSSL 3.5.9 archive with `sh build-openssl.sh ARCHIVE PREFIX`
 inside the cross-build container, then add that prefix to `CMAKE_PREFIX_PATH`
 and configure `OPENSSL_ROOT_DIR=PREFIX` and `SKEWER_WINDOWS_PAIRING=ON`.

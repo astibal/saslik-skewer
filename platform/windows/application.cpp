@@ -23,6 +23,11 @@
 #include <QLocalSocket>
 #include <QCryptographicHash>
 #include <QMessageBox>
+#ifdef SKEWER_WINDOWS_PAIRING
+#include "client_report.hpp"
+#include <QSettings>
+#include <QDateTime>
+#endif
 #include <cstdio>
 #include <cstring>
 
@@ -76,6 +81,9 @@ public:
     WindowsWindow() : ApplicationShell(QStringLiteral(SKEWER_VERSION)) {
         buildPage();
         buildLauncher();
+#ifdef SKEWER_WINDOWS_PAIRING
+        buildSaslikPage();
+#endif
         applyPreferences();
         connect(preferencesAction(), &QAction::triggered, this, &WindowsWindow::editPreferences);
         connect(&scan_watcher_, &QFutureWatcher<ScanResult>::finished, this, &WindowsWindow::scanFinished);
@@ -89,6 +97,10 @@ public:
         // Workers only own value arguments. Finish them before destroying the UI;
         // closing Skewer must not terminate any application it launched.
         timer_.stop();
+#ifdef SKEWER_WINDOWS_PAIRING
+        report_timer_.stop();
+        report_watcher_.waitForFinished();
+#endif
         scan_watcher_.waitForFinished();
         launch_watcher_.waitForFinished();
     }
@@ -101,6 +113,88 @@ public:
     }
 
 private:
+#ifdef SKEWER_WINDOWS_PAIRING
+    void buildSaslikPage() {
+        auto* page = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        auto* explanation = new QLabel(
+            tr("Report this paired Windows client to Saslik. "
+               "Online presence does not mean that application routing is active. "
+               "This build does not report certificate-store installation status."),
+            page);
+        explanation->setWordWrap(true);
+        layout->addWidget(explanation);
+        endpoint_ = new QLineEdit(QSettings().value("windows/saslikEndpoint").toString(), page);
+        endpoint_->setPlaceholderText("skewer://HOST:8766/pair (already paired endpoint)");
+        layout->addWidget(endpoint_);
+        report_button_ = new QPushButton(tr("Start reporting"), page);
+        layout->addWidget(report_button_);
+        report_status_ = new QLabel(tr("Not reporting. Pair first using skewer-control pair - ."), page);
+        report_status_->setWordWrap(true);
+        layout->addWidget(report_status_);
+        layout->addStretch();
+        pages()->addTab(page, tr("Saslik"));
+        report_timer_.setInterval(10000);
+        connect(&report_timer_, &QTimer::timeout, this, &WindowsWindow::sendReport);
+        connect(report_button_, &QPushButton::clicked, this, [this] {
+            if (report_timer_.isActive()) {
+                report_timer_.stop();
+                // Do not overlap a new endpoint with an in-flight request.
+                report_button_->setEnabled(!report_watcher_.isRunning());
+                report_button_->setText(tr("Start reporting"));
+                endpoint_->setEnabled(!report_watcher_.isRunning());
+                report_status_->setText(tr("Reporting stopped. Pairing and routing are unchanged."));
+                return;
+            }
+            startReporting();
+        });
+        connect(&report_watcher_, &QFutureWatcher<QString>::finished, this, [this] {
+            if (!report_timer_.isActive()) {
+                endpoint_->setEnabled(true);
+                report_button_->setEnabled(true);
+                return;
+            }
+            const auto error = report_watcher_.result();
+            if (!error.isEmpty()) {
+                report_status_->setText(error + tr(" Retrying in 10 seconds."));
+                return;
+            }
+            QSettings().setValue("windows/saslikEndpoint", endpoint_->text().trimmed());
+            report_status_->setText(tr("Report accepted at %1. Routing status is independent.")
+                                       .arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+        });
+        // A previously validated endpoint resumes presence on the next launch.
+        if (!endpoint_->text().isEmpty()) {
+            startReporting();
+        }
+    }
+
+    void startReporting() {
+        const QUrl endpoint(endpoint_->text().trimmed());
+        if (!endpoint.isValid() || endpoint.scheme() != "skewer" || endpoint.host().isEmpty() ||
+            endpoint.port() <= 0 || endpoint.path() != "/pair" || endpoint.hasFragment() ||
+            endpoint.hasQuery() || !endpoint.userInfo().isEmpty()) {
+            report_status_->setText(tr("Enter a paired skewer://HOST:PORT/pair endpoint, not an invitation."));
+            return;
+        }
+        endpoint_->setEnabled(false);
+        report_button_->setText(tr("Stop reporting"));
+        report_timer_.start();
+        sendReport();
+    }
+
+    void sendReport() {
+        if (report_watcher_.isRunning()) {
+            return;
+        }
+        report_status_->setText(tr("Reporting to Saslik…"));
+        // TLS and DNS run off the GUI thread, including while minimized.
+        const QUrl endpoint(endpoint_->text().trimmed());
+        report_watcher_.setFuture(QtConcurrent::run([endpoint] {
+            return skewer::windows::sendClientReport(endpoint, SKEWER_VERSION);
+        }));
+    }
+#endif
     void buildPage() {
         page_ = new skewer::ui::ApplicationPage(this);
         pages()->addTab(page_, tr("Applications"));
@@ -247,6 +341,13 @@ private:
     QFutureWatcher<ScanResult> scan_watcher_;
     QFutureWatcher<LaunchResult> launch_watcher_;
     QTimer timer_;
+#ifdef SKEWER_WINDOWS_PAIRING
+    QLineEdit* endpoint_{};
+    QPushButton* report_button_{};
+    QLabel* report_status_{};
+    QTimer report_timer_;
+    QFutureWatcher<QString> report_watcher_;
+#endif
 };
 } // namespace
 
