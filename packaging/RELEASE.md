@@ -1,5 +1,24 @@
 Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
 
+### 0.9.50.7
+
+- Linux Whole Host routing for local IPv4 traffic through a direct next hop or
+  Tuntom, with persistent fail-closed protection, explicit host release and
+  blocking of unsupported IPv6. Selected Apps remains available separately.
+- Preferences > Troubleshoot provides Download logs and Download full support
+  package. Local ZIP exports include rotated logs and, optionally, version,
+  configuration, routing and DNS diagnostics. Nothing is uploaded automatically.
+- Diagnostic logs use bounded rotation and redact sensitive values. Pairing
+  files, private keys and credential-bearing helper protocol frames are excluded
+  from support collection.
+- Tunnel connection phases and actionable errors are shown in GUI and TUI.
+  Invalid local transport configuration and missing pairing stop retries until
+  corrected; transient failures retain automatic recovery.
+- Expanded tests cover support archive integrity and redaction, transport
+  preflight and DNS packet routing across host-guard loss and recovery.
+- Updated build dependency documentation and roadmap. DNS monitoring and IPv6
+  forwarding are not part of this release.
+
 ### 0.9.50.6
 
 - Shell status recognizes active Tuntom routes instead of comparing their

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(saslik-skewer VERSION 0.9.50.6 LANGUAGES CXX)
+project(saslik-skewer VERSION 0.9.50.7 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
@@ -101,6 +101,13 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.saslik.skewer.policy
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(diagnostics_test tests/diagnostics_test.cpp)
+    target_include_directories(diagnostics_test PRIVATE src)
+    target_link_libraries(diagnostics_test PRIVATE Qt6::Core)
+    add_test(NAME support_archive COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/support_archive_test.py $<TARGET_FILE:diagnostics_test>)
+    set_tests_properties(support_archive PROPERTIES TIMEOUT 45)
+    add_test(NAME tunnel_preflight COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/tunnel_preflight_test.py $<TARGET_FILE:skewer>)
+    set_tests_properties(tunnel_preflight PROPERTIES TIMEOUT 15)
     add_executable(host_routing_test tests/host_routing_test.cpp)
     target_include_directories(host_routing_test PRIVATE src)
     target_link_libraries(host_routing_test PRIVATE Qt6::Core Qt6::Network)
@@ -249,7 +256,7 @@ if(BUILD_TESTING)
     add_test(NAME tuntom_session COMMAND tuntom_session_test)
     add_executable(preferences_test tests/preferences_test.cpp src/preferences_dialog.cpp)
     target_include_directories(preferences_test PRIVATE src)
-    target_link_libraries(preferences_test PRIVATE Qt6::Widgets)
+    target_link_libraries(preferences_test PRIVATE Qt6::Widgets Qt6::Concurrent)
     add_test(NAME preferences COMMAND preferences_test)
     foreach(policy IN ITEMS configured release)
         add_executable(tuntom_binary_${policy}_test tests/tuntom_binary_test.cpp)

@@ -342,7 +342,8 @@ void Tui::enableRouting()
         settings.setValue("routing/lastTransport", "tunnel");
         if (!tunnel_.start(address)) {
             routing_issue_ = "Cannot start Tuntom · I details, O settings";
-            status_ = tunnel_.error; retry_.restart();
+            status_ = tunnel_.error;
+            if (tunnel_.retryable) retry_.restart(); else retry_.invalidate();
         }
         else { status_ = "Starting Tuntom"; retry_.invalidate(); }
     } else {
@@ -365,7 +366,9 @@ void Tui::pollTunnel()
     }
     const bool wasRunning = tunnel_.running();
     const auto previousState = tunnel_.view.state;
+    const auto previousPhase = tunnel_.phase;
     tunnel_.poll();
+    if (tunnel_.running() && previousPhase != tunnel_.phase) status_ = tunnel_.phase;
     if (previousState != "verified" && tunnel_.view.state == "verified")
         status_ = "Tunnel verified; checking local routing. I shows diagnostics.";
     if (!tunnel_.gateway.isEmpty()) routing_next_hop_ = tunnel_.gateway;
@@ -375,8 +378,9 @@ void Tui::pollTunnel()
     }
     if (wasRunning && !tunnel_.running()) {
         routing_issue_ = "Tunnel controller stopped · I details";
-        status_ = "Tunnel stopped; I shows diagnostics. Retrying in 60 s";
-        retry_.restart();
+        status_ = tunnel_.retryable ? "Tunnel stopped; I shows diagnostics. Retrying in 60 s"
+            : "Tunnel stopped: fix configuration, then press E. I shows diagnostics.";
+        if (tunnel_.retryable) retry_.restart(); else retry_.invalidate();
     }
     if (requested_ && retry_.isValid() && retry_.elapsed() >= 60000) {
         retry_.invalidate();

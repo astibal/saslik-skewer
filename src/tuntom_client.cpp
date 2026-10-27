@@ -1,4 +1,5 @@
 #include "pairing.hpp"
+#include "diagnostic_log.hpp"
 #include "preferences_values.hpp"
 #include "tuntom_binary.hpp"
 #include <QCoreApplication>
@@ -49,11 +50,25 @@ int tuntomClientCommand(const QStringList& arguments)
         return 2;
     }
     const QUrl address(arguments[2]);
-    if (address.scheme() != "skewer" || address.path() != "/pair" || address.hasFragment()
+    if (address.scheme() != "skewer" || address.host().isEmpty() || address.port() <= 0 || address.path() != "/pair" || address.hasFragment()
         || address.hasQuery() || !address.userInfo().isEmpty()) return 2;
+    QString current_phase;
+    auto phase = [gui, &current_phase](const QString& message) {
+        current_phase = message;
+        DiagnosticLog::write("phase", message);
+        if (gui) QTextStream(stdout) << QJsonDocument(QJsonObject{{"phase", message}}).toJson(QJsonDocument::Compact) << '\n' << Qt::flush;
+    };
+    const auto preflight = Preferences::tunnelPreflightError();
+    if (!preflight.isEmpty()) {
+        DiagnosticLog::write("preflight", preflight, "error");
+        if (gui) QTextStream(stdout) << QJsonDocument(QJsonObject{{"state", "failed"}, {"error", preflight}, {"retryable", false}}).toJson(QJsonDocument::Compact) << '\n' << Qt::flush;
+        else QTextStream(stderr) << preflight << '\n';
+        return 2;
+    }
     std::optional<PairedTunnel> tunnel;
     QString host;
     QProcess helper;
+    DiagnosticLog::Lines transport_diagnostics;
     bool gui_helper_started = false;
     auto cleanup = [&] {
         if (gui_helper_started) {
@@ -64,27 +79,29 @@ int tuntomClientCommand(const QStringList& arguments)
             helper.write("stop\n"); helper.closeWriteChannel();
             helper.waitForFinished(8000);
         }
+        transport_diagnostics.append(helper.readAllStandardError(), "transport");
+        transport_diagnostics.finish("transport");
         if (tunnel) {
             try { closePairedTunnel(address, tunnel->endpoint, host); }
             catch (const std::exception&) {
-                QTextStream(stderr) << "Server cleanup pending lease expiry.\n";
+                DiagnosticLog::write("cleanup", "Server cleanup pending lease expiry", "warning");
             }
         }
     };
     try {
-        QTextStream(stderr) << "[tuntom] Checking local transport binary\n" << Qt::flush;
+        phase("Checking local transport binary");
         QString binary_error;
         const bool development = Preferences::developmentBinaryAcknowledged();
         const QString binary = Tuntom::checkedBinary(Preferences::tuntomBinary(), binary_error, development);
         if (binary.isEmpty()) throw std::runtime_error(binary_error.toStdString());
         if (gui) {
-            QTextStream(stderr) << "[tuntom] Preparing routed slice\n" << Qt::flush;
+            phase("Preparing routed slice");
             QProcess slice;
             slice.start("systemctl", {"--user", "start", "skewer-routed.slice"});
             if (!slice.waitForFinished(10000) || slice.exitStatus() != QProcess::NormalExit || slice.exitCode())
                 throw std::runtime_error("Cannot create routed cgroup");
         }
-        QTextStream(stderr) << "[tuntom] Resolving server address\n" << Qt::flush;
+        phase("Resolving server address");
         const bool whole_host = gui && QSettings().value("routing/scope", "applications") == "host";
         // Recovery must not need external DNS while the host guard is closed.
         // Keep the authenticated endpoint identity for PSK lookup; pin only
@@ -98,7 +115,7 @@ int tuntomClientCommand(const QStringList& arguments)
             for (const auto& ip : QHostInfo::fromName(address.host()).addresses())
                 if (ip.protocol() == QAbstractSocket::IPv4Protocol) { host = ip.toString(); break; }
         if (host.isEmpty()) throw std::runtime_error("No IPv4 address for tunnel server");
-        QTextStream(stderr) << "[tuntom] Opening authenticated control session\n" << Qt::flush;
+        phase("Opening authenticated control session");
         tunnel = openPairedTunnel(address, host);
         if (whole_host) {
             QSettings settings;
@@ -106,7 +123,7 @@ int tuntomClientCommand(const QStringList& arguments)
             settings.setValue("routing/peerAddress", host);
             settings.sync();
         }
-        QTextStream(stderr) << "[tuntom] Server endpoint accepted\n" << Qt::flush;
+        phase("Server endpoint accepted");
         const auto& ep = tunnel->endpoint;
         const QJsonObject metadata{{"version", 1}, {"transport", "tuntom"}, {"id", ep.id},
             {"port", 40000 + ep.id}, {"context", ep.context}, {"client_interface", ep.clientInterface},
@@ -121,7 +138,7 @@ int tuntomClientCommand(const QStringList& arguments)
         QString executable = QCoreApplication::applicationDirPath() + "/skewer-net-helper";
         if (!QFileInfo(executable).isExecutable()) executable = SKEWER_INSTALLED_HELPER_PATH;
         helper.setProcessChannelMode(QProcess::SeparateChannels);
-        QTextStream(stderr) << "[tuntom] Starting privileged local helper\n" << Qt::flush;
+        phase("Starting privileged local helper");
         if (gui) {
             guiHelper({"tunnel-start", QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact))});
             gui_helper_started = true;
@@ -176,12 +193,13 @@ int tuntomClientCommand(const QStringList& arguments)
                     } else if (state != last_reported_state) {
                         QTextStream(stdout) << "tuntom: " << state << '\n' << Qt::flush;
                     }
+                    if (state != last_reported_state) DiagnosticLog::write("state", state);
                     last_reported_state = state;
                 }
             }
             if (pending.size() > 65536) throw std::runtime_error("Invalid helper response");
             const auto error = helper_error;
-            if (!error.isEmpty()) QTextStream(stderr) << error << Qt::flush;
+            if (!error.isEmpty()) transport_diagnostics.append(error, "transport");
             if (!helper_running)
                 throw std::runtime_error("Tunnel helper stopped");
             if (!prepared && startup.elapsed() > 120000)
@@ -199,7 +217,13 @@ int tuntomClientCommand(const QStringList& arguments)
         return 0;
     } catch (const std::exception& error) {
         cleanup();
-        QTextStream(stderr) << "[tuntom] Failed: " << error.what() << '\n' << Qt::flush;
-        return 1;
+        const auto reason = QString::fromUtf8(error.what());
+        const bool retryable = reason != "No pairing for this endpoint" && reason != "Invalid pairing credentials";
+        const auto detail = DiagnosticLog::redact(current_phase + ": " + reason)
+            + (retryable ? QString{} : QString(". Pair this endpoint again before retrying."));
+        DiagnosticLog::write("failure", detail, "error");
+        if (gui) QTextStream(stdout) << QJsonDocument(QJsonObject{{"state", "failed"}, {"error", detail}, {"retryable", retryable}}).toJson(QJsonDocument::Compact) << '\n' << Qt::flush;
+        else QTextStream(stderr) << "Tunnel failed: " << detail << '\n';
+        return retryable ? 1 : 2;
     }
 }

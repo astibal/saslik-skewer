@@ -29,7 +29,7 @@ int main(int argc, char** argv)
         for (int attempt = 0; attempt < 150; ++attempt) {
             // StartTransientUnit is asynchronous. Seeing the original cgroup
             // immediately after release is NOT evidence that repair happened.
-            QFile log(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/skewer/session.log");
+            QFile log(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/skewer/logs/session.log");
             if (log.open(QIODevice::ReadOnly)
                 && log.readAll().contains(QString("restored PID %1 to ").arg(getpid()).toUtf8())
                 && routed()) return 0;
@@ -50,7 +50,7 @@ int main(int argc, char** argv)
         if (!released.ok) return 9;
         bool restored = false;
         for (int attempt = 0; attempt < 150; ++attempt) {
-            QFile log(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/skewer/session.log");
+            QFile log(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/skewer/logs/session.log");
             if (log.open(QIODevice::ReadOnly)
                 && log.readAll().contains(QString("restored PID %1 to ").arg(getpid()).toUtf8())
                 && routed()) { restored = true; break; }

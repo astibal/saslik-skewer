@@ -77,6 +77,7 @@ private:
     QString tunnel_gateway_;
     QString tunnel_state_;
     QString tunnel_error_;
+    bool tunnel_retryable_ = true;
     QJsonObject tunnel_stats_;
     QElapsedTimer tunnel_status_age_;
     QByteArray tunnel_output_;

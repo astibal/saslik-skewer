@@ -6,8 +6,10 @@ GUI/TUI host scope now supports direct next-hop and Tuntom routing for local
 IPv4 traffic, with explicit IPv6 blocking, persistent failure protection and
 host release. See README for the operating limits and namespace tests.
 
-- [ ] Validate against a real remote Saslik/Tuntom deployment, including DHCP
-  renewal, reconnect, return traffic, DNS and coexistence with another VPN.
+- [x] Whole Host real-world operation confirmed by the user.
+- [ ] Validate the system resolver and uncached DNS after a real tunnel reconnect;
+  packet-level loss/recovery is covered by the namespace regression.
+- [ ] Record focused DHCP-renewal and concurrent-VPN validation results.
 - [ ] Support automatic peer address relocation while host routing is blocked;
   recovery currently reuses the resolved peer until Release host and reconnect.
 - [ ] Add IPv6 forwarding; unsupported IPv6 currently remains blocked.
@@ -36,31 +38,16 @@ the existing restriction on interface ingress through tunnels remains in place.
 - [x] Document that sockets opened before an application is attached retain their
   previous routing; launching the application through Skewer is authoritative.
 
-This phase deliberately has no tunnel protocol and no dependency on a Saslik
-appliance. The next hop may initially be any directly reachable router prepared
-to accept and forward the selected traffic.
+## Completed: Tuntom and Saslik integration
 
-## Later: tuntom transport
+- [x] Authenticated dynamic Tuntom sessions, lease renewal and automatic recovery.
+- [x] Paired Saslik endpoints, remote health/status and advertised services.
+- [x] GUI and TUI connection controls and transport selection.
+- [x] CA download and supported NSS/system trust installation and removal.
+- [x] Rotated diagnostic logs, Troubleshoot exports and actionable tunnel preflight.
 
-- Add tuntom as an optional transport between Skewer and a remote Saslik.
-- Use the dynamic authenticated tunnel/client workflow rather than treating
-  tuntom as a static GRE-like link.
-- Integrate it when the Saslik VM/appliance lifecycle and its client-facing
-  interface are ready.
-- Preserve the local cgroup and policy-routing boundary so transport remains a
-  replaceable backend.
+## Follow-up
 
-This is intentionally deferred. Do not couple the first routing implementation
-to tuntom, WireGuard, OpenVPN or the future Saslik VM.
-
-## Later: Saslik connection utilities
-
-- Let the user enter a Saslik URL and establish an explicitly trusted connection.
-- Discover the remote workspace/identity and advertised service endpoints.
-- Show Saslik and Smithproxy health and compatibility before routing traffic.
-- [x] Download the active CA certificate and offer installation/removal in
-  explicitly supported local NSS and system trust stores.
-- Discover additional application trust stores locally and advertise them to
-  Saslik through a future authenticated Skewer capability channel.
-- Keep API credentials out of URLs and use a bootstrap/exchange flow when the
-  Saslik API defines one.
+- [ ] Advertise additional local application trust stores through a future
+  authenticated Skewer capability channel.
+- [ ] Extend support-package collectors when additional platforms are supported.

@@ -5,6 +5,7 @@
 #include "pairing.hpp"
 
 #include <QApplication>
+#include "diagnostic_log.hpp"
 #include <QIcon>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -63,16 +64,19 @@ int main(int argc, char* argv[])
     if (argc >= 2 && std::strcmp(argv[1], "tunnel") == 0) {
         QCoreApplication application(argc, argv);
         application.setOrganizationName("Saslik"); application.setApplicationName("Skewer");
+        DiagnosticLog::initialize("tunnel");
         return tuntomClientCommand(application.arguments());
     }
     if (argc >= 2 && (std::strcmp(argv[1],"pair")==0 || std::strcmp(argv[1],"remote-status")==0)) {
         QCoreApplication application(argc,argv);
         application.setOrganizationName("Saslik");application.setApplicationName("Skewer");
+        DiagnosticLog::initialize("app");
         return pairingCommand(application.arguments());
     }
     if (argc >= 2 && (std::strcmp(argv[1],"attach") == 0 || std::strcmp(argv[1],"cleanup") == 0)) {
         QCoreApplication application(argc,argv);
         application.setOrganizationName("Saslik"); application.setApplicationName("Skewer");
+        DiagnosticLog::initialize("app");
         return connectionCommand(application.arguments());
     }
     if (argc >= 2 && (std::strcmp(argv[1], "status") == 0
@@ -80,6 +84,7 @@ int main(int argc, char* argv[])
         QCoreApplication application(argc, argv);
         application.setOrganizationName("Saslik");
         application.setApplicationName("Skewer");
+        DiagnosticLog::initialize("app");
         return sessionCommand(application.arguments());
     }
     // Shell sessions need neither a display server nor QApplication's plugins.
@@ -128,6 +133,8 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName(QStringLiteral("Saslik"));
     QApplication::setDesktopFileName(QStringLiteral("org.saslik.Skewer"));
     QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/skewer.svg")));
+    DiagnosticLog::initialize("app");
+    DiagnosticLog::write("lifecycle", QString("Frontend started, version %1, mode %2").arg(SKEWER_VERSION, tui ? "TUI" : "GUI"));
 
     if (launcher_only) {
         Launcher launcher;

@@ -1,4 +1,7 @@
 #include "preferences_dialog.hpp"
+#include "support_package.hpp"
+#include <QtConcurrent>
+#include <QFutureWatcher>
 #include "preferences_values.hpp"
 #include "tuntom_binary.hpp"
 #include <QCheckBox>
@@ -130,6 +133,50 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
              "a running tunnel is not restarted."), this);
     tunnel_note->setWordWrap(true);
     tunnel->addRow(tunnel_note);
+    auto* troubleshoot = page(tr("Troubleshoot"));
+    auto* explanation = new QLabel(tr("Save logs for a bug report, or include system, routing and DNS diagnostics. "
+        "Exports stay on your computer. Review before sharing: they may include local paths, IP addresses and DNS domains. "
+        "Credentials and pairing files are excluded."), this);
+    explanation->setWordWrap(true);
+    troubleshoot->addRow(explanation);
+    auto* log_path = new QLabel(tr("Log directory: %1").arg(DiagnosticLog::directory()), this);
+    log_path->setTextFormat(Qt::PlainText);
+    log_path->setWordWrap(true);
+    log_path->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    troubleshoot->addRow(log_path);
+    auto* download_logs = new QPushButton(tr("Download logs"), this);
+    download_logs->setObjectName("downloadLogs");
+    auto* download_support = new QPushButton(tr("Download full support package"), this);
+    download_support->setObjectName("downloadSupportPackage");
+    auto* export_status = new QLabel(this);
+    export_status->setObjectName("supportExportStatus");
+    export_status->setTextFormat(Qt::PlainText);
+    export_status->setWordWrap(true);
+    troubleshoot->addRow(download_logs);
+    troubleshoot->addRow(download_support);
+    troubleshoot->addRow(export_status);
+    auto export_package = [this, download_logs, download_support, export_status](bool full) {
+        QString destination = QFileDialog::getSaveFileName(this, tr("Save support export"),
+            QDir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation)).filePath(
+                QString("skewer-%1-%2.zip").arg(full ? "support" : "logs", QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss"))),
+            tr("ZIP archives (*.zip)"));
+        if (destination.isEmpty()) return;
+        download_logs->setEnabled(false); download_support->setEnabled(false);
+        export_status->setText(tr("Collecting diagnostics…"));
+        auto* watcher = new QFutureWatcher<QString>(this);
+        connect(watcher, &QFutureWatcher<QString>::finished, this, [=, this] {
+            const auto error = watcher->result(); watcher->deleteLater();
+            download_logs->setEnabled(true); download_support->setEnabled(true);
+            export_status->setText(error.isEmpty() ? tr("Saved to %1").arg(destination) : tr("Export failed: %1").arg(error));
+        });
+        const auto version = QCoreApplication::applicationVersion();
+        // No widgets captured by the worker: closing Preferences during export is safe.
+        watcher->setFuture(QtConcurrent::run([full, destination, version] {
+            return SupportPackage::save(destination, SupportPackage::collect(full, version));
+        }));
+    };
+    connect(download_logs, &QPushButton::clicked, this, [export_package] { export_package(false); });
+    connect(download_support, &QPushButton::clicked, this, [export_package] { export_package(true); });
     layout->addWidget(buttons);
     connect(buttons->button(QDialogButtonBox::RestoreDefaults), &QPushButton::clicked, this, [=] {
         for (const auto& item : toggles) item.widget->setChecked(item.fallback);

@@ -26,8 +26,8 @@ in Trusted Environments selects it for subsequent shell/run and GUI/TUI launches
 CA variables are set only in those sessions. Missing selected bundle files cause
 launch to fail, rather than silently launch with different trust. A normal Python
 venv can be activated inside the shell. `SKEWER_SESSION=1` identifies the session;
-shell rc files may override environment settings. Guard messages also go to
-`~/.local/share/skewer/session.log` (or the corresponding XDG data directory).
+shell rc files may override environment settings. Guard messages go to the rotated `session.log` in
+`~/.local/share/skewer/logs/` (or the corresponding XDG data directory).
 
 The Bash prompt shows a cached status symbol: green `──∈` means the configured
 policy route matches the gateway and Saslik's API reports an available lab;
@@ -150,6 +150,16 @@ or privileged packet forwarding. The real cgroup movement test requires a local
 user systemd session and is run separately before tagging.
 
 ## Build from source
+
+Install the development dependencies first. On Debian/Ubuntu this includes
+`build-essential`, `cmake`, `pkg-config`, `qt6-base-dev`, `libssl-dev`,
+`libsystemd-dev`, `libncurses-dev`, **`libnss3-dev` and `libnspr4-dev`**.
+Missing `cert.h` means the NSS development headers are absent.
+
+The command below explicitly selects a Debug build. Only Debug builds permit
+an explicitly acknowledged development Tuntom executable. Release and unspecified
+build types require a root-owned executable and protected ancestor directories;
+saving Preferences does not grant a development exception in those builds.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -423,3 +433,46 @@ exemptions, competing policy routing, loss and release in private user/network/m
 namespaces. `tuntom_routing` also exercises the privileged host-scope lifecycle and
 real marked packets through a simulated tunnel interface. These do not replace
 an end-to-end test against a remote Saslik with the real Tuntom transport.
+
+## Troubleshooting and support exports
+
+Open **Preferences > Troubleshoot**:
+
+- **Download logs** saves a local ZIP containing retained logs and a version/platform manifest.
+- **Download full support package** adds an allowlisted configuration summary,
+  transport executable preflight, guard-file presence, interface addresses,
+  IPv4/IPv6 routes and policy rules, resolver configuration and routed-slice state.
+  Diagnostics run in the background, with bounded command timeouts and output sizes.
+  Missing commands or access failures are reported in the package. No administrator
+  access or network probes are requested by export.
+
+Nothing is uploaded. Review archives before attaching them to a bug report: they
+can contain local paths, IP addresses, interface names and DNS search domains.
+Pairing files, keys, raw settings, environment and helper protocol frames are not
+collected. Sensitive values are redacted before logging and again during export.
+
+The log directory is `$XDG_DATA_HOME/skewer/logs` (normally
+`~/.local/share/skewer/logs`). `app.log`, `tunnel.log` and `session.log` contain
+JSON lines with UTC time, PID, component, category, severity and message. Each
+file retains two rotated backups, with a 1 MiB limit per file (9 MiB total).
+Files are owner-readable only. Exports also include at most the last 1 MiB of a
+legacy `skewer/session.log`, if present. No application payloads or user shell
+output are captured. CLI results and errors, authorization prompts and internal
+protocol streams still use their required terminal/pipe channels.
+
+Tunnel phases and failures are visible in the UI. Local binary configuration
+failures stop before GUI authorization, and missing/invalid pairing pauses retries
+until corrected. Transient failures retain automatic recovery. A support archive
+is a snapshot, not proof of connectivity or resolver health.
+
+### DNS after tunnel recovery
+
+The host packet regression covers external DNS egress before loss, blocking on
+both routed and underlay paths during loss, and resumed DNS egress after recovery.
+It does not emulate systemd-resolved caching, split DNS or a complete remote tunnel.
+To validate a real deployment, resolve a fresh uncached name before loss, during
+loss, and after automatic recovery; repeat with the system resolver and an explicit
+DNS server. Record the transport state and compare a full support package from
+each phase. A loopback stub resolver remains local; its outbound requests follow
+host routing and configured destination exemptions. Skewer does not rewrite DNS
+server configuration. IPv6 forwarding remains deferred.

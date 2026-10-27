@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QTabWidget>
 
 int main(int argc, char** argv)
 {
@@ -22,6 +23,15 @@ int main(int argc, char** argv)
     app.setApplicationName("Preferences");
     {
         PreferencesDialog dialog;
+        auto* tabs = dialog.findChild<QTabWidget*>();
+        if (!tabs || tabs->tabText(tabs->count() - 1) != "Troubleshoot"
+            || !dialog.findChild<QPushButton*>("downloadLogs")
+            || !dialog.findChild<QPushButton*>("downloadSupportPackage")) return 25;
+        if (argc == 3 && QByteArray(argv[1]) == "--screenshot") {
+            tabs->setCurrentIndex(tabs->count() - 1);
+            dialog.show(); app.processEvents();
+            return dialog.grab().save(QString::fromLocal8Bit(argv[2])) ? 0 : 26;
+        }
         auto* path = dialog.findChild<QLineEdit*>("tunnel/binary");
         if (!path || path->text() != "/usr/libexec/saslik/tuntom") return 2;
         path->setText("/opt/tuntom/tuntom");

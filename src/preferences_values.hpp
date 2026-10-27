@@ -19,4 +19,13 @@ inline bool developmentBinaryAcknowledged()
     return Tuntom::developmentBinaryAllowed && !tuntomBinary().isEmpty()
         && QSettings().value("tunnel/developmentAcknowledgedPath").toString() == tuntomBinary();
 }
+inline QString tunnelPreflightError()
+{
+    QString error;
+    if (!Tuntom::checkedBinary(tuntomBinary(), error, developmentBinaryAcknowledged()).isEmpty()) return {};
+    return error + (Tuntom::developmentBinaryAllowed
+        ? QString(". Open Preferences > Tunnel to select an installed transport or explicitly acknowledge your development executable.")
+        : QString(". Install a protected root-owned tuntom executable, then select it in Preferences > Tunnel. This build does not permit development exceptions."));
+}
+
 }

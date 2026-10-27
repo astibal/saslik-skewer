@@ -1,4 +1,5 @@
 #include "pairing.hpp"
+#include "diagnostic_log.hpp"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -81,7 +82,7 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
         throw std::runtime_error("TLS-PSK authentication failed (no plaintext fallback)");
     // Log the phase only, never the credential-bearing request or pairing URL.
     const bool tunnel_open = request["action"].toString() == "tunnel-open";
-    if (tunnel_open) QTextStream(stderr) << "[tuntom] TLS-PSK authenticated; sending tunnel-open\n" << Qt::flush;
+    if (tunnel_open) DiagnosticLog::write("control", "TLS-PSK authenticated; sending tunnel-open");
     const auto data = QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
     size_t written=0;
     if (!SSL_write_ex(ssl.get(),data.constData(),data.size(),&written) || written!=size_t(data.size()))
@@ -100,8 +101,7 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
     if (response.size()>65536 || error.error!=QJsonParseError::NoError || !document.isObject())
         throw std::runtime_error("Invalid control response");
     const auto value = document.object();
-    if (tunnel_open) QTextStream(stderr) << "[tuntom] tunnel-open response received: "
-        << (value.contains("error") ? "rejected" : "accepted") << '\n' << Qt::flush;
+    if (tunnel_open) DiagnosticLog::write("control", value.contains("error") ? "Tunnel-open rejected" : "Tunnel-open accepted");
     if (value.contains("error")) throw std::runtime_error("Control request rejected");
     return value;
 }
@@ -213,6 +213,7 @@ int pairingCommand(const QStringList& arguments)
         }
         return 0;
     } catch (const std::exception& error) {
+        DiagnosticLog::write("pairing", QString::fromUtf8(error.what()), "error");
         QTextStream(stderr)<<error.what()<<'\n'; return 1;
     }
 }

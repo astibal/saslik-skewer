@@ -1,4 +1,5 @@
 #include "session_guard.hpp"
+#include "diagnostic_log.hpp"
 #include "routing_guard.hpp"
 #include "session_status.hpp"
 #include <QTemporaryDir>
@@ -53,17 +54,14 @@ std::optional<Process> inspect(pid_t pid)
     return Process{{pid, metadata.st_uid, start}, QString::fromUtf8(group.mid(3))};
 }
 
-void report(const QString& message, bool terminal = true)
+void report(const QString& message, bool terminal = false)
 {
     const QString line = "skewer session: " + message + '\n';
     if (terminal) {
         const QByteArray output = line.toLocal8Bit();
         ::write(STDERR_FILENO, output.constData(), output.size());
     }
-    const QString directory = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/skewer";
-    QDir().mkpath(directory);
-    QFile log(directory + "/session.log");
-    if (log.open(QIODevice::WriteOnly | QIODevice::Append)) log.write(line.toUtf8());
+    DiagnosticLog::write("guard", message);
 }
 
 bool repair(sd_bus* bus, const QString& unit, const GuardIdentity& identity, bool log_failure)
@@ -178,6 +176,7 @@ int main(int argc, char** argv)
     QCoreApplication application(argc, argv);
     QCoreApplication::setOrganizationName("Saslik");
     QCoreApplication::setApplicationName("Skewer");
+    DiagnosticLog::initialize("session");
     QStringList command = application.arguments().sliced(1);
     const bool shell = command == QStringList{"--shell"};
     if (shell) {
@@ -187,21 +186,21 @@ int main(int argc, char** argv)
         if (QFileInfo(program).fileName() == "bash") {
             const QString startup = QCoreApplication::applicationDirPath() + "/skewer.bashrc";
             if (!QFileInfo(startup).isReadable()) {
-                report("missing Skewer Bash startup file: " + startup); return 1;
+                report("missing Skewer Bash startup file: " + startup, true); return 1;
             }
             command = {program, "--rcfile", startup, "-i"};
         }
     } else if (!command.isEmpty() && command.first() == "--") command.removeFirst();
-    if (command.isEmpty()) { report("no command provided"); return 2; }
+    if (command.isEmpty()) { report("no command provided", true); return 2; }
     const auto root = inspect(getpid());
-    if (!root || !routedGroup(root->group)) { report("refusing to launch outside skewer-routed.slice"); return 1; }
+    if (!root || !routedGroup(root->group)) { report("refusing to launch outside skewer-routed.slice", true); return 1; }
     QString protection_error;
-    if (!RoutingGuard::ensure(protection_error)) { report(protection_error); return 1; }
+    if (!RoutingGuard::ensure(protection_error)) { report(protection_error, true); return 1; }
     const QString bundle = QSettings().value("runtimeTrust/activeBundle").toString();
     const QString ca = QSettings().value("runtimeTrust/activeCa").toString();
     if (!bundle.isEmpty()) {
         if (!QFileInfo(bundle).isReadable() || !QFileInfo(ca).isReadable()) {
-            report("prepared CA files are missing; prepare the bundle again before launching"); return 1;
+            report("prepared CA files are missing; prepare the bundle again before launching", true); return 1;
         }
         for (const auto* variable : {"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "PIP_CERT"})
             qputenv(variable, bundle.toLocal8Bit());
@@ -216,14 +215,14 @@ int main(int argc, char** argv)
     QString status_directory;
     if (shell) {
         QTemporaryDir directory(QDir::tempPath() + "/skewer-status-XXXXXX");
-        if (!directory.isValid()) { report("cannot create session status cache"); return 1; }
+        if (!directory.isValid()) { report("cannot create session status cache", true); return 1; }
         directory.setAutoRemove(false);
         status_directory = directory.path();
         qputenv("SKEWER_STATUS_FILE", (status_directory + "/status").toLocal8Bit());
     }
     if (!startGuard(*root, status_directory)) {
         if (!status_directory.isEmpty()) QDir().rmdir(status_directory);
-        report("cannot start cgroup guard; command was not launched"); return 1;
+        report("cannot start cgroup guard; command was not launched", true); return 1;
     }
     report("cgroup guard active: lifetime protection for session root, 5 seconds per discovered child, 10 ms target interval; existing sockets cannot be repaired", false);
     QList<QByteArray> encoded;

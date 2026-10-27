@@ -63,9 +63,14 @@ def inside(driver, net, mount):
     packet('203.0.113.8', 443, 'physical', expected=False)
     run('ip', 'rule', 'del', 'pref', '100')
     apply(False, True)
+    # DNS must not escape via the underlay during tunnel loss.
+    packet('203.0.113.53', 53, 'physical', expected=False)
+    packet('203.0.113.53', 53, 'peer', expected=False)
     packet('203.0.113.8', 443, 'physical', expected=False)
     packet('198.51.100.7', 443, 'physical')
     apply(True, True)
+    # Reopened routing restores DNS egress through the routed interface.
+    packet('203.0.113.53', 53, 'peer', source='10.20.0.2')
     packet('203.0.113.9', 443, 'peer', source='10.20.0.2')
     run('nft', 'delete', 'table', 'inet', 'skewer_host')
     packet('203.0.113.8', 443, 'physical', source='192.0.2.2')

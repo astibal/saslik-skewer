@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include "diagnostic_log.hpp"
 #include <QCoreApplication>
 #include <QThread>
 #include <QJsonArray>
@@ -20,6 +21,8 @@ public:
             process_.closeWriteChannel();
             process_.waitForFinished(3000);
         }
+        diagnostics_.append(process_.readAllStandardError(), "helper");
+        diagnostics_.finish("helper");
     }
 
     bool running() const { return usable_ && process_.state() == QProcess::Running; }
@@ -32,8 +35,8 @@ public:
         if (process_.state() == QProcess::NotRunning) {
             if (!allowStart) return {false, "Authorized helper session ended"};
             process_.readAllStandardOutput(); // Never reuse a stale reply.
-            QTextStream(stderr) << "[helper] Opening authorized routing session\n" << Qt::flush;
-            process_.setProcessChannelMode(QProcess::ForwardedErrorChannel);
+            DiagnosticLog::write("helper", "Opening authorized routing session");
+            process_.setProcessChannelMode(QProcess::SeparateChannels);
             process_.start(desktop ? "/usr/bin/pkexec" : "/usr/bin/sudo", {helper, "serve"});
             if (!process_.waitForStarted(3000)) return {false, process_.errorString()};
             usable_ = true;
@@ -53,8 +56,9 @@ public:
             // Never associate a late response with a subsequent command.
             usable_ = false;
             process_.closeWriteChannel();
-            QTextStream(stderr) << "[helper] Session unavailable; process state=" << int(process_.state())
-                << ", exit code=" << process_.exitCode() << '\n' << Qt::flush;
+            DiagnosticLog::write("helper", QString("Session unavailable; state=%1 exit=%2").arg(int(process_.state())).arg(process_.exitCode()), "error");
+            diagnostics_.append(process_.readAllStandardError(), "helper");
+            diagnostics_.finish("helper");
             return {false, "Privileged helper unavailable; routing remains guarded. Retry explicitly."};
         }
         const auto reply = QJsonDocument::fromJson(process_.readLine(65537)).object();
@@ -63,10 +67,15 @@ public:
             process_.closeWriteChannel();
             return {false, "Invalid helper response"};
         }
+        diagnostics_.append(process_.readAllStandardError(), "helper");
+        if (!reply["ok"].toBool()) DiagnosticLog::write("helper", reply["detail"].toString(), "error");
+        else if (!arguments.isEmpty() && arguments.first() != "tunnel-poll" && arguments.first() != "tunnel-renew")
+            DiagnosticLog::write("helper", arguments.first() + " completed");
         return {reply["ok"].toBool(), reply["detail"].toString()};
     }
 private:
     QProcess process_;
+    DiagnosticLog::Lines diagnostics_;
     bool usable_{};
 };
 

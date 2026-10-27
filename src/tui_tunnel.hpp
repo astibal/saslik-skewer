@@ -26,13 +26,14 @@ public:
     bool running() const { return process_.state() != QProcess::NotRunning; }
     bool start(const QString& address) {
         if (running()) return true;
+        retryable = true;
         const QUrl url(address);
         if (!url.isValid() || url.host().isEmpty() || url.scheme() != "skewer" || url.path() != "/pair" || url.hasFragment()
             || url.hasQuery() || !url.userInfo().isEmpty()) {
-            error = "Use an already paired skewer://HOST:PORT/pair address"; return false;
+            error = "Use an already paired skewer://HOST:PORT/pair address"; retryable = false; return false;
         }
-        if (Tuntom::checkedBinary(Preferences::tuntomBinary(), error,
-                                 Preferences::developmentBinaryAcknowledged()).isEmpty()) return false;
+        error = Preferences::tunnelPreflightError();
+        if (!error.isEmpty()) { retryable = false; DiagnosticLog::write("preflight", error, "error"); return false; }
         pending_.clear(); error.clear(); age_.invalidate(); view.selected = true; view.state = "connecting";
         view.fresh = false; view.stats = {};
         process_.start("/usr/bin/systemd-run", Tuntom::controllerArguments(
@@ -57,13 +58,21 @@ public:
                 const auto reply = PrivilegedSession::request(helperPath(), args, false, false);
                 process_.write(QJsonDocument(QJsonObject{{"ok", reply.ok}, {"detail", reply.detail}})
                     .toJson(QJsonDocument::Compact) + '\n');
+            } else if (status["phase"].isString()) {
+                phase = status["phase"].toString();
+            } else if (status["state"] == "failed") {
+                error = DiagnosticLog::redact(status["error"].toString());
+                retryable = status["retryable"].toBool(true);
             } else if (QStringList{"prepared", "waiting", "verified"}.contains(status["state"].toString())) {
                 view.state = status["state"].toString(); view.stats = status["stats"].toObject();
                 gateway = status["gateway"].toString(); age_.restart();
             }
         }
         view.fresh = age_.isValid() && age_.elapsed() <= 10000;
-        if (!running()) { view.state = "failed"; view.fresh = false; }
+        if (!running()) {
+            view.state = "failed"; view.fresh = false;
+            if (process_.exitStatus() == QProcess::NormalExit && process_.exitCode() == 2) retryable = false;
+        }
     }
     void stop() {
         if (running()) {
@@ -77,7 +86,8 @@ public:
         view.selected = false; view.fresh = false; view.state.clear(); gateway.clear();
     }
     Tuntom::StatusView view;
-    QString gateway, error;
+    QString gateway, error, phase;
+    bool retryable = true;
 private:
     QProcess process_;
     QByteArray pending_;

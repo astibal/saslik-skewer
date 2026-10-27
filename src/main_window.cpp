@@ -636,6 +636,8 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     auto* actions = new QHBoxLayout;
     action_status_ = new QLabel(tr("Select an application to manage its routing."), central);
     action_status_->setObjectName(QStringLiteral("actionStatus"));
+    action_status_->setWordWrap(true);
+    action_status_->setTextFormat(Qt::PlainText);
     route_button_ = new QPushButton(tr("Attach to Skewer"), central);
     release_button_ = new QPushButton(tr("Release"), central);
     route_button_->setEnabled(false);
@@ -781,7 +783,7 @@ void MainWindow::startTunnel(bool allowAuthorization)
     if (tunnel_retry_tick_) tunnel_retry_tick_->stop();
     if (allowAuthorization) tunnel_recovery_.reset();
     const QUrl endpoint(saslik_url_->text().trimmed());
-    if (endpoint.scheme() != "skewer" || endpoint.path() != "/pair" || endpoint.hasFragment()
+    if (endpoint.scheme() != "skewer" || endpoint.host().isEmpty() || endpoint.port() <= 0 || endpoint.path() != "/pair" || endpoint.hasFragment()
         || endpoint.hasQuery() || !endpoint.userInfo().isEmpty()) {
         action_status_->setText(tr("Tunnel requires an already paired skewer://HOST:PORT/pair address."));
         return;
@@ -790,6 +792,18 @@ void MainWindow::startTunnel(bool allowAuthorization)
         action_status_->setText(tr("Release VM/interface ingress before enabling a tunnel."));
         return;
     }
+    const auto preflight = Preferences::tunnelPreflightError();
+    if (!preflight.isEmpty()) {
+        tunnel_error_ = preflight;
+        tunnel_selected_ = true;
+        tunnel_state_ = "failed";
+        tunnel_retryable_ = false;
+        DiagnosticLog::write("preflight", preflight, "error");
+        action_status_->setText(preflight);
+        updateRoutingStatus();
+        return;
+    }
+    tunnel_retryable_ = true;
     tunnel_selected_ = true;
     tunnel_state_ = "connecting";
     tunnel_error_.clear();
@@ -818,7 +832,6 @@ void MainWindow::startTunnel(bool allowAuthorization)
     tunnel_process_ = process;
     connect(process, &QProcess::readyReadStandardError, this, [this, process] {
         const auto diagnostic = QString::fromUtf8(process->readAllStandardError());
-        QTextStream(stderr) << diagnostic << Qt::flush;
         tunnel_error_ = (tunnel_error_ + diagnostic).right(4096);
     });
     connect(process, &QProcess::readyReadStandardOutput, this, [this, process, allowAuthorization] {
@@ -845,11 +858,23 @@ void MainWindow::startTunnel(bool allowAuthorization)
                     .toJson(QJsonDocument::Compact) + '\n');
                 continue;
             }
+            if (status["phase"].isString()) {
+                action_status_->setText(status["phase"].toString());
+                continue;
+            }
             const auto state = status["state"].toString();
+            if (state == "failed") {
+                tunnel_error_ = DiagnosticLog::redact(status["error"].toString());
+                tunnel_retryable_ = status["retryable"].toBool(true);
+                action_status_->setText(tr("Tunnel failed: %1").arg(tunnel_error_));
+                continue;
+            }
             if (state != "prepared" && state != "waiting" && state != "verified") continue;
             QHostAddress gateway(status["gateway"].toString());
             if (gateway.protocol() != QAbstractSocket::IPv4Protocol) continue;
+            if (tunnel_state_ != state) DiagnosticLog::write("tunnel", "State: " + state);
             tunnel_state_ = state;
+            if (state == "verified") action_status_->setText(tr("Tunnel connected and routing verified"));
             if (state == "verified") tunnel_recovery_.reset();
             tunnel_stats_ = status["stats"].toObject();
             tunnel_status_age_.restart();
@@ -858,10 +883,12 @@ void MainWindow::startTunnel(bool allowAuthorization)
         }
     });
     connect(process, qOverload<int,QProcess::ExitStatus>(&QProcess::finished), this,
-        [this, process](int, QProcess::ExitStatus) {
+        [this, process](int code, QProcess::ExitStatus exitStatus) {
             const auto diagnostic = QString::fromUtf8(process->readAllStandardError());
-            QTextStream(stderr) << diagnostic << "[tuntom] Client process finished\n" << Qt::flush;
-            tunnel_error_ = (tunnel_error_ + diagnostic).right(4096);
+            DiagnosticLog::write("controller", tunnel_error_ + diagnostic, "warning");
+            DiagnosticLog::write("controller", QString("Client finished: exit=%1 crash=%2").arg(code).arg(exitStatus == QProcess::CrashExit));
+            if (exitStatus == QProcess::NormalExit && code == 2) tunnel_retryable_ = false;
+            tunnel_error_ = DiagnosticLog::redact((tunnel_error_ + diagnostic).right(4096));
             tunnel_state_ = "failed";
             tunnel_process_ = nullptr;
             process->deleteLater();
@@ -871,7 +898,9 @@ void MainWindow::startTunnel(bool allowAuthorization)
     connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
         if (error != QProcess::FailedToStart) return;
         tunnel_error_ = process->errorString();
-        QTextStream(stderr) << "[tuntom] Cannot start client process: " << tunnel_error_ << '\n' << Qt::flush;
+        DiagnosticLog::write("controller", "Cannot start client: " + tunnel_error_, "error");
+        action_status_->setText(tr("Cannot start tunnel controller: %1").arg(tunnel_error_));
+        tunnel_retryable_ = false;
         tunnel_state_ = "failed";
         tunnel_process_ = nullptr;
         process->deleteLater();
@@ -885,6 +914,7 @@ void MainWindow::startTunnel(bool allowAuthorization)
 
 void MainWindow::scheduleTunnelRetry()
 {
+    if (!tunnel_retryable_) return;
     if (!Tuntom::Recovery::allowed(routing_requested_, tunnel_selected_, !saslik_disconnected_,
             quitting_, tunnel_process_ != nullptr)) return;
     if (!tunnel_retry_) {
@@ -904,7 +934,8 @@ void MainWindow::scheduleTunnelRetry()
     const int delay = tunnel_recovery_.nextDelayMs();
     tunnel_retry_->start(delay);
     tunnel_retry_tick_->start();
-    action_status_->setText(tr("Tunnel unavailable · routing blocked · retry in %1 s").arg(delay / 1000));
+    DiagnosticLog::write("recovery", QString("Retry in %1 s").arg(delay / 1000));
+    action_status_->setText(tr("Tunnel unavailable · retry in %1 s · %2").arg(delay / 1000).arg(tunnel_error_.trimmed().right(700)));
 }
 
 void MainWindow::refreshTunnelCountdown()
