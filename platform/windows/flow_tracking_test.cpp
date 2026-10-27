@@ -73,11 +73,45 @@ void testUpdates() {
     recordFlow(index, event, {});
     require(index.lookup(tuple, {}).status == FlowIndex::Status::Unreliable, "Bad conversion retained index");
 }
+void testSocketLifecycle() {
+    SocketAttemptIndex index;
+    auto event = sample();
+    event.kind = FlowEvent::Kind::ConnectAttempt;
+    const auto tuple = *flowTuple(event);
+    require(index.observe(event, {}) == FlowIndex::Update::Applied, "CONNECT not recorded");
+    event.kind = FlowEvent::Kind::SocketClosed;
+    event.timestamp_ticks = 9;
+    event.local.address.clear();
+    event.remote.address.clear();
+    require(index.observe(event, {}) == FlowIndex::Update::Ignored &&
+                index.lookup(tuple, {}).status == FlowIndex::Status::Observed,
+            "Old CLOSE removed attempt");
+    event.timestamp_ticks = 11;
+    require(index.observe(event, {}) == FlowIndex::Update::Applied &&
+                index.lookup(tuple, {}).status == FlowIndex::Status::Unknown,
+            "CLOSE retained attempt");
+    event = sample();
+    event.kind = FlowEvent::Kind::ConnectAttempt;
+    event.timestamp_ticks = 12;
+    require(index.observe(event, {}) == FlowIndex::Update::Ignored, "Closed endpoint resurrected");
+    SocketAttemptIndex missing;
+    event.kind = FlowEvent::Kind::SocketClosed;
+    require(missing.observe(event, {}) == FlowIndex::Update::Unreliable, "Unknown CLOSE guessed owner");
+    event.kind = FlowEvent::Kind::ConnectAttempt;
+    require(missing.observe(event, {}) == FlowIndex::Update::Unreliable, "Lost epoch recovered silently");
+    SocketAttemptIndex ambiguous;
+    ambiguous.observe(event, {});
+    ++event.process.pid;
+    ambiguous.observe(event, {});
+    require(ambiguous.lookup(tuple, {}).status == FlowIndex::Status::Ambiguous,
+            "Shared tuple chose an owner");
+}
 } // namespace
 int main() {
     try {
         testConversion();
         testUpdates();
+        testSocketLifecycle();
         std::cout << "PASS: Windows flow normalization and index updates (no driver loaded)\n";
         return 0;
     } catch (const std::exception& error) {

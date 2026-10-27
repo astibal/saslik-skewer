@@ -207,6 +207,7 @@ void liveTest(const std::wstring& dll) {
         Handle token(raw);
         auto target = std::make_unique<ProcessTarget>(selected.key(), token.get());
         TrackedFlowObserver observer(dll, std::move(target));
+        FlowObserver lifecycle(dll, selected.key(), FlowObserver::Mode::SocketLifecycle);
         require(!target, "Observer did not take selection ownership");
         other.start();
         other.waitDone();
@@ -215,6 +216,17 @@ void liveTest(const std::wstring& dll) {
         selected.start();
         observeTraffic(observer, cancellation.get(), selected.key());
         selected.waitDone();
+        bool saw_connect{}, saw_close{};
+        const auto deadline = GetTickCount64() + 5000;
+        while (GetTickCount64() < deadline && !(saw_connect && saw_close)) {
+            const auto result = lifecycle.next(cancellation.get(), 100);
+            if (result.event) {
+                require(result.event->process == selected.key(), "Socket lifecycle changed identity");
+                saw_connect |= result.event->kind == FlowEvent::Kind::ConnectAttempt;
+                saw_close |= result.event->kind == FlowEvent::Kind::SocketClosed;
+            }
+        }
+        require(saw_connect && saw_close, "Missing CONNECT/CLOSE lifecycle events");
         require(SetEvent(cancellation.get()), "Cancel observer");
         require(observer.next(cancellation.get(), 1000).status == FlowObserver::Status::Cancelled,
                 "Cancellation did not take precedence");

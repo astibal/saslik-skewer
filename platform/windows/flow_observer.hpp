@@ -13,7 +13,7 @@ struct FlowEndpoint {
 };
 
 struct FlowEvent {
-    enum class Kind { Established, Deleted, ConnectAttempt };
+    enum class Kind { Established, Deleted, ConnectAttempt, SocketClosed };
     Kind kind{};
     ProcessKey process;
     std::uint64_t endpoint_id{}, parent_endpoint_id{};
@@ -30,7 +30,7 @@ class FlowObserver final {
 public:
     // CONNECT attempts precede establishment and may fail. Never feed them
     // into an established-flow index or treat them as unique packet ownership.
-    enum class Mode { EstablishedFlows, ConnectAttempts };
+    enum class Mode { EstablishedFlows, ConnectAttempts, SocketLifecycle };
     enum class Status { Event, Timeout, Cancelled, TargetExited };
     struct Result {
         Status status;

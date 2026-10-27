@@ -76,16 +76,19 @@ public:
             fail("Create flow read event");
         }
         // No caller-supplied filter language and no path-to-PID inference.
-        if (mode != Mode::EstablishedFlows && mode != Mode::ConnectAttempts) {
+        if (mode != Mode::EstablishedFlows && mode != Mode::ConnectAttempts &&
+            mode != Mode::SocketLifecycle) {
             throw std::invalid_argument("Invalid observer mode");
         }
         auto filter =
             "processId == " + std::to_string(target_->key().pid) + " and (protocol == 6 or protocol == 17)";
         if (mode == Mode::ConnectAttempts) {
             filter += " and event == CONNECT";
+        } else if (mode == Mode::SocketLifecycle) {
+            filter += " and (event == CONNECT or event == CLOSE)";
         }
         handle_ = api_.open(filter.c_str(),
-                            mode == Mode::ConnectAttempts ? WINDIVERT_LAYER_SOCKET : WINDIVERT_LAYER_FLOW, 0,
+                            mode != Mode::EstablishedFlows ? WINDIVERT_LAYER_SOCKET : WINDIVERT_LAYER_FLOW, 0,
                             WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
         if (handle_ == INVALID_HANDLE_VALUE) {
             fail("Open passive WinDivert flow observer");
@@ -178,15 +181,17 @@ private:
         if (!ok) {
             fail("Complete flow read", error);
         }
-        if (mode_ == Mode::ConnectAttempts) {
+        if (mode_ != Mode::EstablishedFlows) {
             if (address_length_ != sizeof(address_) || address_.Layer != WINDIVERT_LAYER_SOCKET ||
-                address_.Event != WINDIVERT_EVENT_SOCKET_CONNECT ||
+                (address_.Event != WINDIVERT_EVENT_SOCKET_CONNECT &&
+                 !(mode_ == Mode::SocketLifecycle && address_.Event == WINDIVERT_EVENT_SOCKET_CLOSE)) ||
                 address_.Socket.ProcessId != target_->key().pid ||
                 (address_.Socket.Protocol != 6 && address_.Socket.Protocol != 17)) {
                 throw std::runtime_error("Unexpected WinDivert CONNECT metadata");
             }
             FlowEvent event;
-            event.kind = FlowEvent::Kind::ConnectAttempt;
+            event.kind = address_.Event == WINDIVERT_EVENT_SOCKET_CONNECT ? FlowEvent::Kind::ConnectAttempt
+                                                                          : FlowEvent::Kind::SocketClosed;
             event.process = target_->key();
             event.endpoint_id = address_.Socket.EndpointId;
             event.parent_endpoint_id = address_.Socket.ParentEndpointId;

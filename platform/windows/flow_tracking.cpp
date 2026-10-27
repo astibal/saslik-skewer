@@ -45,6 +45,51 @@ FlowIndex::Update recordFlow(FlowIndex& index, const FlowEvent& event, FlowIndex
 TrackedFlowObserver::TrackedFlowObserver(const std::wstring& dll, ProcessKey process)
     : TrackedFlowObserver(dll, std::make_unique<ProcessTarget>(process)) {}
 
+SocketAttemptIndex::Index::Update SocketAttemptIndex::observe(const FlowEvent& event, Index::Time now) {
+    if (event.timestamp_ticks <= 0 ||
+        (event.kind != FlowEvent::Kind::ConnectAttempt && event.kind != FlowEvent::Kind::SocketClosed)) {
+        invalidate();
+        return Index::Update::Unreliable;
+    }
+    const skewer::traffic::FlowIdentity id{{event.process.pid, event.process.created}, event.endpoint_id};
+    const bool opening = event.kind == FlowEvent::Kind::ConnectAttempt;
+    auto tuple = flowTuple(event);
+    const auto found = tuples_.find(id);
+    if (!opening) {
+        if (found == tuples_.end()) {
+            // A missed CONNECT or reordered CLOSE loses this observation epoch.
+            // Do not guess a tuple from incomplete close metadata.
+            invalidate();
+            return Index::Update::Unreliable;
+        }
+        tuple = found->second;
+    }
+    if (!tuple) {
+        invalidate();
+        return Index::Update::Unreliable;
+    }
+    try {
+        index_.expire(now);
+        const auto result = index_.observe(id, *tuple, opening, event.timestamp_ticks, now);
+        if (result == Index::Update::Applied && opening) {
+            tuples_.insert_or_assign(id, *tuple);
+        }
+        return result;
+    } catch (...) {
+        invalidate();
+        throw;
+    }
+}
+
+SocketAttemptIndex::Index::Match SocketAttemptIndex::lookup(PacketTuple tuple, Index::Time now) const {
+    return index_.lookup(tuple, now);
+}
+
+void SocketAttemptIndex::invalidate() {
+    index_.invalidate();
+    tuples_.clear();
+}
+
 TrackedFlowObserver::TrackedFlowObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process)
     : observer_(dll, std::move(process)) {}
 

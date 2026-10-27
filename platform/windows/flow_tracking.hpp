@@ -9,6 +9,22 @@ std::optional<skewer::traffic::PacketTuple> flowTuple(const FlowEvent& event);
 skewer::traffic::FlowIndex::Update recordFlow(skewer::traffic::FlowIndex& index, const FlowEvent& event,
                                               skewer::traffic::FlowIndex::Time now);
 
+// Separate diagnostic epoch for CONNECT/CLOSE. CLOSE is keyed by the kernel
+// endpoint identity; its address fields need not repeat the original tuple.
+// Unknown close, missing events and ambiguity never grant packet ownership.
+class SocketAttemptIndex final {
+public:
+    using Index = skewer::traffic::FlowIndex;
+    Index::Update observe(const FlowEvent& event, Index::Time now);
+    Index::Match lookup(skewer::traffic::PacketTuple tuple, Index::Time now) const;
+    void invalidate();
+
+private:
+    Index index_;
+    // Same fixed 4096-entry limit as index_; closed records remain tombstones.
+    std::map<skewer::traffic::FlowIdentity, skewer::traffic::PacketTuple> tuples_;
+};
+
 // One consumer owns both observer and index. No automatic epoch reset: once
 // context is lost, correlation remains unreliable for this observer lifetime.
 class TrackedFlowObserver final {

@@ -72,6 +72,15 @@ A regression test rejects CONNECT records in the established-flow index.
 This is observation, not a blocking/resumable connect hook. Socket lifecycle,
 ambiguous ownership and missing-event policy remain routing integration work.
 
+`SocketLifecycle` additionally observes SOCKET CLOSE. `SocketAttemptIndex` keeps
+a separate diagnostic CONNECT/CLOSE epoch with bounded entries and closed
+tombstones. CLOSE uses process identity plus endpoint ID, not potentially absent
+address fields. Older CLOSE events are ignored and delayed CONNECT cannot revive
+a closed endpoint. Unknown CLOSE invalidates the epoch conservatively, including
+closes for sockets predating observation or sockets without an observed CONNECT.
+Shared tuples remain ambiguous. This index is not yet the routing authority;
+bound/listening sockets, UDP reuse and observation loss still need integration.
+
 Next integration must handle bounded waiting, unknown and ambiguous ownership,
 process exit/reuse, socket lifecycle, wildcard/shared endpoints and non-loopback
 traffic before these observations can drive application routing.
