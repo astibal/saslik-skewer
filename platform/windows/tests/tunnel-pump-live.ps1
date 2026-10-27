@@ -1,5 +1,6 @@
-param([Parameter(Mandatory=$true)][string]$Directory, [string]$RemotePeer = '')
+param([Parameter(Mandatory=$true)][string]$Directory, [string]$RemotePeer = '', [switch]$HttpProbe)
 $ErrorActionPreference = 'Stop'
+if ($HttpProbe -and !$RemotePeer) { throw 'HTTP probe requires an isolated remote peer' }
 $executable = Join-Path $Directory 'tunnel_pump_live.exe'
 $dll = Join-Path $Directory 'wintun.dll'
 if ((Get-AuthenticodeSignature $dll).Status -ne 'Valid') { throw 'Untrusted Wintun DLL' }
@@ -57,6 +58,17 @@ try {
     # Cross the pump's health deadline before data traffic. A Linux peer's
     # slower unsolicited keepalive must not make an idle tunnel unusable.
     if ($RemotePeer) { Start-Sleep -Seconds 7 }
+    if ($HttpProbe) {
+        # No system proxy, redirects or default-source fallback. The fixture
+        # endpoint is only reachable through the newly created Wintun adapter.
+        $body = & curl.exe --silent --show-error --fail --noproxy '*' `
+            --interface 198.18.254.1 --connect-timeout 3 --max-time 5 `
+            http://198.18.254.2:18080/
+        if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -ne 'skewer-remote-http-ok') {
+            throw 'Remote HTTP payload did not cross the tunnel'
+        }
+        Write-Output 'PASS: Windows curl -> Wintun -> encrypted UDP -> Linux TUN -> HTTP'
+    }
     # A freshly configured adapter may still be converging in the Windows stack.
     # Count three individually successful requests, not ping's partial-success exit.
     $successes = 0
@@ -66,7 +78,7 @@ try {
         if ($successes -lt 3) { Start-Sleep -Milliseconds 250 }
     }
     if ($successes -ne 3) { throw 'Live Wintun ping failed' }
-    if (!$process.WaitForExit(15000)) { throw 'Probe failed to finish after ping' }
+    if (!$process.WaitForExit(30000)) { throw 'Probe failed to finish after ping' }
     if ($process.ExitCode -ne 0) { throw "Probe failed: $($process.ExitCode)" }
 } finally {
     # Allow normal destruction even on failure. Only this exact spawned process

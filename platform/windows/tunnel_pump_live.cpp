@@ -115,6 +115,9 @@ int wmain(int argc, wchar_t** argv) {
         tuntom::secure_zero(key.data(), key.size());
         std::wcout << L"ADAPTER " << name << std::endl;
         const auto deadline = TunnelPump::Clock::now() + std::chrono::seconds(45);
+        // Leave time for the external HTTP and ICMP probes to finish. TCP can
+        // produce three received packets before the application gets its body.
+        const auto earliest_completion = TunnelPump::Clock::now() + std::chrono::seconds(remote ? 25 : 0);
         std::optional<TunnelPump::Time> completed;
         while (TunnelPump::Clock::now() < deadline) {
             const auto now = TunnelPump::Clock::now();
@@ -126,7 +129,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (!completed) {
                     completed = now;
                 }
-                if (now - *completed >= std::chrono::seconds(1)) {
+                if (now >= earliest_completion && now - *completed >= std::chrono::seconds(1)) {
                     std::cout << "PASS live Wintun encrypted ICMP: tx=" << client.counters().tx
                               << " rx=" << client.counters().rx << " peer=" << (remote ? "Linux" : "loopback")
                               << std::endl;

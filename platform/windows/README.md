@@ -371,7 +371,24 @@ the five-second health deadline. Keys are not placed in process arguments.
 Validated on the development Windows VM against the Linux Tuntom daemon on
 RHINO: real Wintun -> encrypted UDP -> Linux TUN -> kernel ICMP echo replies.
 This remote test covers inner IPv4; live IPv6 and application interception are
-not yet validated. It does not configure the Linux server automatically.
+not yet validated.
+
+Add `-HttpProbe` to also run Windows `curl.exe`, explicitly bound to the test
+address with proxy use disabled, against `http://198.18.254.2:18080/`. The script
+requires the exact fixture response before running ICMP and checking cleanup.
+This is actual application TCP over Wintun/UDP to Linux, not per-process
+WinDivert selection or a Saslik proxy/internet test.
+
+For an isolated RHINO fixture, place `tests/remote-http-peer.sh` and
+`tests/remote-http-endpoint.py` together on that host and provide the Linux
+Tuntom binary at `/tmp/tuntom-interop-linux`. Run the shell script as root;
+it creates a separate namespace with no default route, binds the HTTP listener
+inside it, restricts UDP 40242 to the test VM and cleans up after 90 seconds.
+Its public disposable PSK is `73737373737373737373737373737373`; supply the same
+value as the Windows test's `TUNTOM_SECRET`, never for a deployed endpoint.
+The fixture assumes VM address 192.168.199.131 on virbr0. Do not reuse it on a
+different network without reviewing those restrictions. Synchronize guest and
+host clocks first: the protocol rejects excessive clock skew, as it should.
 
 Remaining integration includes adapter addressing/routes, outbound fragmentation
 and PMTU, leases, VPN AUTH/config, supervisor/GUI integration and independently
