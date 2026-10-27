@@ -18,6 +18,23 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Selection-bound packet epochs
+
+`SelectedPacketEpoch` connects the service-owned selection registry to the
+portable bounded packet queue. It checks the pinned PID/birth and selection
+generation before enqueueing and before/after ownership resolution. Tunnel
+readiness is sampled on both sides of resolution; failure retires the queue
+instead of returning packets for direct reinjection. The readiness callback
+must track the same transport epoch, never a replacement tunnel. Registry and
+queue must share one worker thread, with registry lifetime enclosing the queue.
+
+`selected_packet_epoch_test` uses synthetic packets and real Windows process
+handles to cover successful one-shot transfer, tunnel loss, selection replacement
+during resolution, resolver/readiness exceptions and unknown/ambiguous owners.
+It does not install WinDivert filters or prove real packet forwarding. A trusted
+ownership resolver and the final send-time transport gate remain mandatory;
+diagnostic FLOW/SOCKET matches must not be promoted to unique ownership.
+
 ### Authenticated routing capability queries
 
 The service-worker `SelectionRegistry` retains already-authorized process handles
