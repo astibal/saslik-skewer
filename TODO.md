@@ -1,5 +1,17 @@
 # Skewer roadmap
 
+## Linux whole-host routing
+
+GUI/TUI host scope now supports direct next-hop and Tuntom routing for local
+IPv4 traffic, with explicit IPv6 blocking, persistent failure protection and
+host release. See README for the operating limits and namespace tests.
+
+- [ ] Validate against a real remote Saslik/Tuntom deployment, including DHCP
+  renewal, reconnect, return traffic, DNS and coexistence with another VPN.
+- [ ] Support automatic peer address relocation while host routing is blocked;
+  recovery currently reuses the resolved peer until Release host and reconnect.
+- [ ] Add IPv6 forwarding; unsupported IPv6 currently remains blocked.
+
 ## Enterprise: interface traffic through Tuntom (deferred)
 
 - [ ] Route selected interface/VM ingress through the authenticated Tuntom

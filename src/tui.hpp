@@ -38,6 +38,7 @@ private:
                       const std::function<void()>& resume);
     void configureSaslik();
     void configureTransport();
+    void configureScope();
     void showTunnelDetails();
     void pollTunnel();
     void caTrust();

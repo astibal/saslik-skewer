@@ -50,6 +50,7 @@ RoutingResult RoutingController::activate(const QString& next_hop,
          QStringLiteral("skewer-routed.slice")}, 10000);
     if (!slice.ok) return {false, QStringLiteral("Cannot create Skewer cgroup: %1").arg(slice.detail)};
     QStringList arguments{QStringLiteral("up"), next_hop};
+    if (QSettings().value("routing/scope", "applications") == "host") arguments << "--whole-host";
     const QUrl control(QSettings().value("routing/saslikUrl").toString());
     QHostAddress control_address(control.host());
     if (control.scheme() == "skewer" && control_address.isLoopback() && control.port() > 0)
@@ -105,6 +106,10 @@ RoutingResult RoutingController::cleanupTcp(const QVector<pid_t>& pids, Authoriz
 bool RoutingController::active(const QString& next_hop) const
 {
     if (!RoutingGuard::installed(getuid())) return false;
+    if (QSettings().value("routing/scope", "applications") == "host") {
+        const auto status = PrivilegedSession::request(helperPath(), {"host-status"}, true, false);
+        if (!status.ok || status.detail != "active") return false;
+    }
     const RoutingResult rule = run(QStringLiteral("/usr/sbin/ip"),
         {QStringLiteral("-4"), QStringLiteral("-j"), QStringLiteral("rule"), QStringLiteral("show"),
          QStringLiteral("pref"),

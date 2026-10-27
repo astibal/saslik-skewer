@@ -1,4 +1,5 @@
 #include "routing_plan.hpp"
+#include "host_routing.hpp"
 #include "routing_guard.hpp"
 #include "helper_protocol.hpp"
 #include "tunnel_helper_session.hpp"
@@ -125,9 +126,56 @@ void cleanup(const RoutingPlan& plan)
     for (const auto& command : plan.cleanup) execute(command, ignored);
 }
 
+QJsonObject hostState()
+{
+    QFile file(HostRouting::statePath);
+    struct stat st{};
+    if (::lstat(HostRouting::statePath, &st) || !S_ISREG(st.st_mode) || st.st_uid != 0
+        || (st.st_mode & 0022) || st.st_size > 32768 || !file.open(QIODevice::ReadOnly)) return {};
+    return QJsonDocument::fromJson(file.readAll()).object();
+}
+
+bool saveHost(const QJsonObject& state, QString& error)
+{
+    QSaveFile file(HostRouting::statePath);
+    if (!file.open(QIODevice::WriteOnly)) { error = "Cannot save whole-host ownership"; return false; }
+    file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    const auto bytes = QJsonDocument(state).toJson(QJsonDocument::Compact);
+    if (file.write(bytes) != bytes.size() || !file.commit()) { error = "Cannot save whole-host ownership"; return false; }
+    return true;
+}
+
+bool hostGuard(uid_t uid, bool ready, QString& error)
+{
+    const auto state = hostState();
+    if (state.isEmpty()) return true;
+    if (state["uid"].toVariant().toUInt() != uid) return true;
+    const bool exists = run(nft_binary, {"list", "table", "inet", HostRouting::table}).exit_code == 0;
+    const auto result = run(nft_binary, {"-f", "-"}, HostRouting::rules(state, RoutingPlanner::mark(uid), ready, exists).toUtf8());
+    if (result.exit_code) { error = QString::fromLocal8Bit(result.output); return false; }
+    return true;
+}
+
+bool claimHost(uid_t uid, const QStringList& exemptions, QJsonObject parameters, QString& error)
+{
+    auto previous = hostState();
+    const bool installed = run(nft_binary, {"list", "table", "inet", HostRouting::table}).exit_code == 0;
+    if ((!previous.isEmpty() && previous["uid"].toVariant().toUInt() != uid)
+        || (previous.isEmpty() && installed)) {
+        error = "Whole-host routing is already owned by another session"; return false;
+    }
+    parameters["uid"] = int(uid);
+    parameters["exemptions"] = exemptions.join(',');
+    if (!saveHost(parameters, error)) return false;
+    if (hostGuard(uid, false, error)) return true;
+    if (previous.isEmpty()) QFile::remove(HostRouting::statePath);
+    else { QString ignored; saveHost(previous, ignored); }
+    return false;
+}
+
 bool setGuard(uid_t uid, int level, QString& error, const QString& gateway = {},
               const QString& interface = {}, const QStringList& exemptions = {},
-              const QString& local_control = {}, quint16 local_control_port = 0)
+              const QString& local_control = {}, quint16 local_control_port = 0, bool applications_only = false)
 {
     QStringList normalized;
     if (!RoutingPlanner::normalizeExemptions(exemptions, normalized, error)) return false;
@@ -135,8 +183,15 @@ bool setGuard(uid_t uid, int level, QString& error, const QString& gateway = {},
     QString rules;
     if (run(nft_binary, {"list", "table", "inet", table}).exit_code == 0)
         rules = "delete table inet " + table + '\n';
-    rules += RoutingPlanner::guardRules(uid, level, gateway, interface, normalized,
-                                       local_control, local_control_port);
+    auto application_rules = RoutingPlanner::guardRules(uid, level, gateway, interface, normalized,
+                                                       local_control, local_control_port);
+    const auto host = hostState();
+    if (!applications_only && !host.isEmpty() && host["uid"].toVariant().toUInt() == uid) {
+        // Host guard owns all OUTPUT while claimed, including selected apps.
+        const QString selector = QString("socket cgroupv2 level %1 \"user.slice/user-%2.slice/user@%2.service/skewer.slice/skewer-routed.slice\" jump guarded").arg(level).arg(uid);
+        application_rules.replace(selector, "counter");
+    }
+    rules += application_rules;
     const auto applied = run(nft_binary, {"-f", "-"}, rules.toUtf8());
     if (applied.exit_code) { error = QString::fromLocal8Bit(applied.output); return false; }
     QSaveFile receipt(RoutingGuard::path(uid));
@@ -202,9 +257,15 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
         return 1;
     }
     QString error, local_control;
+    const bool whole_host = exemptions.contains(HostRouting::option);
+    const auto host = hostState();
+    if (!whole_host && !host.isEmpty() && host["uid"].toVariant().toUInt() == uid) {
+        QTextStream(stderr) << "Release host routing before changing scope\n"; return 2;
+    }
     quint16 local_control_port = 0;
     QStringList destinations;
     for (const auto& value : exemptions) {
+        if (value == HostRouting::option) continue;
         if (!value.startsWith("--local-control=")) { destinations << value; continue; }
         const auto endpoint = value.sliced(16);
         const int separator = endpoint.lastIndexOf(':');
@@ -239,6 +300,16 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
     if (!plan.valid) {
         QTextStream(stderr) << "skewer-net-helper: " << plan.error << '\n';
         return 2;
+    }
+    // Claim only after all input/route validation. Block before replacing routes.
+    if (whole_host) {
+        QStringList normalized;
+        auto parameters = host;
+        parameters["interface"] = interface_name;
+        if (!RoutingPlanner::normalizeExemptions(destinations, normalized, error)
+            || !claimHost(uid, normalized, parameters, error)) {
+            QTextStream(stderr) << error << '\n'; return 1;
+        }
     }
     // Block first, then rebuild routing. Failure leaves the guard closed.
     if (!setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
@@ -283,7 +354,10 @@ int up(uid_t uid, const QString& next_hop, const QStringList& exemptions,
         QTextStream(stderr) << "Cannot save desired routing; traffic remains blocked\n";
         return 1;
     }
-    QTextStream(stdout) << "active: cgroup traffic -> " << next_hop
+    if (whole_host && !hostGuard(uid, true, error)) {
+        cleanup(plan); QTextStream(stderr) << error << '\n'; return 1;
+    }
+    QTextStream(stdout) << (whole_host ? "active: whole-host IPv4 (IPv6 blocked) -> " : "active: cgroup traffic -> ") << next_hop
                         << " via " << interface_name << '\n';
     return 0;
 }
@@ -449,13 +523,20 @@ int down(uid_t uid)
     if (QFile::exists(intentPath(uid)) && !QFile::remove(intentPath(uid))) return 1;
     QString error;
     const int level = cgroupLevel(uid, error);
-    if (level && !setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
+    if (level && !setGuard(uid, level, error, {}, {}, {}, {}, 0, true)) { QTextStream(stderr) << error << '\n'; return 1; }
     if (interfacesDown(uid)) return 1;
     // The cleanup identifiers depend only on UID. Placeholder values are never
     // installed and merely let the shared planner produce the cleanup commands.
     const RoutingPlan plan = RoutingPlanner::create(uid, QStringLiteral("192.0.2.1"),
                                                      QStringLiteral("lo"));
     cleanup(plan);
+    const auto host = hostState();
+    if (!host.isEmpty() && host["uid"].toVariant().toUInt() == uid) {
+        const auto removed = run(nft_binary, {"delete", "table", "inet", HostRouting::table});
+        if (removed.exit_code && run(nft_binary, {"list", "table", "inet", HostRouting::table}).exit_code == 0) return 1;
+        if (!QFile::remove(HostRouting::statePath)) return 1;
+        if (level && !setGuard(uid, level, error)) { QTextStream(stderr) << error << '\n'; return 1; }
+    }
     QTextStream(stdout) << "inactive\n";
     return 0;
 }
@@ -606,9 +687,20 @@ int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
         return caRemove(arguments.at(1), arguments.at(2));
     if (arguments == QStringList{QStringLiteral("down")}) return down(*uid);
     if (arguments == QStringList{QStringLiteral("status")}) return status(*uid);
+    if (arguments == QStringList{"host-status"}) {
+        const auto host = hostState();
+        if (host.isEmpty() || host["uid"].toVariant().toUInt() != *uid) return 1;
+        const auto rules = run(nft_binary, {"list", "chain", "inet", HostRouting::table, "egress"});
+        if (rules.exit_code) return 1;
+        QTextStream(stdout) << "active\n"; return 0;
+    }
     if (!arguments.isEmpty() && arguments.first() == "exemptions") {
         QLockFile lock("/run/skewer-interface-routing.lock");
         if (!lock.tryLock(0)) return 1;
+        const auto host = hostState();
+        if (!host.isEmpty() && host["uid"].toVariant().toUInt() == *uid) {
+            QTextStream(stderr) << "Release host routing before editing exemptions\n"; return 2;
+        }
         if (!QJsonDocument::fromJson(readIntent(*uid)).object()["tunnel_context"].toString().isEmpty()) {
             QTextStream(stderr) << "Disable the tunnel before changing destination exemptions\n";
             return 2;
@@ -717,7 +809,9 @@ int reconcile(uid_t uid, const QString& tunnel_context = {})
         }
         allows_marked_ipv4 |= ipv4 && marked && returns;
     }
-    const bool process_routing_ok = RoutingGuard::installed(uid) && matching_rule && fallback
+    const bool host_ok = !exemptions.contains(HostRouting::option)
+        || (!hostState().isEmpty() && run(nft_binary, {"list", "chain", "inet", HostRouting::table, "egress"}).exit_code == 0);
+    const bool process_routing_ok = host_ok && RoutingGuard::installed(uid) && matching_rule && fallback
         && routes.exit_code == 0
         && routes.output.contains(QString("default via %1 ").arg(gateway).toUtf8())
         && run(nft_binary, {"list", "table", "inet", RoutingPlanner::tableName(uid)}).exit_code == 0
@@ -725,7 +819,7 @@ int reconcile(uid_t uid, const QString& tunnel_context = {})
             {"list", "chain", "inet", RoutingPlanner::tableName(uid), "tunnel_snat"}).exit_code == 0)
         // A freshly reinstalled drop-only guard is safe but not operational.
         // Restore the allow path too, rather than merely noticing table existence.
-        && guard.exit_code == 0 && allows_marked_ipv4;
+        && guard.exit_code == 0 && (allows_marked_ipv4 || exemptions.contains(HostRouting::option));
     if (!process_routing_ok && up(uid, gateway, exemptions, snapshot, tunnel_context)) return 1;
 
     const auto interface_state = InterfaceRouting::state(uid);
@@ -814,7 +908,7 @@ int serve(uid_t uid)
 }
 }
 
-void Tuntom::beginRouting(uid_t uid, const Endpoint& endpoint, const QStringList& exemptions)
+void Tuntom::beginRouting(uid_t uid, const Endpoint& endpoint, const QStringList& exemptions, const QJsonObject& host)
 {
     QLockFile lock("/run/skewer-interface-routing.lock");
     if (!lock.tryLock(2000)) throw std::runtime_error("Routing operation already in progress");
@@ -825,7 +919,14 @@ void Tuntom::beginRouting(uid_t uid, const Endpoint& endpoint, const QStringList
     if (!RoutingPlanner::normalizeExemptions(exemptions, normalized, error))
         throw std::runtime_error(error.toStdString());
     const int level = cgroupLevel(uid, error);
-    if (!level || !setGuard(uid, level, error)) throw std::runtime_error(error.toStdString());
+    if (!level) throw std::runtime_error(error.toStdString());
+    if (!host.isEmpty()) {
+        if (!claimHost(uid, normalized, host, error)) throw std::runtime_error(error.toStdString());
+        normalized << HostRouting::option;
+    } else if (!hostState().isEmpty() && hostState()["uid"].toVariant().toUInt() == uid) {
+        throw std::runtime_error("Release host routing before changing scope");
+    }
+    if (!setGuard(uid, level, error)) throw std::runtime_error(error.toStdString());
     if (QFile::exists(intentPath(uid)) && !QFile::remove(intentPath(uid)))
         throw std::runtime_error("Cannot cancel previous routing intent");
     cleanup(RoutingPlanner::create(uid, "192.0.2.1", "lo"));
@@ -843,7 +944,7 @@ void Tuntom::suspendRouting(uid_t uid, const Endpoint& endpoint)
         return; // A newer session or explicit Disable owns the routing now.
     QString error;
     const int level = cgroupLevel(uid, error);
-    if (!level || !setGuard(uid, level, error)) throw std::runtime_error(error.toStdString());
+    if (!hostGuard(uid, false, error) || !level || !setGuard(uid, level, error)) throw std::runtime_error(error.toStdString());
     cleanup(RoutingPlanner::create(uid, "192.0.2.1", "lo"));
 }
 

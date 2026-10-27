@@ -39,7 +39,7 @@ int providePsk(SSL* ssl, const EVP_MD* digest, const unsigned char** identity,
     *identity = reinterpret_cast<const unsigned char*>(credentials->identity.constData());
     *length = credentials->identity.size(); *output = session; return 1;
 }
-QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonObject& request)
+QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonObject& request, const QString& connect_host = {})
 {
     // OpenSSL's socket BIO can raise SIGPIPE. Block it only on this worker thread.
     struct PipeGuard {
@@ -59,7 +59,7 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
     } pipe_guard;
     if (credentials.key.size()!=32 || credentials.identity.isEmpty()) throw std::runtime_error("Invalid pairing credentials");
     QTcpSocket tcp;
-    tcp.connectToHost(endpoint.host(),endpoint.port());
+    tcp.connectToHost(connect_host.isEmpty() ? endpoint.host() : connect_host, endpoint.port());
     if (!tcp.waitForConnected(5000)) throw std::runtime_error("PSK endpoint unreachable");
     int fd = dup(tcp.socketDescriptor());
     if (fd<0) throw std::runtime_error("Cannot create transport descriptor");
@@ -141,28 +141,28 @@ QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request)
     return exchange(endpoint, loadCredentials(endpoint), request);
 }
 
-PairedTunnel openPairedTunnel(const QUrl& endpoint)
+PairedTunnel openPairedTunnel(const QUrl& endpoint, const QString& connect_host)
 {
     // Authenticate and derive from the same credential snapshot, even if a
     // concurrent pairing operation replaces the file while this call runs.
     const auto credentials = loadCredentials(endpoint);
-    const auto response = exchange(endpoint, credentials, {{"action", "tunnel-open"}});
+    const auto response = exchange(endpoint, credentials, {{"action", "tunnel-open"}}, connect_host);
     const auto tunnel = Tuntom::endpointFromResponse(response);
     return {tunnel, Tuntom::deriveKey(credentials.key, tunnel.context.toLatin1())};
 }
 
-void heartbeatPairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel)
+void heartbeatPairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel, const QString& connect_host)
 {
-    const auto renewed = Tuntom::endpointFromResponse(pairedRequest(endpoint,
-        {{"action", "tunnel-heartbeat"}, {"context", tunnel.context}}));
+    const auto renewed = Tuntom::endpointFromResponse(exchange(endpoint, loadCredentials(endpoint),
+        {{"action", "tunnel-heartbeat"}, {"context", tunnel.context}}, connect_host));
     if (renewed.context != tunnel.context || renewed.id != tunnel.id
         || renewed.serverAddress != tunnel.serverAddress || renewed.clientAddress != tunnel.clientAddress)
         throw std::runtime_error("Tunnel endpoint changed during renewal");
 }
 
-void closePairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel)
+void closePairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel, const QString& connect_host)
 {
-    const auto response = pairedRequest(endpoint, {{"action", "tunnel-close"}, {"context", tunnel.context}});
+    const auto response = exchange(endpoint, loadCredentials(endpoint), {{"action", "tunnel-close"}, {"context", tunnel.context}}, connect_host);
     if (!response.value("ok").toBool()) throw std::runtime_error("Tunnel close rejected");
 }
 

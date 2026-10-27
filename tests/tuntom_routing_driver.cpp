@@ -19,6 +19,7 @@ int main(int argc, char** argv)
     Tuntom::Endpoint endpoint{1, 60, QString(64, 'a'), "skt1c", "10.253.0.5/30", "10.253.0.6/30"};
     try {
         if (args[1] == "begin") Tuntom::beginRouting(uid, endpoint, {});
+        else if (args[1] == "begin-host") Tuntom::beginRouting(uid, endpoint, {}, {{"interface", "skt1c"}});
         else if (args[1] == "verified") Tuntom::updateRouting(uid, endpoint, true);
         else if (args[1] == "waiting") Tuntom::updateRouting(uid, endpoint, false);
         else return 2;

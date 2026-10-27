@@ -82,6 +82,38 @@ def inside(helper, driver, uid, net, mount):
         subprocess.run([helper, 'up', '10.253.0.5'], env=environment, capture_output=True, check=True)
         assert gate('waiting').returncode != 0
         assert routed() and not closed(), 'old tunnel worker disturbed new direct routing'
+        subprocess.run([helper, 'down'], env=environment, capture_output=True, check=True)
+        direct_host = subprocess.run([helper, 'up', '10.253.0.5', '--whole-host'], env=environment, capture_output=True)
+        assert direct_host.returncode == 0, direct_host.stderr
+        assert b'chain egress' in run('nft', 'list', 'table', 'inet', 'skewer_host')
+        assert b'masquerade' in run('nft', 'list', 'table', 'inet', 'skewer_host')
+        assert subprocess.run([helper, 'up', '10.253.0.5'], env=environment, capture_output=True).returncode != 0
+        subprocess.run([helper, 'down'], env=environment, capture_output=True, check=True)
+        assert closed(), 'release must restore selected-application protection'
+        assert gate('begin-host').returncode == 0
+        def host_ready():
+            return subprocess.run(['nft', 'list', 'chain', 'inet', 'skewer_host', 'egress'], capture_output=True).returncode == 0
+        assert not host_ready()
+        assert gate('verified').returncode == 0 and host_ready()
+        assert b'--whole-host' in open('/run/skewer-route-intent-' + uid + '.json', 'rb').read()
+        # Host scope marks root/service sockets too, with the tunnel return source.
+        run('ip', 'route', 'add', 'default', 'via', '10.253.0.5', 'dev', 'skt1c', 'onlink')
+        with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)) as capture:
+            capture.bind(('peer', 0)); capture.settimeout(2)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+                client.bind(('192.0.2.1', 0))
+                client.sendto(b'host through tunnel', ('198.18.0.9', 53))
+            while True:
+                packet = capture.recv(2048)
+                if b'host through tunnel' in packet: break
+            assert socket.inet_ntoa(packet[26:30]) == '10.253.0.6'
+        for _ in range(2):
+            assert gate('waiting').returncode == 0 and not host_ready()
+            assert gate('verified').returncode == 0 and host_ready()
+        subprocess.run([helper, 'down'], env=environment, capture_output=True, check=True)
+        assert not host_ready() and closed()
+        assert not os.path.exists('/run/skewer-host.json')
+        assert gate('verified').returncode != 0
     finally:
         worker.stdin.close()
         worker.wait(timeout=5)

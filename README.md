@@ -379,3 +379,47 @@ before Attach. Release also does not change an existing socket's cgroup;
 reconnect or restart the application when necessary. A privileged external
 firewall flush is outside this guarantee. Closing Skewer does not remove the
 guard. Installation requires authorization, but status polling never does.
+
+## Linux whole-host routing
+
+Select **Whole Host** in the scope box left of the connection settings, then
+**Enable**. In the TUI,
+press **H** to choose scope and **E** to enable it. The choice is independent of
+Set gateway / Saslik URL and Auto / Direct / Enforced tunnel. The default remains
+**Selected Apps**. An empty application selection never enables host routing.
+The existing privileged helper authorization also covers the explicit host request.
+
+Host scope captures locally generated IPv4 from every user and service, including
+normal external DNS. It uses Skewer's policy table; it does not replace the system
+main/default routes. Direct traffic is masqueraded on the selected next-hop
+interface; tunnel traffic uses the tunnel client address for replies. Forwarded
+VM/interface traffic still has its separate selection and is not included by host
+scope. IPv6 is blocked (apart from local `::1`); this is visible in the scope
+selector tooltip and TUI. Local loopback, IPv4 DHCP and explicit destination
+exemptions bypass host routing. Private subnets are not automatically exempt.
+
+Tunnel UDP and readiness probes bypass only from the worker's system cgroup;
+TLS control bypass is restricted to the initiating UID, peer IP and control port.
+They retain the underlying system route, which Skewer never redirects into TUN.
+Control and UDP use the same resolved IPv4 address. Reconnect reuses that address
+while the host is blocked, so recovery does not require an external DNS bypass.
+If the server changes address during an outage, use **Release host**, then Enable
+to resolve it again. Competing VPN policy may prevent connectivity; marked host
+packets are dropped if its rules select an interface other than the Saslik egress.
+
+Tunnel loss or GUI/controller closure keeps host traffic blocked until recovery
+or an explicit **Release host** (TUI **X**). A killed worker can leave installed
+routes and the persistent guard behind; it does not intentionally restore direct
+egress. Loss of the dedicated route is caught by the unreachable policy rule.
+Only one UID owns the global host guard. Release removes its owned host rules and
+restores the existing selected-application guard; attached application sockets
+remain protected until released separately. Change scope or destination exemptions
+only after releasing host routing. Existing connections may need reconnection when
+changing routing or NAT. Privileged external firewall changes remain outside these
+guarantees.
+
+`host_routing_packets` exercises real OUTPUT egress, DNS, IPv6 blocking, NAT,
+exemptions, competing policy routing, loss and release in private user/network/mount
+namespaces. `tuntom_routing` also exercises the privileged host-scope lifecycle and
+real marked packets through a simulated tunnel interface. These do not replace
+an end-to-end test against a remote Saslik with the real Tuntom transport.
