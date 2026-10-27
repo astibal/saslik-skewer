@@ -18,6 +18,35 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Paired control client
+
+`SKEWER_WINDOWS_PAIRING=ON` builds `skewer-control` from the same TLS 1.3 PSK
+control implementation as Linux. Use `skewer-control pair -` and paste the
+invitation on stdin; `remote-status skewer://HOST:PORT/pair` uses the saved
+pairing. This client does not install routes, start a service or create adapters.
+Windows pairing files are DPAPI-protected for the invoking user; plaintext files
+are rejected. This does not yet give a SYSTEM service access to the credentials:
+that handoff must use authenticated IPC, not machine-wide credential storage.
+
+Build the pinned OpenSSL 3.5.9 archive with `sh build-openssl.sh ARCHIVE PREFIX`
+inside the cross-build container, then add that prefix to `CMAKE_PREFIX_PATH`
+and configure `OPENSSL_ROOT_DIR=PREFIX` and `SKEWER_WINDOWS_PAIRING=ON`.
+The script verifies SHA-256 before extraction and
+builds static libraries. Qt's unrelated TLS plugins are not used by the PSK
+exchange. Distribute the appropriate OpenSSL license with release artifacts.
+
+`pairing_storage_test` checks DPAPI roundtrip, corruption and plaintext rejection.
+`tuntom_control_test ENDPOINT` reads its invitation from stdin and exercises
+enrollment, repeated open, renewal, close, key rotation and stale-lease rejection.
+The Python 3.13+ fixture `tests/pairing-peer.py` listens only on loopback port
+18767, stops after the test or 120 seconds, and uses public test credentials.
+Forward this port over SSH for a VM test; do not expose it on a LAN. It models
+control responses only and is not evidence of real Saslik forwarding.
+`tests/pairing-live.ps1 -Directory PATH` runs the storage test, rejects an invalid
+PSK, then exercises the control lifecycle against that forwarded fixture.
+This sequence passed on the Windows development VM using statically linked
+OpenSSL 3.5.9. Linux regression tests passed as well (37/37).
+
 ### Authenticated selection boundary
 
 `authorizePipeSelection()` obtains the client's OS token from a server-side

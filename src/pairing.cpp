@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include "pairing_windows.hpp"
+#else
+#include "pairing_posix.hpp"
+#endif
 #include "pairing.hpp"
 #include <QCryptographicHash>
 #include <QDir>
@@ -13,9 +18,6 @@
 #include <QUrlQuery>
 #include <QUuid>
 #include <openssl/ssl.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/socket.h>
 #include <stdexcept>
 #include <memory>
 #include <csignal>
@@ -41,32 +43,12 @@ int providePsk(SSL* ssl, const EVP_MD* digest, const unsigned char** identity,
 }
 QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonObject& request, const QString& connect_host = {})
 {
-    // OpenSSL's socket BIO can raise SIGPIPE. Block it only on this worker thread.
-    struct PipeGuard {
-        sigset_t previous{}, blocked{};
-        bool pending = false;
-        PipeGuard() {
-            sigset_t pending_set; sigpending(&pending_set); pending=sigismember(&pending_set,SIGPIPE);
-            sigemptyset(&blocked);sigaddset(&blocked,SIGPIPE);
-            pthread_sigmask(SIG_BLOCK,&blocked,&previous);
-        }
-        ~PipeGuard() {
-            if (!pending && !sigismember(&previous,SIGPIPE)) {
-                timespec zero{}; sigtimedwait(&blocked,nullptr,&zero);
-            }
-            pthread_sigmask(SIG_SETMASK,&previous,nullptr);
-        }
-    } pipe_guard;
+    [[maybe_unused]] PairingPlatform::SignalGuard pipe_guard;
     if (credentials.key.size()!=32 || credentials.identity.isEmpty()) throw std::runtime_error("Invalid pairing credentials");
     QTcpSocket tcp;
     tcp.connectToHost(connect_host.isEmpty() ? endpoint.host() : connect_host, endpoint.port());
     if (!tcp.waitForConnected(5000)) throw std::runtime_error("PSK endpoint unreachable");
-    int fd = dup(tcp.socketDescriptor());
-    if (fd<0) throw std::runtime_error("Cannot create transport descriptor");
-    struct Close { int fd; ~Close(){close(fd);} } close_fd{fd};
-    fcntl(fd,F_SETFL,fcntl(fd,F_GETFL)&~O_NONBLOCK);
-    timeval timeout{5,0}; setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
-    setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
+    PairingPlatform::Transport transport(tcp);
     std::unique_ptr<SSL_CTX,decltype(&SSL_CTX_free)> context(SSL_CTX_new(TLS_client_method()),SSL_CTX_free);
     if (!context) throw std::runtime_error("Cannot initialize TLS");
     SSL_CTX_set_min_proto_version(context.get(),TLS1_3_VERSION);
@@ -76,7 +58,8 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
     SSL_CTX_set_psk_use_session_callback(context.get(),providePsk);
     std::unique_ptr<SSL,decltype(&SSL_free)> ssl(SSL_new(context.get()),SSL_free);
     if (!ssl) throw std::runtime_error("Cannot initialize TLS session");
-    SSL_set_app_data(ssl.get(),&credentials); SSL_set_fd(ssl.get(),fd);
+    SSL_set_app_data(ssl.get(),&credentials);
+    if (!SSL_set_fd(ssl.get(), transport.descriptor())) throw std::runtime_error("Cannot bind TLS socket");
     if (SSL_connect(ssl.get())!=1 || SSL_version(ssl.get())!=TLS1_3_VERSION || SSL_get0_peer_certificate(ssl.get()))
         throw std::runtime_error("TLS-PSK authentication failed (no plaintext fallback)");
     // Log the phase only, never the credential-bearing request or pairing URL.
@@ -118,7 +101,7 @@ void save(const QString& path,const QJsonObject& value)
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(QFile::ReadOwner|QFile::WriteOwner))
         throw std::runtime_error("Cannot protect pairing file");
-    const auto bytes = QJsonDocument(value).toJson();
+    const auto bytes = PairingPlatform::encode(QJsonDocument(value).toJson());
     if (file.write(bytes)!=bytes.size() || !file.commit()) throw std::runtime_error("Cannot save pairing");
 }
 }
@@ -131,7 +114,8 @@ Credentials loadCredentials(const QUrl& endpoint)
         throw std::runtime_error("Invalid paired endpoint");
     QFile file(statePath(endpoint));
     if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("No pairing for this endpoint");
-    const auto value=QJsonDocument::fromJson(file.readAll()).object();
+    if (file.size() > 65536) throw std::runtime_error("Pairing file exceeds bounds");
+    const auto value=QJsonDocument::fromJson(PairingPlatform::decode(file.readAll())).object();
     return {value["identity"].toString().toUtf8(),QByteArray::fromBase64(value["psk"].toString().toLatin1(),QByteArray::Base64UrlEncoding|QByteArray::AbortOnBase64DecodingErrors)};
 }
 }
@@ -173,7 +157,6 @@ QJsonObject pairedStatus(const QUrl& endpoint)
 
 int pairingCommand(const QStringList& arguments)
 {
-    std::signal(SIGPIPE,SIG_IGN);
     try {
         if (arguments.size()!=3 || (arguments[1]!="pair" && arguments[1]!="remote-status"))
             throw std::runtime_error("Usage: skewer pair - | skewer remote-status skewer://HOST:PORT/pair (paste pairing address on stdin)");
@@ -187,7 +170,10 @@ int pairingCommand(const QStringList& arguments)
         const QString path = statePath(url);
         QJsonObject saved;
         QFile existing(path);
-        if (existing.open(QIODevice::ReadOnly)) saved=QJsonDocument::fromJson(existing.readAll()).object();
+        if (existing.open(QIODevice::ReadOnly)) {
+            if (existing.size() > 65536) throw std::runtime_error("Pairing file exceeds bounds");
+            saved=QJsonDocument::fromJson(PairingPlatform::decode(existing.readAll())).object();
+        }
         if (arguments[1]=="pair" && saved["identity"].toString().isEmpty()) {
             if (fragment.queryItemValue("v")!="1") throw std::runtime_error("Unsupported pairing version");
             Credentials invitation{fragment.queryItemValue("id").toUtf8(),
