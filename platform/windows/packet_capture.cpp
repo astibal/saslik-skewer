@@ -40,6 +40,14 @@ public:
         library_ =
             std::shared_ptr<void>(module, [](void* value) { FreeLibrary(static_cast<HMODULE>(value)); });
         const auto open = resolve<decltype(&WinDivertOpen)>(module, "WinDivertOpen");
+        const auto compile =
+            resolve<decltype(&WinDivertHelperCompileFilter)>(module, "WinDivertHelperCompileFilter");
+        const char* filter_error{};
+        UINT error_position{};
+        if (!compile(filter.c_str(), WINDIVERT_LAYER_NETWORK, nullptr, 0, &filter_error, &error_position)) {
+            throw std::invalid_argument("NETWORK filter at " + std::to_string(error_position) + ": " +
+                                        (filter_error ? filter_error : "invalid expression"));
+        }
         close_ = resolve<decltype(close_)>(module, "WinDivertClose");
         receive_ = resolve<decltype(receive_)>(module, "WinDivertRecvEx");
         send_ = resolve<decltype(send_)>(module, "WinDivertSend");

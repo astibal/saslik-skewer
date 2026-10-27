@@ -18,6 +18,41 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Whole-host IPv4 live experiment
+
+`tests/paired-tunnel-live.ps1 -WholeHostTest -WinDivertDirectory PATH
+-Management IPV4` extends the paired probe with temporary `/1` routes through
+Wintun, a pinned `/32` underlay route to the peer, and `host_guard_live` on the
+physical-egress deny path. Supply the usual Directory, WintunDll, Endpoint and
+Peer arguments; do not combine this mode with ConnectPort. Run only in the
+disposable development VM with out-of-band management available.
+
+The guard must arm before routing changes. It drops outbound non-loopback traffic
+outside Wintun except the exact peer UDP/control ports and SSH replies to the
+declared management address. Exceptions are tuple-based fixture allowances, not
+process authentication. IPv6 physical egress is denied, not tunneled. HTTP/HTTPS
+use pre-resolved example.com with no explicit proxy or source-interface binding;
+HTTPS ignores certificate trust only for this lab test. DNS and public IPv6
+forwarding are not covered.
+
+After the bounded tunnel owner exits, HTTP must fail while the guard is still
+alive. Cleanup removes only the fixture's exact routes before stopping the guard,
+then checks the original default routes and adapter removal. Wintun teardown
+also removes its `/1` routes; abrupt script termination may leave the peer `/32`
+route, so this is not a production crash-recovery implementation. The guard has
+a 90-second safety lifetime and no persistent kill-switch guarantee. No GUI
+whole-host control is exposed by this experiment.
+
+Verified on SKEWER-WIN11: HTTP and HTTPS completed through the temporary host
+routes without proxy/source binding; after tunnel teardown HTTP timed out with
+the guard alive. The guard reported 80 dropped packets (including background
+traffic), and the tunnel reported 79 transmitted/23 received inner packets.
+An independent post-test route inspection found neither `/1` nor peer `/32`
+left behind; ordinary HTTP worked again. The existing Linux tunnel stayed active
+and the Windows server-side lease/unit was removed. This is a bounded end-to-end
+experiment, not physical-egress packet-capture proof, DNS coverage, CA validation,
+or a production service/GUI implementation.
+
 ### Selection-bound packet epochs
 
 `SelectedPacketEpoch` connects the service-owned selection registry to the

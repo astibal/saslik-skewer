@@ -3,7 +3,10 @@ param(
     [Parameter(Mandatory=$true)][string]$WintunDll,
     [Parameter(Mandatory=$true)][string]$Endpoint,
     [Parameter(Mandatory=$true)][string]$Peer,
-    [ValidateRange(0,65535)][int]$ConnectPort = 0
+    [ValidateRange(0,65535)][int]$ConnectPort = 0,
+    [switch]$WholeHostTest,
+    [string]$WinDivertDirectory = '',
+    [string]$Management = ''
 )
 $ErrorActionPreference = 'Stop'
 # Pair separately via stdin. Never put an invitation/PSK into child argv or logs.
@@ -18,6 +21,40 @@ function DefaultRoutes {
         Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric) | ConvertTo-Json -Compress
 }
 $before = DefaultRoutes
+$ownedRoutes = @()
+$guard = $readyEvent = $stopEvent = $null
+if ($WholeHostTest) {
+    if ($ConnectPort) { throw 'Whole-host test must not use an explicit proxy' }
+    $managementIp = $null
+    if (![System.Net.IPAddress]::TryParse($Management, [ref]$managementIp) -or
+        $managementIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw 'Whole-host test requires numeric IPv4 SSH management address'
+    }
+    $hashes = @{
+        'WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'
+        'WinDivert64.sys' = '8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2'
+    }
+    foreach ($file in $hashes.Keys) {
+        if ((Get-FileHash (Join-Path $WinDivertDirectory $file)).Hash -ne $hashes[$file]) {
+            throw "Unverified WinDivert file: $file"
+        }
+    }
+    if ((Get-AuthenticodeSignature (Join-Path $WinDivertDirectory 'WinDivert64.sys')).Status -ne 'Valid') {
+        throw 'Untrusted WinDivert driver'
+    }
+    $testIp = (Resolve-DnsName example.com -Type A -DnsOnly |
+        Where-Object Type -EQ A | Select-Object -First 1).IPAddress
+    if (!$testIp) { throw 'Cannot resolve test destination before routing changes' }
+    # Pre-resolve test traffic: DNS routing is a separate acceptance case.
+    $underlay = @(Find-NetRoute -RemoteIPAddress $Peer |
+        Where-Object { $_.PSObject.Properties.Name -contains 'DestinationPrefix' })
+    if ($underlay.Count -ne 1) { throw 'Ambiguous underlay route' }
+    foreach ($prefix in @('0.0.0.0/1', '128.0.0.0/1', "$Peer/32")) {
+        if (Get-NetRoute -DestinationPrefix $prefix -ErrorAction SilentlyContinue) {
+            throw "Existing route conflicts with fixture: $prefix"
+        }
+    }
+}
 $runId = [guid]::NewGuid().ToString('N')
 $stdout = Join-Path $Directory "paired-$runId.out"
 $stderr = Join-Path $Directory "paired-$runId.err"
@@ -71,6 +108,37 @@ try {
         if ($LASTEXITCODE -eq 0) { ++$successes }
     }
     if ($successes -ne 3) { throw 'Paired Wintun path did not carry three successful pings' }
+    if ($WholeHostTest) {
+        $eventPrefix = 'Local\SkewerHost-' + $runId
+        $readyEvent = [Threading.EventWaitHandle]::new($false, 'ManualReset', $eventPrefix + '-ready')
+        $stopEvent = [Threading.EventWaitHandle]::new($false, 'ManualReset', $eventPrefix + '-stop')
+        $guard = Start-Process (Join-Path $Directory 'host_guard_live.exe') -ArgumentList @(
+            ('"' + (Join-Path $WinDivertDirectory 'WinDivert.dll') + '"'), $adapter.ifIndex, $Peer,
+            (40000 + [int]$metadata.id), ([Uri]$Endpoint).Port, $Management,
+            ($eventPrefix + '-ready'), ($eventPrefix + '-stop')) -PassThru -NoNewWindow
+        $null = $guard.Handle
+        if (!$readyEvent.WaitOne(5000) -or $guard.HasExited) { throw 'Host egress guard did not arm' }
+        $ownedRoutes += New-NetRoute -DestinationPrefix "$Peer/32" -InterfaceIndex $underlay[0].InterfaceIndex `
+            -NextHop $underlay[0].NextHop -RouteMetric 1 -PolicyStore ActiveStore
+        foreach ($prefix in @('0.0.0.0/1', '128.0.0.0/1')) {
+            $ownedRoutes += New-NetRoute -DestinationPrefix $prefix -InterfaceIndex $adapter.ifIndex `
+                -NextHop $server.ToString() -RouteMetric 1 -PolicyStore ActiveStore
+        }
+        $route = @(Find-NetRoute -RemoteIPAddress $testIp |
+            Where-Object { $_.PSObject.Properties.Name -contains 'DestinationPrefix' })
+        if ($route.Count -ne 1 -or $route[0].InterfaceIndex -ne $adapter.ifIndex) {
+            throw 'Test destination is not routed through Wintun'
+        }
+        foreach ($scheme in @('http', 'https')) {
+            $port = if ($scheme -eq 'https') { 443 } else { 80 }
+            $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
+                --resolve "example.com:${port}:$testIp" --connect-timeout 3 --max-time 7 "${scheme}://example.com/"
+            if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') {
+                throw "Whole-host $scheme failed"
+            }
+            Write-Output "PASS: host routes -> Wintun/Tuntom -> $scheme, no proxy or source binding"
+        }
+    }
     if ($ConnectPort) {
         # Explicit lab-only TLS trust bypass; never installed as browser policy.
         # CONNECT resolves the public destination on Smithproxy, not Windows DNS.
@@ -84,7 +152,26 @@ try {
     }
     if (!$process.WaitForExit(50000)) { throw 'Paired probe exceeded its lifetime' }
     if ($process.ExitCode -ne 0) { throw "Paired probe failed: $($process.ExitCode)" }
+    if ($WholeHostTest) {
+        if ($guard.HasExited) { throw 'Host guard exited before tunnel-loss check' }
+        & curl.exe -4 --silent --show-error --noproxy '*' --resolve "example.com:80:$testIp" `
+            --connect-timeout 2 --max-time 3 http://example.com/ | Out-Null
+        if ($LASTEXITCODE -eq 0 -or $guard.HasExited) { throw 'Direct fallback succeeded or guard was lost' }
+        Write-Output 'PASS: public HTTP fails after tunnel teardown while egress guard remains alive'
+    }
 } finally {
+    # Retire only our exact route objects before allowing ordinary egress again.
+    # Wintun teardown also removes its /1 routes if the script is interrupted.
+    foreach ($route in $ownedRoutes) {
+        $present = Get-NetRoute -DestinationPrefix $route.DestinationPrefix -InterfaceIndex $route.InterfaceIndex `
+            -PolicyStore ActiveStore -ErrorAction SilentlyContinue |
+            Where-Object { $_.NextHop -eq $route.NextHop -and $_.RouteMetric -eq $route.RouteMetric }
+        if ($present) { $present | Remove-NetRoute -Confirm:$false }
+    }
+    if ($stopEvent) { $null = $stopEvent.Set() }
+    if ($guard -and !$guard.HasExited -and !$guard.WaitForExit(5000)) { $guard.Kill(); $guard.WaitForExit() }
+    if ($readyEvent) { $readyEvent.Dispose() }
+    if ($stopEvent) { $stopEvent.Dispose() }
     # Let the bounded owner close its lease and adapter. Kill only this exact
     # retained child handle if the probe fails to honor its lifetime.
     if (!$process.HasExited -and !$process.WaitForExit(60000)) { $process.Kill(); $process.WaitForExit() }
