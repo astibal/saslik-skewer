@@ -1,6 +1,7 @@
 #include "processes.hpp"
 #include "flow_tracking.hpp"
 #include "pending_packets.hpp"
+#include "selected_packets.hpp"
 #include "packet_capture.hpp"
 #include <array>
 #include <bit>
@@ -61,7 +62,21 @@ std::vector<std::uint8_t> tunnelRoundTrip(const std::vector<std::uint8_t>& origi
     }
     require(client.healthy(TunnelPump::Clock::now()) && server.healthy(TunnelPump::Clock::now()),
             "Packet tunnel handshake failed");
-    require(local.enqueue(original), "Captured packet exceeds tunnel queue bounds");
+    const auto identity = processKey(GetCurrentProcess(), GetCurrentProcessId());
+    const skewer::traffic::ProcessIdentity expected{identity.pid, identity.created};
+    ProcessTarget process(identity);
+    skewer::traffic::SelectedPackets<unsigned> selected(expected, 4, 256 * 1024, std::chrono::seconds(3));
+    const auto now = TunnelPump::Clock::now();
+    const auto ticket = selected.hold(original, 0, now);
+    require(ticket.has_value(), "Selection gate rejected fixture packet");
+    auto authorized = selected.takeForTunnel(
+        *ticket, now, process.running(), client.healthy(now), [&](auto candidate, auto) {
+            // Both exclusive endpoints belong to this fixture. Flow observation
+            // alone would NOT justify this result in a general application.
+            require(candidate == *skewer::traffic::parsePacketTuple(original).tuple, "Wrong gated tuple");
+            return skewer::traffic::PacketOwner{skewer::traffic::PacketOwner::State::Unique, expected};
+        });
+    require(authorized && local.enqueue(authorized->bytes), "Verified packet did not enter tunnel queue");
     bool traversed{};
     while (GetTickCount64() < deadline) {
         const auto now = TunnelPump::Clock::now();

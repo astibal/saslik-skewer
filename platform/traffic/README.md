@@ -97,3 +97,27 @@ This is storage, not authorization: `take()` does not prove ownership, select a
 route or check tunnel readiness. A service must make those decisions separately.
 The Windows VM fixture uses it for captured UDP and TCP SYN packets; it is not
 yet wired into a production interception service.
+
+## Selected packet gate
+
+`SelectedPackets<Context>` adds a single-process, single-epoch outbound policy
+queue. It parses the actual held packet and supplies that tuple to a trusted
+resolver at release time. Unknown/ambiguous ownership remains held until expiry;
+another process (including the same PID with a different creation time) is
+discarded. Only a unique matching owner with a live process and healthy tunnel
+can release bytes. Missing unique-owner identity, unreliable attribution,
+resolver exceptions, process exit or tunnel failure retire the entire queue.
+Retirement is terminal: reconnect requires a new queue/epoch. There is no direct
+network fallback. Unsupported/fragmented packets cannot enter this queue.
+
+The resolver contract intentionally does not accept `FlowIndex::Match` directly.
+Observed ownership alone does not prove uniqueness. Liveness and health are
+fresh inputs from the single owning worker, not background checks performed by
+this container. The owner must also stop downstream work on failure and schedule
+idle expiry. This is not yet a complete interception/routing service.
+
+Tests cover delayed/ambiguous resolution, expiry, one-shot tickets, PID reuse,
+retirement and exceptions. The Windows live fixture additionally uses the gate
+before the real encrypted TCP/UDP round trip, with pinned process liveness and
+actual tunnel health. Its ownership evidence is the fixture's exclusive sockets,
+not an assertion that a per-process observer is a general ownership oracle.

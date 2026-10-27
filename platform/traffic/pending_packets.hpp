@@ -82,6 +82,16 @@ public:
         return true;
     }
 
+    // Copy metadata only; never expose a borrowed reference into the queue.
+    std::optional<Context> context(Ticket ticket, Time now) {
+        expire(now);
+        const auto found = records_.find(ticket);
+        if (found == records_.end()) {
+            return std::nullopt;
+        }
+        return found->second.packet.context;
+    }
+
     std::size_t expire(Time now) {
         if (last_ && now < *last_) {
             throw std::invalid_argument("Pending packet clock moved backwards");
