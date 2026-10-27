@@ -139,7 +139,7 @@ void heartbeatPairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel,
 {
     const auto renewed = Tuntom::endpointFromResponse(exchange(endpoint, loadCredentials(endpoint),
         {{"action", "tunnel-heartbeat"}, {"context", tunnel.context}}, connect_host));
-    if (renewed.context != tunnel.context || renewed.id != tunnel.id
+    if (renewed.context != tunnel.context || renewed.id != tunnel.id || renewed.leaseSeconds != tunnel.leaseSeconds
         || renewed.serverAddress != tunnel.serverAddress || renewed.clientAddress != tunnel.clientAddress)
         throw std::runtime_error("Tunnel endpoint changed during renewal");
 }

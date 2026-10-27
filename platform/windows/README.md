@@ -47,6 +47,34 @@ PSK, then exercises the control lifecycle against that forwarded fixture.
 This sequence passed on the Windows development VM using statically linked
 OpenSSL 3.5.9. Linux regression tests passed as well (37/37).
 
+### Paired transport lifetime
+
+`runPairedTunnel()` connects the paired control API to the encrypted packet pump.
+One owner manages the lease, readiness and packet I/O; bounded control renewals
+run asynchronously so a slow control endpoint does not stall healthy data.
+The conservative lease deadline starts before the request, not after its reply.
+Expiry, rejection and cancellation clear readiness; a late response cannot revive
+the retired owner. Data authorization is checked in both directions at packet
+boundaries. The owner closes the remote lease after joining any pending renewal.
+
+The caller must keep its external capture/routing guard armed independently.
+This library does not yet connect GUI selection to a deployed routing service,
+and it never restores direct routing on failure. A pinned numeric IPv4 peer is
+shared by control and UDP transport; IPv6 transport selection remains separate work.
+
+`paired_tunnel_live --live ABSOLUTE_WINTUN_DLL PAIRED_ENDPOINT IPV4_PEER` is an
+explicit 45-second developer probe using a pairing saved by `skewer-control`.
+It creates an ephemeral adapter, prints authenticated public IP metadata and
+cleans up the adapter/lease on exit. It does not assign addresses or routes.
+Do not expose application traffic until the external guard is installed.
+
+The Windows VM tests cover encrypted loopback payloads, packet-boundary denial
+in both directions, cancellation, renewal rejection and continued pumping while
+control sleeps. A renewal delayed beyond lease expiry must clear readiness and
+stop data before its worker returns. These tests use an injected control fixture;
+the explicit paired Wintun probe has only been built, not exercised against a
+real Saslik in this phase. Linux regressions passed (38/38).
+
 ### Authenticated selection boundary
 
 `authorizePipeSelection()` obtains the client's OS token from a server-side

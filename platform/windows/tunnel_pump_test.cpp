@@ -194,6 +194,46 @@ void test(const char* ip) {
 }
 } // namespace
 
+void testDataGate() {
+    TestDevice left, right;
+    UdpEndpoint a(UdpAddress::numeric("127.0.0.1", 0)), b(UdpAddress::numeric("127.0.0.1", 0));
+    tuntom::ascon::key_type key{};
+    key.fill(8);
+    bool allowed = true;
+    TunnelPump client(left, a, b.localAddress(), 43, key, false, [&] { return allowed; });
+    TunnelPump server(right, b, a.localAddress(), 43, key, true);
+    auto cycle = [&] {
+        const auto now = TunnelPump::Clock::now();
+        client.step(now);
+        server.step(now);
+        Sleep(1);
+    };
+    for (unsigned i = 0; i < 300 && !client.healthy(TunnelPump::Clock::now()); ++i) {
+        cycle();
+    }
+    require(client.healthy(TunnelPump::Clock::now()), "Gate fixture handshake failed");
+    allowed = false;
+    left.outgoing.push_back(packet(false));
+    right.outgoing.push_back(packet(false));
+    for (unsigned i = 0; i < 40; ++i) {
+        cycle();
+    }
+    require(left.incoming.empty() && right.incoming.empty(), "Denied gate passed data");
+    require(client.counters().not_ready >= 2, "Both data directions must be denied");
+    allowed = true;
+    for (unsigned i = 0; i < 10; ++i) {
+        cycle();
+    }
+    require(left.incoming.empty() && right.incoming.empty(), "Denied data survived gate reopening");
+    left.outgoing.push_back(packet(false));
+    right.outgoing.push_back(packet(false));
+    for (unsigned i = 0; i < 40; ++i) {
+        cycle();
+    }
+    require(left.incoming.size() == 1 && right.incoming.size() == 1, "Fresh authorized data missing");
+    std::cout << "PASS: packet-boundary authorization in both directions\n";
+}
+
 int main() {
     try {
         {
@@ -216,6 +256,7 @@ int main() {
                     "Stopped queue retained packets");
             std::cout << "PASS: bounded packet bridge ownership, events and terminal stop\n";
         }
+        testDataGate();
         test("127.0.0.1");
         test("::1");
         testQuietPeer("127.0.0.1");

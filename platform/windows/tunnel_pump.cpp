@@ -19,9 +19,9 @@ bool validIp(std::span<const uint8_t> packet) {
 } // namespace
 
 TunnelPump::TunnelPump(PacketDevice& device, UdpEndpoint& udp, UdpAddress peer, uint16_t id,
-                       const tuntom::ascon::key_type& key, bool server)
+                       const tuntom::ascon::key_type& key, bool server, std::function<bool()> data_allowed)
     : device_(device), udp_(udp), peer_(peer), id_(id),
-      session_(id, key, server, inner_mtu, true, 300, true) {
+      session_(id, key, server, inner_mtu, true, 300, true), data_allowed_(std::move(data_allowed)) {
     if (id == 0 || peer.port() == 0 || peer.family() != udp.localAddress().family()) {
         throw std::invalid_argument("Invalid tunnel ID or fixed UDP peer");
     }
@@ -103,6 +103,10 @@ void TunnelPump::receive(Time now) {
             ++counters_.invalid;
             continue;
         }
+        if (data_allowed_ && !data_allowed_()) {
+            ++counters_.not_ready;
+            continue;
+        }
         if (device_.writePacket(complete)) {
             ++counters_.rx;
         } else {
@@ -135,7 +139,12 @@ void TunnelPump::transmit(Time now) {
         packet.message_id = ++message_id_;
         packet.original_length = static_cast<uint32_t>(*size);
         packet.payload.assign(buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(*size));
-        if (send(session_.encode(packet))) {
+        const auto wire = session_.encode(packet);
+        if (data_allowed_ && !data_allowed_()) {
+            ++counters_.not_ready;
+            continue;
+        }
+        if (send(wire)) {
             ++counters_.tx;
         }
     }

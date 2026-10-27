@@ -3,6 +3,7 @@
 #include "udp_endpoint.hpp"
 #include "packet_device.hpp"
 #include <session.hpp>
+#include <functional>
 
 namespace skewer::windows {
 
@@ -20,7 +21,8 @@ public:
     };
 
     TunnelPump(PacketDevice& device, UdpEndpoint& udp, UdpAddress peer, uint16_t id,
-               const tuntom::ascon::key_type& key, bool server = false);
+               const tuntom::ascon::key_type& key, bool server = false,
+               std::function<bool()> data_allowed = {});
     // Deterministic bounded iteration for the supervisor and tests; one owner.
     void step(Time now);
     void run(HANDLE stop);
@@ -42,6 +44,8 @@ private:
     Time last_received_{}, last_keepalive_{};
     uint64_t message_id_{};
     Counters counters_;
+    // Invoked by the pump owner at packet boundaries, never by a control worker.
+    std::function<bool()> data_allowed_;
 };
 
 } // namespace skewer::windows
