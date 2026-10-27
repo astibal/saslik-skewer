@@ -168,3 +168,19 @@ A custom callout introduces WDK build, signing, installation, upgrade and recove
 work. This experiment does **not** install a custom driver, change Secure Boot,
 enable test signing, or prove production driver persistence. Those are separate
 decisions; no security setting should be weakened implicitly to run the prototype.
+
+### Independent TCP ownership evidence
+
+`captureTcpOwners()` collects both IP Helper owner-PID tables across processes,
+with bounded allocation and retries. `tcpOwnerCandidates()` preserves competing
+PIDs for an exact outbound tuple; it never turns a table row into an authenticated
+process identity. IPv6 scope collisions are retained conservatively.
+
+The Windows VM fixture verifies that the selected PID appears while its first
+IPv4/IPv6 SYN is held by WinDivert. Synthetic tests cover competing owners,
+duplicates, direction, port mismatches and rejection of UDP queries.
+
+This is corroborating evidence only: the tables are not atomic with packet
+capture or each other, and PID reuse, compartments and socket lifecycle races
+still require policy. No production routing decision consumes these snapshots
+yet. UDP/shared sockets require separate handling.

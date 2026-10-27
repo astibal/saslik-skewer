@@ -2,7 +2,9 @@
 #include "flow_tracking.hpp"
 #include "pending_packets.hpp"
 #include "selected_packets.hpp"
+#include "tcp_owners.hpp"
 #include "packet_capture.hpp"
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <iostream>
@@ -335,6 +337,10 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                         attempt.event->process == identity &&
                         traffic::flowTuple(*attempt.event) == parsed.tuple,
                     "Reusable CONNECT observer did not match the held SYN");
+            const auto snapshot = traffic::captureTcpOwners();
+            const auto candidates = traffic::tcpOwnerCandidates(snapshot.rows, *parsed.tuple);
+            require(std::find(candidates.begin(), candidates.end(), identity.pid) != candidates.end(),
+                    "Independent TCP table did not contain held-SYN owner");
             Handle socket_event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
             require(static_cast<bool>(socket_event), "Create CONNECT event");
             WINDIVERT_ADDRESS connect_address{};
