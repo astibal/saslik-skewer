@@ -84,15 +84,6 @@ int tuntomProcess(uid_t owner)
             throw std::runtime_error("Invalid tunnel request framing");
         auto request = QJsonDocument::fromJson(input).object();
         const auto endpoint = Tuntom::endpointFromResponse(request);
-        if (request["route"].toBool()) {
-            QStringList exemptions;
-            for (const auto value : request["exemptions"].toArray()) {
-                if (!value.isString()) throw std::runtime_error("Invalid destination exemption");
-                exemptions << value.toString();
-            }
-            Tuntom::beginRouting(owner, endpoint, exemptions);
-            routed_endpoint = endpoint;
-        }
         const auto keyHex = request["key"].toString().toLatin1();
         const auto key = QByteArray::fromHex(keyHex);
         if (key.size() != 16 || key.toHex() != keyHex)
@@ -113,6 +104,25 @@ int tuntomProcess(uid_t owner)
         if (QFile::exists("/sys/class/net/" + endpoint.clientInterface))
             throw std::runtime_error("Tunnel interface already exists");
         validateSubnet(endpoint);
+        if (request["route"].toBool()) {
+            QStringList exemptions;
+            for (const auto value : request["exemptions"].toArray()) {
+                if (!value.isString()) throw std::runtime_error("Invalid destination exemption");
+                exemptions << value.toString();
+            }
+            const auto scope = request.value("scope").toString("applications");
+            if (scope != "applications" && scope != "host") throw std::runtime_error("Invalid routing scope");
+            QJsonObject host;
+            if (scope == "host") {
+                const int control = request["control_port"].toInt();
+                if (control < 1 || control > 65535) throw std::runtime_error("Invalid tunnel control port");
+                host = {{"peer", remote.toString()}, {"transport_port", 40000 + endpoint.id},
+                    {"control_port", control}, {"probe", endpoint.serverAddress.chopped(3)}};
+            }
+            Tuntom::beginRouting(owner, endpoint, exemptions, host);
+            routed_endpoint = endpoint;
+        }
+
         QTemporaryDir runtime("/run/skewer-tuntom-XXXXXX");
         if (!runtime.isValid() || ::chown(runtime.path().toLocal8Bit().constData(), account->pw_uid, account->pw_gid))
             throw std::runtime_error("Cannot prepare tunnel runtime directory");

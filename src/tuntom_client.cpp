@@ -52,6 +52,7 @@ int tuntomClientCommand(const QStringList& arguments)
     if (address.scheme() != "skewer" || address.path() != "/pair" || address.hasFragment()
         || address.hasQuery() || !address.userInfo().isEmpty()) return 2;
     std::optional<PairedTunnel> tunnel;
+    QString host;
     QProcess helper;
     bool gui_helper_started = false;
     auto cleanup = [&] {
@@ -64,7 +65,7 @@ int tuntomClientCommand(const QStringList& arguments)
             helper.waitForFinished(8000);
         }
         if (tunnel) {
-            try { closePairedTunnel(address, tunnel->endpoint); }
+            try { closePairedTunnel(address, tunnel->endpoint, host); }
             catch (const std::exception&) {
                 QTextStream(stderr) << "Server cleanup pending lease expiry.\n";
             }
@@ -83,13 +84,28 @@ int tuntomClientCommand(const QStringList& arguments)
             if (!slice.waitForFinished(10000) || slice.exitStatus() != QProcess::NormalExit || slice.exitCode())
                 throw std::runtime_error("Cannot create routed cgroup");
         }
-        QString host;
         QTextStream(stderr) << "[tuntom] Resolving server address\n" << Qt::flush;
-        for (const auto& ip : QHostInfo::fromName(address.host()).addresses())
-            if (ip.protocol() == QAbstractSocket::IPv4Protocol) { host = ip.toString(); break; }
+        const bool whole_host = gui && QSettings().value("routing/scope", "applications") == "host";
+        // Recovery must not need external DNS while the host guard is closed.
+        // Keep the authenticated endpoint identity for PSK lookup; pin only
+        // the transport address, shared by UDP and control renewals.
+        if (whole_host && QFile::exists("/run/skewer-host.json")
+            && QSettings().value("routing/peerEndpoint") == address.toString()) {
+            QHostAddress cached(QSettings().value("routing/peerAddress").toString());
+            if (cached.protocol() == QAbstractSocket::IPv4Protocol) host = cached.toString();
+        }
+        if (host.isEmpty())
+            for (const auto& ip : QHostInfo::fromName(address.host()).addresses())
+                if (ip.protocol() == QAbstractSocket::IPv4Protocol) { host = ip.toString(); break; }
         if (host.isEmpty()) throw std::runtime_error("No IPv4 address for tunnel server");
         QTextStream(stderr) << "[tuntom] Opening authenticated control session\n" << Qt::flush;
-        tunnel = openPairedTunnel(address);
+        tunnel = openPairedTunnel(address, host);
+        if (whole_host) {
+            QSettings settings;
+            settings.setValue("routing/peerEndpoint", address.toString());
+            settings.setValue("routing/peerAddress", host);
+            settings.sync();
+        }
         QTextStream(stderr) << "[tuntom] Server endpoint accepted\n" << Qt::flush;
         const auto& ep = tunnel->endpoint;
         const QJsonObject metadata{{"version", 1}, {"transport", "tuntom"}, {"id", ep.id},
@@ -99,6 +115,8 @@ int tuntomClientCommand(const QStringList& arguments)
         const QJsonObject request{{"ok", true}, {"lease_seconds", ep.leaseSeconds}, {"tunnel", metadata},
             {"host", host}, {"key", QString::fromLatin1(tunnel->key.toHex())}, {"binary", binary},
             {"acknowledge_development_binary", development},
+            {"scope", QSettings().value("routing/scope", "applications").toString()},
+            {"control_port", address.port()},
             {"route", gui}, {"exemptions", QJsonArray::fromStringList(QSettings().value("routing/exemptions").toStringList())}};
         QString executable = QCoreApplication::applicationDirPath() + "/skewer-net-helper";
         if (!QFileInfo(executable).isExecutable()) executable = SKEWER_INSTALLED_HELPER_PATH;
@@ -169,7 +187,7 @@ int tuntomClientCommand(const QStringList& arguments)
             if (!prepared && startup.elapsed() > 120000)
                 throw std::runtime_error("Tunnel startup timed out");
             if (heartbeat.elapsed() >= 10000) {
-                heartbeatPairedTunnel(address, ep);
+                heartbeatPairedTunnel(address, ep, host);
                 if (prepared) {
                     if (gui) guiHelper({"tunnel-renew"});
                     else helper.write("keepalive\n");

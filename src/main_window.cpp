@@ -100,6 +100,12 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
             runtime_trust, &RuntimeTrustPanel::setCertificate);
     auto* layout = central->top;
     search_ = central->search;
+    auto* routing_row = new QHBoxLayout;
+    auto* scope_box = new QGroupBox(central);
+    scope_box->setAccessibleName(tr("Routing scope"));
+    scope_box->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    auto* scope_layout = new QHBoxLayout(scope_box);
+    scope_layout->setContentsMargins(8, 6, 8, 6);
     auto* routing_box = new QGroupBox(central);
     routing_box->setAccessibleName(tr("Routing"));
     auto* routing_layout = new QHBoxLayout(routing_box);
@@ -131,6 +137,22 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     connect(transport_mode_, &QComboBox::currentIndexChanged, this, [this] {
         QSettings().setValue("routing/transport", transport_mode_->currentData());
     });
+    routing_scope_ = new QComboBox(scope_box);
+    routing_scope_->setObjectName("routingScope");
+    routing_scope_->addItem(tr("Selected Apps"), "applications");
+    routing_scope_->addItem(tr("Whole Host"), "host");
+    auto scope_font = routing_scope_->font();
+    scope_font.setWeight(QFont::DemiBold);
+    routing_scope_->setFont(scope_font);
+    routing_scope_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    scope_layout->addWidget(routing_scope_);
+    routing_scope_->setCurrentIndex(initial_settings.value("routing/scope", "applications") == "host" ? 1 : 0);
+    routing_scope_->setToolTip(tr("Whole host: all local IPv4 traffic, including services. IPv6 is blocked. "
+        "Loopback, DHCP and tunnel control stay local. Forwarded VM traffic is configured separately. "
+        "Disable releases host routing; tunnel loss blocks host traffic until recovery or Disable."));
+    connect(routing_scope_, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings().setValue("routing/scope", routing_scope_->currentData());
+    });
     routing_up_ = new QPushButton(tr("Enable"), routing_box);
     routing_down_ = new QPushButton(tr("Disable"), routing_box);
     routing_status_ = new QLabel(routing_box);
@@ -144,7 +166,9 @@ MainWindow::MainWindow(const QString& connect_url, QWidget* parent,
     routing_layout->addWidget(routing_up_);
     routing_layout->addWidget(routing_down_);
     routing_layout->addWidget(routing_status_);
-    layout->addWidget(routing_box);
+    routing_row->addWidget(scope_box);
+    routing_row->addWidget(routing_box, 1);
+    layout->addLayout(routing_row);
     auto* pair_button = new QPushButton(tr("Pair with Saslik…"),central);
     routing_layout->insertWidget(routing_layout->indexOf(routing_up_), pair_button);
     const auto begin_pairing = [this,pair_button](const QString& address) {
@@ -1061,6 +1085,7 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
         text = tr("○ Routing inactive");
         color = QStringLiteral("#899098");
     }
+    if (routing_scope_->currentData() == "host") text.prepend(tr("Whole host · "));
     routing_status_->setProperty("retryGuarded", protected_slice);
     routing_status_->setText(text);
     routing_status_bar_->setText(text);
@@ -1087,8 +1112,11 @@ void MainWindow::renderRoutingStatus(bool active, bool reachable)
     routing_up_->setEnabled(!tunnel_process_ && (!active || !maintained));
     routing_up_->setToolTip(tr("Authorize a persistent helper for this Skewer session. "
         "Missing routes will be restored without asking for the password again."));
-    routing_down_->setEnabled(routing_requested_ || active || interfaces_attached);
+    const bool host_claimed = QFile::exists("/run/skewer-host.json");
+    routing_down_->setText(host_claimed ? tr("Release host") : tr("Disable"));
+    routing_down_->setEnabled(host_claimed || routing_requested_ || active || interfaces_attached);
     routing_source_->setEnabled(!routing_requested_ && !active && !interfaces_attached);
+    routing_scope_->setEnabled(!host_claimed && !routing_requested_ && !active && !interfaces_attached);
     transport_mode_->setEnabled(!routing_requested_ && !active && !interfaces_attached && usesSaslikUrl());
     next_hop_->setEnabled(!routing_requested_ && !active && !interfaces_attached && !usesSaslikUrl());
     saslik_url_->setEnabled(!routing_requested_ && !active && !interfaces_attached && usesSaslikUrl());

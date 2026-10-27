@@ -82,6 +82,7 @@ int Tui::run()
         case 'e': case 'E': enableRouting(); break;
         case 's': case 'S': configureSaslik(); break;
         case 't': case 'T': configureTransport(); break;
+        case 'h': case 'H': configureScope(); break;
         case 'i': case 'I': showTunnelDetails(); break;
         case 'c': case 'C': caTrust(); break;
         case 'v': case 'V': connections(); break;
@@ -140,6 +141,7 @@ QString Tui::routingSummary() const
     QString message = routing_issue_;
     if (message.isEmpty()) message = Tuntom::compactStatus(tunnel_.view,
         !QFileInfo(Preferences::tuntomBinary()).isExecutable());
+    if (QSettings().value("routing/scope", "applications") == "host") message.prepend("Whole host (IPv4; IPv6 blocked) · ");
     if (requested_ && retry_.isValid())
         message += QString(" · retry in %1 s (E now)").arg(std::max<qint64>(0, (60000 - retry_.elapsed() + 999) / 1000));
     return message;
@@ -200,7 +202,7 @@ void Tui::draw()
     mvaddnstr(height - 3, 2, status.constData(), width - 4);
     mvaddnstr(height - 2, 2,
               "A attach D release E on X off S Saslik T transport I details G gateway N launch ! shell Q quit", width - 4);
-    mvaddnstr(height - 1, 2, "C CA Trust  U Runtime Trust  V Connections  O Settings  P Pair  Z disconnect", width - 4);
+    mvaddnstr(height - 1, 2, "H scope  C CA Trust  U Runtime Trust  V Connections  O Settings  P Pair  Z disconnect", width - 4);
     refresh();
 }
 
@@ -400,6 +402,15 @@ void Tui::configureSaslik()
     settings.setValue("routing/saslikUrl", input); settings.setValue("routing/mode", "saslik");
     settings.setValue("saslik/disconnected", false);
     status_ = "Saslik selected; E enables routing";
+}
+
+void Tui::configureScope()
+{
+    if (requested_ || routing_active_ || QFile::exists("/run/skewer-host.json")) { status_ = "Disable routing before changing scope"; return; }
+    const int scope = choose("Routing scope", {"Selected applications", "Whole host (IPv4; IPv6 blocked; Disable releases host)"});
+    if (scope < 0) return;
+    QSettings().setValue("routing/scope", scope == 1 ? "host" : "applications");
+    status_ = scope == 1 ? "Whole host selected; E enables routing including services" : "Selected applications";
 }
 
 void Tui::configureTransport()

@@ -36,7 +36,8 @@ per-instance protection surviving service failure becomes a product requirement.
 ## Target: whole-host routing through Saslik
 
 Whole-host routing is an explicit alternative to application selection, for both
-Linux and Windows. It is not enabled yet and does not implicitly include traffic
+Linux and Windows. Windows is not enabled yet; Linux implementation status is
+listed below. Whole-host scope does not implicitly include traffic
 forwarded from VMs, bridges or other machines.
 
 The initial portable `routing_scope.hpp` admission model is unit-tested but not
@@ -72,6 +73,17 @@ and rejects invalid enum values. This does not complete the activation checklist
 
 This is a target capability, not permission to change the development host's
 default routes. Initial implementation tests use isolated VMs and rollback.
+## Linux whole-host routing
+
+GUI/TUI host scope now supports direct next-hop and Tuntom routing for local
+IPv4 traffic, with explicit IPv6 blocking, persistent failure protection and
+host release. See README for the operating limits and namespace tests.
+
+- [ ] Validate against a real remote Saslik/Tuntom deployment, including DHCP
+  renewal, reconnect, return traffic, DNS and coexistence with another VPN.
+- [ ] Support automatic peer address relocation while host routing is blocked;
+  recovery currently reuses the resolved peer until Release host and reconnect.
+- [ ] Add IPv6 forwarding; unsupported IPv6 currently remains blocked.
 
 ## Enterprise: interface traffic through Tuntom (deferred)
 

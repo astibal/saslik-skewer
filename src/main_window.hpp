@@ -98,6 +98,7 @@ private:
     QLineEdit* next_hop_{};
     QLineEdit* saslik_url_{};
     QComboBox* routing_source_{};
+    QComboBox* routing_scope_{};
     QPushButton* routing_up_{};
     QPushButton* routing_down_{};
     QLabel* routing_status_{};
