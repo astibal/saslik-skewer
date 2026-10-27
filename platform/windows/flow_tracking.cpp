@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "flow_tracking.hpp"
+#include <stdexcept>
 
 namespace skewer::windows::traffic {
 using skewer::traffic::FlowIndex;
@@ -88,6 +89,43 @@ SocketAttemptIndex::Index::Match SocketAttemptIndex::lookup(PacketTuple tuple, I
 void SocketAttemptIndex::invalidate() {
     index_.invalidate();
     tuples_.clear();
+}
+
+TrackedSocketObserver::TrackedSocketObserver(const std::wstring& dll, ProcessKey process)
+    : TrackedSocketObserver(dll, std::make_unique<ProcessTarget>(process)) {}
+
+TrackedSocketObserver::TrackedSocketObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process)
+    : observer_(dll, std::move(process), FlowObserver::Mode::SocketLifecycle) {}
+
+FlowObserver::Result TrackedSocketObserver::next(HANDLE cancellation, DWORD timeout_ms) {
+    try {
+        auto result = observer_.next(cancellation, timeout_ms);
+        if (result.status == FlowObserver::Status::Event) {
+            if (!result.event) {
+                index_.invalidate();
+                throw std::runtime_error("Socket observer returned an event without metadata");
+            }
+            index_.observe(*result.event, FlowIndex::Clock::now());
+        } else if (result.status != FlowObserver::Status::Timeout) {
+            index_.invalidate();
+        }
+        return result;
+    } catch (...) {
+        index_.invalidate();
+        throw;
+    }
+}
+
+FlowIndex::Match TrackedSocketObserver::lookup(PacketTuple tuple) {
+    try {
+        if (!observer_.targetRunning()) {
+            index_.invalidate();
+        }
+        return index_.lookup(tuple, FlowIndex::Clock::now());
+    } catch (...) {
+        index_.invalidate();
+        throw;
+    }
 }
 
 TrackedFlowObserver::TrackedFlowObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process)

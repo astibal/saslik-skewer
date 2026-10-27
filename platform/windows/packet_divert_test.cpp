@@ -115,7 +115,11 @@ struct Socket {
         : value(socket(family, tcp ? SOCK_STREAM : SOCK_DGRAM, tcp ? IPPROTO_TCP : IPPROTO_UDP)) {
         require(value != INVALID_SOCKET, "Create fixture socket");
     }
-    ~Socket() { closesocket(value); }
+    ~Socket() {
+        if (value != INVALID_SOCKET) {
+            closesocket(value);
+        }
+    }
     Socket(const Socket&) = delete;
     Socket& operator=(const Socket&) = delete;
 };
@@ -248,8 +252,7 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
     // Start observing before creating traffic. A selected-PID observer proves
     // correlation only, not the absence of another process sharing a tuple.
     traffic::TrackedFlowObserver observer(path, identity);
-    traffic::FlowObserver attempts(path, std::make_unique<ProcessTarget>(identity),
-                                   traffic::FlowObserver::Mode::ConnectAttempts);
+    traffic::TrackedSocketObserver attempts(path, std::make_unique<ProcessTarget>(identity));
     Handle cancellation(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancellation), "Create observer cancellation event");
     const auto open = resolve<decltype(&WinDivertOpen)>(dll, "WinDivertOpen");
@@ -287,6 +290,7 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
     using HoldingQueue = skewer::traffic::PendingPackets<WINDIVERT_ADDRESS>;
     HoldingQueue held(4, 256 * 1024, std::chrono::seconds(3));
 
+    std::optional<skewer::traffic::PacketTuple> tracked_tuple;
     for (bool reinject : {true, false}) {
         if (tcp && reinject) {
             // TCP scope here is the first SYN and attribution before handshake,
@@ -338,6 +342,11 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                         attempt.event->process == identity &&
                         traffic::flowTuple(*attempt.event) == parsed.tuple,
                     "Reusable CONNECT observer did not match the held SYN");
+            tracked_tuple = parsed.tuple;
+            const auto tracked = attempts.lookup(*tracked_tuple);
+            require(tracked.status == skewer::traffic::FlowIndex::Status::Observed && tracked.process ==
+                        skewer::traffic::ProcessIdentity{identity.pid, identity.created},
+                    "Tracked socket index lost the held SYN identity");
             const auto snapshot = traffic::captureTcpOwners();
             const auto candidates = traffic::tcpOwnerCandidates(snapshot.rows, *parsed.tuple);
             require(std::find(candidates.begin(), candidates.end(), identity.pid) != candidates.end(),
@@ -433,12 +442,36 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
     require(stats.captured_packets == (tcp ? 1u : 2u) && stats.injected_packets == (tcp ? 0u : 1u) &&
                 stats.captured_bytes > stats.injected_bytes,
             "Capture counters mismatch");
+    if (tracked_tuple) {
+        require(closesocket(source.value) == 0, "Close tracked fixture socket");
+        source.value = INVALID_SOCKET;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        bool closed = false;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto event = attempts.next(cancellation.get(), 100);
+            require(event.status == traffic::FlowObserver::Status::Event ||
+                        event.status == traffic::FlowObserver::Status::Timeout,
+                    "Socket observer stopped before CLOSE");
+            if (event.event && event.event->kind == traffic::FlowEvent::Kind::SocketClosed) {
+                closed = true;
+                break;
+            }
+        }
+        require(closed && attempts.lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unknown,
+                "Closed socket retained live ownership evidence");
+    }
     require(SetEvent(cancellation.get()), "Signal capture cancellation");
     require(attempts.next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
             "CONNECT observer ignored cancellation");
+    if (tracked_tuple) {
+        require(attempts.lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unreliable,
+                "Cancelled socket observer retained stale ownership evidence");
+    }
     require(capture.next(cancellation.get(), 100).status == traffic::PacketCapture::Status::Cancelled,
             "Capture did not cancel");
     require(ResetEvent(cancellation.get()), "Reset cancellation fixture");
+    require(attempts.next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
+            "Cancelled socket observer restarted");
     require(capture.next(cancellation.get(), 0).status == traffic::PacketCapture::Status::Cancelled,
             "Cancelled capture restarted");
     bool rejected{};

@@ -210,3 +210,18 @@ alongside the existing FLOW correlation and encrypted transport tests. These
 tests do not establish general ownership for shared sockets. A production policy
 combining lifecycle events, snapshot age and ambiguous/unknown owners remains
 to be integrated; the snapshot alone never releases a packet.
+
+### Socket observation lifetime
+
+`TrackedSocketObserver` owns the authenticated process handle, CONNECT/CLOSE
+observer and socket index together. Process exit, cancellation and read failures
+invalidate the observation epoch permanently; a timeout does not reset it.
+Lookups check the pinned process handle and apply index expiry. This is still
+diagnostic evidence, not a `PacketOwner::Unique` resolver: queued or dropped
+events and independently sampled owner tables are not atomic ownership proof.
+
+The loopback VM fixture records a held TCP SYN, closes its source socket and
+requires the indexed match to disappear, for both IPv4 and IPv6. It then cancels
+the observer and verifies that resetting the cancellation event cannot revive
+the old epoch. Existing index tests cover delayed CLOSE, unknown CLOSE,
+closed-endpoint resurrection and competing process identities.

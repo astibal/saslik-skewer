@@ -25,6 +25,21 @@ private:
     std::map<skewer::traffic::FlowIdentity, skewer::traffic::PacketTuple> tuples_;
 };
 
+// Retains the authenticated process handle and a CONNECT/CLOSE index together.
+// Cancellation, exit and read errors permanently invalidate this epoch. This
+// remains diagnostic evidence, never a conversion to PacketOwner::Unique.
+class TrackedSocketObserver final {
+public:
+    TrackedSocketObserver(const std::wstring& dll, ProcessKey process);
+    TrackedSocketObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process);
+    FlowObserver::Result next(HANDLE cancellation, DWORD timeout_ms);
+    skewer::traffic::FlowIndex::Match lookup(skewer::traffic::PacketTuple tuple);
+
+private:
+    FlowObserver observer_;
+    SocketAttemptIndex index_;
+};
+
 // One consumer owns both observer and index. No automatic epoch reset: once
 // context is lost, correlation remains unreliable for this observer lifetime.
 class TrackedFlowObserver final {
