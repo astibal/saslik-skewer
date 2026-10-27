@@ -72,8 +72,26 @@ The Windows VM tests cover encrypted loopback payloads, packet-boundary denial
 in both directions, cancellation, renewal rejection and continued pumping while
 control sleeps. A renewal delayed beyond lease expiry must clear readiness and
 stop data before its worker returns. These tests use an injected control fixture;
-the explicit paired Wintun probe has only been built, not exercised against a
-real Saslik in this phase. Linux regressions passed (38/38).
+the explicit paired Wintun probe is covered separately by the live test below.
+Linux regressions passed (38/38).
+
+`tests/paired-tunnel-live.ps1` drives the real paired probe. It verifies the
+Wintun signature, validates authenticated /30 metadata and route conflicts,
+configures only the fresh adapter in ActiveStore, sends three source-bound
+pings, and optionally tests HTTPS through Smithproxy using `-ConnectPort 33128`.
+The HTTPS test deliberately ignores the MITM certificate trust for this lab
+probe only; it does not install a CA or change browser policy. Default routes
+are compared before/after and the owned adapter must disappear.
+
+On 2026-10-27 the Windows VM passed this path against a running Saslik workspace:
+`curl -> paired Wintun/Tuntom -> Smithproxy CONNECT -> HTTPS example.com`.
+The probe reported 74 transmitted and 19 received inner packets. The Saslik
+audit confirmed open, two successful heartbeats, and close; the server endpoint
+unit was collected. The existing Linux tunnel remained running. This proves
+the paired transport path, not GUI-driven application selection or whole-host
+Windows routing. No default route was changed.
+An immediate second run reused the saved Windows pairing without a new
+invitation and passed the same probes and cleanup (71 transmitted, 19 received).
 
 ### Authenticated selection boundary
 

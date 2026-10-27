@@ -6,6 +6,14 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows routing is still under development;
 these items are acceptance gates, not implemented capabilities.
 
+Transport milestones verified independently of the remaining service/UI gates:
+
+- [x] Shared TLS-PSK pairing on Windows with user-scoped DPAPI credentials.
+- [x] Lease-owned packet pump, asynchronous renewal and terminal expiry checks.
+- [x] Real paired Wintun/Tuntom path to Saslik: source-bound ICMP and HTTPS
+  through Smithproxy CONNECT, preserving host default routes and cleaning up
+  both endpoints. This is not yet application-selection routing from the GUI.
+
 - [ ] Run interception in a privileged service independent of the GUI, with
   authenticated local IPC and verified current-user process identities.
 - [ ] Establish interception before admitting selected traffic; bound queues and
