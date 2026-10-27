@@ -184,3 +184,20 @@ This is corroborating evidence only: the tables are not atomic with packet
 capture or each other, and PID reuse, compartments and socket lifecycle races
 still require policy. No production routing decision consumes these snapshots
 yet. UDP/shared sockets require separate handling.
+
+### UDP bind candidate policy
+
+`udpOwnerCandidates()` is a pure matcher over supplied bind rows, not yet a
+Windows table collector or production owner resolver. It retains both exact and
+wildcard binds on the source port, deduplicates known PIDs, and explicitly reports
+matching rows with unavailable ownership (PID zero). Remote destinations cannot
+narrow a bind-only table. Native IPv6 wildcard and IPv4-mapped binds remain
+possible IPv4 competitors because the table does not expose `IPV6_V6ONLY`.
+
+Inputs are canonical outbound L3 tuples; reverse inbound packets explicitly.
+Scope and compartment information is intentionally not used to erase possible
+competitors. Even a single candidate is not authority to release a packet: bind
+ownership, socket sharing and current sender identity are different concepts.
+Synthetic tests cover both families, wildcard/exact collisions, duplicate PIDs,
+unavailable owners, mapped binds and unrelated ports/addresses. Live collection
+and correlation with SOCKET events remain to be integrated.
