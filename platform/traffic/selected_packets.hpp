@@ -26,6 +26,11 @@ template <typename CaptureContext> class SelectedPackets final {
 public:
     using Time = typename Queue::Time;
     using Ticket = typename Queue::Ticket;
+    struct Readiness {
+        Time now;
+        bool process_alive;
+        bool tunnel_healthy;
+    };
     struct Packet {
         std::vector<std::uint8_t> bytes;
         CaptureContext capture;
@@ -47,9 +52,9 @@ public:
     }
     // Resolver is called with this ticket's parsed tuple, never one supplied
     // alongside the ticket by a caller. It must resolve at decision time.
-    template <typename Resolver>
+    template <typename Resolver, typename Recheck>
     std::optional<Packet> takeForTunnel(Ticket ticket, Time now, bool process_alive, bool tunnel_healthy,
-                                        Resolver&& resolve) {
+                                        Resolver&& resolve, Recheck&& recheck) {
         queue_.expire(now);
         if (!process_alive || !tunnel_healthy) {
             stop();
@@ -62,6 +67,17 @@ public:
         PacketOwner owner;
         try {
             owner = std::invoke(std::forward<Resolver>(resolve), context->tuple, now);
+            // Resolution may block on OS queries. Recheck the pinned process,
+            // tunnel epoch and clock before using its result, even if unknown.
+            // This is not atomic with a later send; the downstream pump must
+            // also refuse work after its epoch stops.
+            const auto ready = std::invoke(std::forward<Recheck>(recheck));
+            queue_.expire(ready.now);
+            if (!ready.process_alive || !ready.tunnel_healthy) {
+                stop();
+                return std::nullopt;
+            }
+            now = ready.now;
         } catch (...) {
             stop();
             throw;

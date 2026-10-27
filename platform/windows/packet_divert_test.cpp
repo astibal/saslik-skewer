@@ -78,6 +78,10 @@ std::vector<std::uint8_t> tunnelRoundTrip(const std::vector<std::uint8_t>& origi
             // alone would NOT justify this result in a general application.
             require(candidate == *skewer::traffic::parsePacketTuple(original).tuple, "Wrong gated tuple");
             return skewer::traffic::PacketOwner{skewer::traffic::PacketOwner::State::Unique, expected};
+        }, [&] {
+            const auto checked = TunnelPump::Clock::now();
+            return skewer::traffic::SelectedPackets<unsigned>::Readiness{
+                checked, process.running(), client.healthy(checked)};
         });
     require(authorized && local.enqueue(authorized->bytes), "Verified packet did not enter tunnel queue");
     bool traversed{};

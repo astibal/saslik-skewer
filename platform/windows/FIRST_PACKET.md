@@ -225,3 +225,17 @@ requires the indexed match to disappear, for both IPv4 and IPv6. It then cancels
 the observer and verifies that resetting the cancellation event cannot revive
 the old epoch. Existing index tests cover delayed CLOSE, unknown CLOSE,
 closed-endpoint resurrection and competing process identities.
+
+### Readiness after ownership resolution
+
+`SelectedPackets::takeForTunnel` requires a fresh readiness callback after the
+resolver returns, including unresolved results. It rechecks process liveness,
+tunnel readiness and packet expiry before releasing any bytes. Callback failure
+or a backwards clock invalidates the queue epoch, as does a dead process or an
+unhealthy tunnel. Expiry alone drops the expired packet, not the whole epoch.
+The encrypted loopback fixture uses the pinned process handle and actual tunnel
+health for this callback. Deterministic tests exercise changes during resolution.
+
+This closes a stale-precheck window, not an atomic check-and-send guarantee.
+The downstream pump must still reject queued work when its own epoch stops;
+these checks do not turn diagnostic socket evidence into an ownership authority.
