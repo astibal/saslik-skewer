@@ -1,4 +1,10 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#endif
 #include "udp_owners.hpp"
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 
@@ -9,6 +15,43 @@ void require(bool ok, const char* message) {
         throw std::runtime_error(message);
     }
 }
+#ifdef _WIN32
+void checkLiveWildcard(bool ipv6) {
+    struct Socket {
+        SOCKET value;
+        ~Socket() {
+            if (value != INVALID_SOCKET) {
+                closesocket(value);
+            }
+        }
+    } socket{::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP)};
+    require(socket.value != INVALID_SOCKET, "Create wildcard UDP socket failed");
+    sockaddr_storage address{};
+    auto* v4 = reinterpret_cast<sockaddr_in*>(&address);
+    auto* v6 = reinterpret_cast<sockaddr_in6*>(&address);
+    int size = ipv6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in);
+    address.ss_family = ipv6 ? AF_INET6 : AF_INET;
+    require(bind(socket.value, reinterpret_cast<sockaddr*>(&address), size) == 0, "Wildcard bind failed");
+    require(getsockname(socket.value, reinterpret_cast<sockaddr*>(&address), &size) == 0,
+            "Get UDP port failed");
+    skewer::traffic::PacketTuple packet;
+    packet.protocol = 17;
+    packet.ipv6 = ipv6;
+    packet.source_port = ntohs(ipv6 ? v6->sin6_port : v4->sin_port);
+    if (ipv6) {
+        packet.source[15] = 1;
+    } else {
+        packet.source[0] = 127;
+        packet.source[3] = 1;
+    }
+    const auto snapshot = captureUdpOwners();
+    require(snapshot.completed >= snapshot.started, "UDP snapshot timing invalid");
+    const auto candidates = udpOwnerCandidates(snapshot.rows, packet);
+    require(std::find(candidates.pids.begin(), candidates.pids.end(), GetCurrentProcessId()) !=
+                candidates.pids.end(),
+            "Live wildcard owner missing");
+}
+#endif
 void check(bool ipv6) {
     skewer::traffic::PacketTuple packet;
     packet.protocol = 17;
@@ -72,6 +115,16 @@ int main() {
     try {
         check(false);
         check(true);
+#ifdef _WIN32
+        WSADATA data{};
+        require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "WSAStartup failed");
+        struct WinsockCleanup {
+            ~WinsockCleanup() { WSACleanup(); }
+        } cleanup;
+        checkLiveWildcard(false);
+        checkLiveWildcard(true);
+        std::cout << "PASS: live IPv4/IPv6 UDP wildcard owner snapshots\n";
+#endif
         std::cout << "PASS: conservative UDP bind candidates\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

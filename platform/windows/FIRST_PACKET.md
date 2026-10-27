@@ -187,8 +187,8 @@ yet. UDP/shared sockets require separate handling.
 
 ### UDP bind candidate policy
 
-`udpOwnerCandidates()` is a pure matcher over supplied bind rows, not yet a
-Windows table collector or production owner resolver. It retains both exact and
+`udpOwnerCandidates()` is a pure matcher over supplied bind rows, not a
+production owner resolver. It retains both exact and
 wildcard binds on the source port, deduplicates known PIDs, and explicitly reports
 matching rows with unavailable ownership (PID zero). Remote destinations cannot
 narrow a bind-only table. Native IPv6 wildcard and IPv4-mapped binds remain
@@ -199,5 +199,14 @@ Scope and compartment information is intentionally not used to erase possible
 competitors. Even a single candidate is not authority to release a packet: bind
 ownership, socket sharing and current sender identity are different concepts.
 Synthetic tests cover both families, wildcard/exact collisions, duplicate PIDs,
-unavailable owners, mapped binds and unrelated ports/addresses. Live collection
-and correlation with SOCKET events remain to be integrated.
+unavailable owners, mapped binds and unrelated ports/addresses.
+
+`captureUdpOwners()` reads both Windows owner-PID tables with bounded allocation
+and retries. Failure of either family rejects the complete snapshot; PID zero
+is preserved as unavailable ownership. Collection timestamps describe the
+observation interval, not a validity lease. Live VM tests verify wildcard binds
+for both families and check the fixture PID against a datagram held by WinDivert,
+alongside the existing FLOW correlation and encrypted transport tests. These
+tests do not establish general ownership for shared sockets. A production policy
+combining lifecycle events, snapshot age and ambiguous/unknown owners remains
+to be integrated; the snapshot alone never releases a packet.

@@ -1,5 +1,6 @@
 #pragma once
 #include "packet_tuple.hpp"
+#include <chrono>
 #include <span>
 #include <vector>
 
@@ -15,6 +16,16 @@ struct UdpOwnerCandidates {
     std::vector<std::uint32_t> pids;
     bool unknown_owner{};
 };
+
+struct UdpOwnerSnapshot {
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point started, completed;
+    std::vector<UdpOwnerRow> rows;
+};
+
+// Both families must succeed. Preserve PID zero as unavailable ownership.
+// Sequential snapshots are evidence, not an atomic view of packet ownership.
+UdpOwnerSnapshot captureUdpOwners();
 
 // Candidate evidence only, never authorization. UDP tables describe binds,
 // not remote peers or the identity of the thread sending a particular datagram.

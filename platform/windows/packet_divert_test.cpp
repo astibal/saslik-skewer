@@ -3,6 +3,7 @@
 #include "pending_packets.hpp"
 #include "selected_packets.hpp"
 #include "tcp_owners.hpp"
+#include "udp_owners.hpp"
 #include "packet_capture.hpp"
 #include <algorithm>
 #include <array>
@@ -379,6 +380,11 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
             require(held.discard(*ticket), "TCP pending packet was lost");
             continue;
         }
+        const auto udp_snapshot = traffic::captureUdpOwners();
+        const auto udp_candidates = traffic::udpOwnerCandidates(udp_snapshot.rows, *parsed.tuple);
+        require(std::find(udp_candidates.pids.begin(), udp_candidates.pids.end(), identity.pid) !=
+                    udp_candidates.pids.end(),
+                "Independent UDP table did not contain held-datagram owner");
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         auto owner = observer.lookup(*parsed.tuple);
         while (owner.status == skewer::traffic::FlowIndex::Status::Unknown &&
