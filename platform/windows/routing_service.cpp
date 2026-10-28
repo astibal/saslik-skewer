@@ -6,7 +6,8 @@ void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE st
     serveRoutingService(name, ServiceOwner::fromToken(owner_token), stop, std::move(runner));
 }
 void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HANDLE stop,
-                         PairedRoutingRunner runner, SelectedRoutingRunner selected) {
+                         PairedRoutingRunner runner, SelectedRoutingRunner selected,
+                         DirectRoutingRunner direct) {
     if (!runner) {
         throw std::invalid_argument("Routing service requires a session runner");
     }
@@ -14,14 +15,19 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
     auto pairings = createSelectionPipe(name + L"-pair", owner);
     std::unique_ptr<PairingHandoff> pairing;
     std::unique_ptr<ProcessTarget> target;
+    std::optional<std::array<std::uint8_t, 4>> direct_gateway;
     RoutingScope scope{RoutingScope::None};
+    RoutingTransport transport{RoutingTransport::None};
     std::optional<ProcessKey> selected_identity;
     const auto describe = [&](RoutingReply state) {
         if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) {
             scope = RoutingScope::None;
+            transport = RoutingTransport::None;
             selected_identity.reset();
+            direct_gateway.reset();
         }
         state.scope = scope;
+        state.transport = transport;
         state.selected = selected_identity;
         state.paired = bool(pairing);
         return state;
@@ -30,6 +36,8 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
     RoutingController controller([&](HANDLE cancel, RoutingSignals& state) {
         if (target) {
             selected(*pairing, std::move(target), cancel, state);
+        } else if (direct_gateway) {
+            direct(*direct_gateway, cancel, state);
         } else {
             runner(*pairing, cancel, state);
         }
@@ -52,11 +60,13 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                 throw std::runtime_error("Pair and select a live process before routing");
             }
             const auto identity = next->key();
+            direct_gateway.reset();
             target = std::move(next);
             try {
                 auto started = controller.command(RoutingCommand::Start, generation);
                 if (started.result == RoutingResult::Ok) {
                     scope = RoutingScope::SelectedProcess;
+                    transport = RoutingTransport::Tunnel;
                     selected_identity = identity;
                 }
                 return describe(started);
@@ -64,6 +74,29 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                 target.reset();
                 throw;
             }
+        };
+    }
+    DirectRoutingHandler startDirect;
+    if (direct) {
+        startDirect = [&](std::array<std::uint8_t, 4> gateway, std::uint64_t generation) {
+            auto state = controller.command(RoutingCommand::Status, 0);
+            if (generation != state.generation) {
+                state.result = RoutingResult::Stale;
+                return describe(state);
+            }
+            if (state.phase != RoutingPhase::Idle && state.phase != RoutingPhase::Failed) {
+                state.result = RoutingResult::Busy;
+                return describe(state);
+            }
+            target.reset();
+            direct_gateway = gateway;
+            auto started = controller.command(RoutingCommand::Start, generation);
+            if (started.result == RoutingResult::Ok) {
+                scope = RoutingScope::WholeHost;
+                transport = RoutingTransport::Direct;
+                selected_identity.reset();
+            }
+            return describe(started);
         };
     }
     for (;;) {
@@ -81,13 +114,24 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                                     if (command == RoutingCommand::Start && !pairing) {
                                         throw std::runtime_error("Pair before starting routing");
                                     }
+                                    if (command == RoutingCommand::Start) {
+                                        const auto current = describe(
+                                            controller.command(RoutingCommand::Status, 0));
+                                        if ((current.phase == RoutingPhase::Idle ||
+                                             current.phase == RoutingPhase::Failed) &&
+                                            generation == current.generation) {
+                                            target.reset();
+                                            direct_gateway.reset();
+                                        }
+                                    }
                                     auto state = controller.command(command, generation);
                                     if (command == RoutingCommand::Start && state.result == RoutingResult::Ok) {
                                         scope = RoutingScope::WholeHost;
+                                        transport = RoutingTransport::Tunnel;
                                         selected_identity.reset();
                                     }
                                     return describe(state);
-                                }, startSelected);
+                                }, startSelected, startDirect);
             finishSelection(commands->get(), stop, 500);
         } catch (const std::exception&) {
             // Malformed, disconnected and unauthorized clients affect only

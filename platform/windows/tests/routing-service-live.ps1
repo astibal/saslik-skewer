@@ -38,6 +38,16 @@ function AwaitPhase([int]$phase) {
     }
     throw "Expected phase $phase; got $($value.phase)"
 }
+function StartDirect([uint64]$generation) {
+    if ($ClientDirectory) {
+        $text = & (Join-Path $ClientDirectory 'skewer-routing-control.exe') `
+            start-direct $name $generation '192.0.2.1'
+    } else {
+        $text = & $exe --direct $name $generation '192.0.2.1'
+    }
+    if ($LASTEXITCODE -ne 0 -or !$text) { throw 'Direct routing client failed' }
+    return ($text | ConvertFrom-Json)
+}
 $created = $false
 try {
     $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -49,6 +59,16 @@ try {
     if ($result.ReturnValue -ne 0) { throw 'Create service failed' }
     $created = $true
     Start-Service $name
+    $initial = AwaitPhase 0
+    $direct = StartDirect $initial.generation
+    if ($direct.result -ne 0 -or $direct.scope -ne 1 -or $direct.transport -ne 2 -or $direct.paired) {
+        throw 'Unpaired direct whole-host start was not represented accurately'
+    }
+    $activeDirect = AwaitPhase 2
+    if ($activeDirect.scope -ne 1 -or $activeDirect.transport -ne 2) {
+        throw 'Direct whole-host generation did not become Active'
+    }
+    $null = Command 2 $activeDirect.generation
     $initial = AwaitPhase 0
     & $exe --client $name 1 $initial.generation
     if ($LASTEXITCODE -eq 0) { throw 'Unpaired service accepted Start' }
@@ -124,7 +144,7 @@ try {
         throw 'Stale selected start not rejected'
     }
     Stop-Service $name
-    Write-Output 'PASS: owner-bound selected target, stale birth/generation, busy and explicit stop'
+    Write-Output 'PASS: owner-bound direct host and selected target, stale birth/generation, busy and explicit stop'
     Write-Output 'PASS: pairing -> authenticated start/status/stop -> guard; client exit, duplicate start, stale stop, restart and SCM cleanup'
 } finally {
     if ($created) {

@@ -2,9 +2,10 @@
 
 ## First-release direction and limitation
 
-The selected backend is WinDivert interception with Wintun/Tuntom transport,
-owned by a privileged service independent of the GUI. Whole-host IPv4 and a
-selected process's fresh corroborated IPv4 TCP and UDP are integrated. New
+The selected backend is WinDivert interception with either Wintun/Tuntom or an
+explicit on-link next hop, owned by a privileged service independent of the
+GUI. Whole-host IPv4 and a selected process's fresh corroborated IPv4 TCP and
+UDP are integrated. New
 descendants of a routed launch inherit selection through a Windows Job Object.
 Manual Attach adopts descendants whose complete, live, same-owner parent chain
 still leads to the selected root. UDP descendants additionally require exactly
@@ -39,7 +40,8 @@ changing trust.
 ### Native whole-host service integration
 
 The Windows desktop has a **Routing** tab for an installed service: stored
-pairing handoff, asynchronous state, generation-bound Start/Stop, and explicit
+pairing handoff, encrypted-tunnel versus direct-gateway transport selection,
+asynchronous state, generation-bound Start/Stop, and explicit
 Idle/Starting/Active/Blocked/Stopping/Failed feedback. Periodic status reads do
 not toggle controls; unknown state disables mutations. A click arriving during
 a read is queued once with its original generation, never silently retried.
@@ -48,6 +50,9 @@ only local IPC, not routing. The Applications page can attach one running
 process or launch it suspended and resume it only after the service reports
 Active. The panel can explicitly install or upgrade the service through UAC;
 an absent, unpaired or incompatible service never enables routing controls.
+Direct mode instead requires a canonical on-link IPv4 gateway and does not
+require tunnel pairing. The authoritative service status restores both scope
+and transport after a GUI restart.
 
 `routing_panel_test` checks missing-service responsiveness and bounded local
 cancellation. `native-routing-service-live.ps1 -GuiClient` uses the real Qt
@@ -100,6 +105,15 @@ system resolution, ordinary HTTPS, tunnel loss blocking and owned-resource clean
 The per-interface API contract is documented at
 https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-setinterfacednssettings.
 
+`DirectHostPolicy` rejects loopback, multicast, off-link and conflicting `/1`
+gateways. It arms an IPv6 WinDivert guard before installing two owned IPv4 `/1`
+routes through the selected gateway, and removes those routes before releasing
+the guard. `tests/direct-routing-service-live.ps1` passed on the disposable
+Windows VM on 2026-10-28: unpaired activation, authoritative Direct status,
+plain HTTP and HTTPS, explicit Stop, and byte-for-byte route/DNS rollback. This
+proves a directly reachable router path; the chosen router must itself deliver
+traffic into Saslik. IPv6 remains deliberately blocked rather than bypassed.
+
 ### Generation-bound routing commands
 
 `skewer-routing-control` is the real headless service client (also the transport
@@ -109,6 +123,7 @@ foundation for the desktop controller):
 skewer-routing-control status SERVICE
 skewer-routing-control pair SERVICE skewer://HOST:8766/pair
 skewer-routing-control start SERVICE GENERATION
+skewer-routing-control start-direct SERVICE GENERATION IPV4_GATEWAY
 skewer-routing-control release SERVICE GENERATION
 skewer-routing-control attach SERVICE GENERATION PID BIRTH
 skewer-routing-control run SERVICE EXECUTABLE [ARGUMENTS...]

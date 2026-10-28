@@ -3,6 +3,7 @@
 #include <QSettings>
 #include <QLabel>
 #include <QLineEdit>
+#include <QComboBox>
 #include <QPushButton>
 #include <QElapsedTimer>
 #include <QThread>
@@ -55,11 +56,19 @@ int main(int argc, char** argv) {
         auto panel = std::make_unique<skewer::windows::RoutingPanel>();
         panel->show();
         const auto endpoint = panel->findChild<QLineEdit*>("routingEndpoint");
+        const auto gateway = panel->findChild<QLineEdit*>("routingGateway");
+        const auto transport = panel->findChild<QComboBox*>("routingTransport");
         const auto start = panel->findChild<QPushButton*>("routingStart");
         const auto stop = panel->findChild<QPushButton*>("routingStop");
         const auto status = panel->findChild<QLabel*>("routingStatus");
-        if (!endpoint || !start || !stop || !status || start->isEnabled() || stop->isEnabled()) {
+        if (!endpoint || !gateway || !transport || !start || !stop || !status ||
+            start->isEnabled() || stop->isEnabled()) {
             throw std::runtime_error("Unknown service enabled routing controls");
+        }
+        transport->setCurrentIndex(1);
+        gateway->setText("not-an-address");
+        if (start->isEnabled()) {
+            throw std::runtime_error("Invalid direct gateway enabled routing");
         }
         panel->setPairedEndpoint("  skewer://192.0.2.10:8766/pair  ");
         if (endpoint->text() != "skewer://192.0.2.10:8766/pair") {

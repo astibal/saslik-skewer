@@ -9,8 +9,11 @@ namespace skewer::windows {
 using PairedRoutingRunner = std::function<void(const PairingHandoff&, HANDLE, RoutingSignals&)>;
 using SelectedRoutingRunner = std::function<void(const PairingHandoff&, std::unique_ptr<ProcessTarget>,
                                                 HANDLE, RoutingSignals&)>;
+using DirectRoutingRunner =
+    std::function<void(std::array<std::uint8_t, 4>, HANDLE, RoutingSignals&)>;
 void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE stop,
                          PairedRoutingRunner runner);
 void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HANDLE stop,
-                         PairedRoutingRunner runner, SelectedRoutingRunner selected = {});
+                         PairedRoutingRunner runner, SelectedRoutingRunner selected = {},
+                         DirectRoutingRunner direct = {});
 } // namespace skewer::windows

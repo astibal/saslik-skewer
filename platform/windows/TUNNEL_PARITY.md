@@ -3,7 +3,8 @@
 Linux is the behavioral reference, not just the widget layout. No Windows UI
 control may claim routing protection before a privileged backend actually
 enforces it. This document records the implementation boundary. Windows
-whole-host IPv4 and selected-process IPv4 TCP/UDP routing are available; the
+whole-host IPv4 through either Tuntom or a directly reachable on-link gateway,
+and selected-process IPv4 TCP/UDP routing through Tuntom, are available; the
 limits below remain part of the contract.
 
 ## First-release scope: lab routing, not security isolation
@@ -72,11 +73,17 @@ equivalent to selecting one running application instance.
 
 ## Whole-host scope
 
-The target also includes whole-host routing, independently selectable from
-direct-next-hop versus tunnel transport. Application mode must continue to leave
+Whole-host routing is independently selectable from direct-next-hop versus
+tunnel transport. Application mode must continue to leave
 unselected applications alone; whole-host mode intentionally includes their host
 traffic after explicit authorization. Forwarded VM/bridge traffic remains a
 separate feature. See the whole-host acceptance checklist in `TODO.md`.
+
+Direct mode installs owned IPv4 covering routes only after validating that the
+gateway is on-link, and keeps IPv6 blocked for the generation. It requires no
+tunnel credential, but the command channel remains bound to the installed
+service owner. Direct mode passed real HTTP/HTTPS and exact route/DNS rollback
+in the disposable Windows VM; this is lab routing, not a persistent kill switch.
 
 Tunnel activation must first retain a verified underlay route to the peer via
 the pre-existing gateway/interface, then establish narrowly scoped transport and

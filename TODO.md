@@ -59,13 +59,15 @@ VMs, bridges or other machines.
 The portable `routing_scope.hpp` admission model is wired into the privileged
 workers and UI. It keeps empty application selection inert, requires separate
 backend capability and authorization for whole-host scope, and rejects invalid
-enum values. The unchecked items below describe remaining cross-platform parity
-and release coverage, not absence of the implemented tunnelled IPv4 mode.
+enum values. Windows now reports the authoritative scope and transport in its
+versioned service protocol. The unchecked items below describe remaining
+cross-platform parity and release coverage, not absence of the implemented IPv4
+modes.
 
-- [ ] Expose routing scope (selected applications / whole host) independently
+- [x] Expose routing scope (selected applications / whole host) independently
   from transport (direct next hop / Tuntom). Require explicit privileged consent
   for whole-host activation; never infer it from an empty application selection.
-- [ ] Support direct routing through a reachable Saslik gateway and tunnelled
+- [x] Support direct routing through a reachable Saslik gateway and tunnelled
   routing to a remote Saslik. Validate the return path before reporting ready.
 - [x] Before redirecting host traffic, preserve the tunnel peer's underlay path
   using the original gateway/interface. Exempt only required transport/control

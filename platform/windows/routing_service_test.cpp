@@ -5,6 +5,7 @@
 #include "routing_service.hpp"
 #include <filesystem>
 #include <iostream>
+#include <string_view>
 
 using namespace skewer::windows;
 namespace {
@@ -29,9 +30,9 @@ int wmain(int argc, wchar_t** argv) {
                 std::wstring::npos) {
             throw std::invalid_argument("Invalid fixture service name");
         }
-        if (mode == L"--client" || mode == L"--pair" || mode == L"--select") {
+        if (mode == L"--client" || mode == L"--pair" || mode == L"--select" || mode == L"--direct") {
             if ((mode == L"--pair" && argc != 3) || (mode == L"--client" && argc != 5) ||
-                (mode == L"--select" && argc != 6)) {
+                (mode == L"--select" && argc != 6) || (mode == L"--direct" && argc != 5)) {
                 return 2;
             }
             const auto path = L"\\\\.\\pipe\\SkewerSelection-" + name + (mode == L"--pair" ? L"-pair" : L"");
@@ -68,21 +69,31 @@ int wmain(int argc, wchar_t** argv) {
                 sendPairingHandoff(pipe.get(), name, pairing, cancel.get(), 3000);
                 return 0;
             }
-            const auto operation = mode == L"--select" ? 0 : number(argv[3]);
+            const auto operation = (mode == L"--select" || mode == L"--direct") ? 0 : number(argv[3]);
             if (operation > 2 || (mode == L"--select" && number(argv[4]) > MAXDWORD)) {
                 return 2;
             }
-            const auto response =
-                mode == L"--select"
-                    ? exchangeSelectedRouting(pipe.get(), name,
-                                              {static_cast<DWORD>(number(argv[4])), number(argv[5])},
-                                              number(argv[3]), cancel.get(), 3000)
-                    : exchangeRoutingCommand(pipe.get(), name, static_cast<RoutingCommand>(operation),
-                                             number(argv[4]), cancel.get(), 3000);
+            RoutingReply response;
+            if (mode == L"--select") {
+                response = exchangeSelectedRouting(
+                    pipe.get(), name,
+                    {static_cast<DWORD>(number(argv[4])), number(argv[5])},
+                    number(argv[3]), cancel.get(), 3000);
+            } else if (mode == L"--direct") {
+                if (std::wstring_view(argv[4]) != L"192.0.2.1") {
+                    throw std::invalid_argument("Invalid fixture gateway");
+                }
+                response = exchangeDirectRouting(
+                    pipe.get(), name, {192, 0, 2, 1}, number(argv[3]), cancel.get(), 3000);
+            } else {
+                response = exchangeRoutingCommand(pipe.get(), name, static_cast<RoutingCommand>(operation),
+                                                  number(argv[4]), cancel.get(), 3000);
+            }
             std::cout << "{\"result\":" << unsigned(response.result)
                       << ",\"phase\":" << unsigned(response.phase)
                       << ",\"scope\":" << unsigned(response.scope) << ",\"generation\":\""
-                      << response.generation << "\",\"paired\":"
+                      << response.generation << "\",\"transport\":" << unsigned(response.transport)
+                      << ",\"paired\":"
                       << (response.paired ? "true" : "false");
             if (response.selected) {
                 std::cout << ",\"selected\":{\"pid\":" << response.selected->pid
@@ -121,6 +132,15 @@ int wmain(int argc, wchar_t** argv) {
                                     // Bookkeeping fixture only: no traffic is rerouted.
                                     signals.blocked = true;
                                     WaitForSingleObject(cancel, INFINITE);
+                                },
+                                [](std::array<std::uint8_t, 4> gateway, HANDLE cancel,
+                                   RoutingSignals& signals) {
+                                    if (gateway != std::array<std::uint8_t, 4>{192, 0, 2, 1}) {
+                                        throw std::runtime_error("Unexpected direct fixture gateway");
+                                    }
+                                    signals.ready = true;
+                                    WaitForSingleObject(cancel, INFINITE);
+                                    signals.ready = false;
                                 });
             return 0; // Controller cancels and joins before SCM sees STOPPED.
         });

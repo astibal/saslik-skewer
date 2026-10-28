@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHostAddress>
 #include <QTextStream>
 
 using namespace skewer::windows;
@@ -13,6 +14,7 @@ int main(int argc, char** argv) {
     if (args.size() < 3) {
         QTextStream(stderr) << "Usage: skewer-routing-control status SERVICE\n"
                                "       skewer-routing-control start|stop|release SERVICE GENERATION\n"
+                               "       skewer-routing-control start-direct SERVICE GENERATION IPV4_GATEWAY\n"
                                "       skewer-routing-control pair SERVICE PAIRED_ENDPOINT\n"
                                "       skewer-routing-control attach SERVICE GENERATION PID BIRTH\n"
                                "       skewer-routing-control run SERVICE EXECUTABLE [ARGUMENTS...]\n"
@@ -45,10 +47,11 @@ int main(int argc, char** argv) {
         }
         const bool pairing = action == "pair";
         const bool selected = action == "start-process" || action == "attach";
+        const bool direct = action == "start-direct";
         const bool stopping = action == "stop" || action == "release";
-        const int expected = selected ? 6 : action == "status" ? 3 : 4;
+        const int expected = selected ? 6 : direct ? 5 : action == "status" ? 3 : 4;
         if (args.size() != expected ||
-            (action != "status" && action != "start" && !stopping && !pairing && !selected)) {
+            (action != "status" && action != "start" && !stopping && !pairing && !selected && !direct)) {
             throw std::invalid_argument("Invalid routing command");
         }
         Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -83,6 +86,18 @@ int main(int argc, char** argv) {
             }
             response = exchangeSelectedRouting(pipe->get(), name, {static_cast<DWORD>(pid), birth},
                                                generation, cancel.get(), 3000);
+        } else if (direct) {
+            QHostAddress address;
+            if (!address.setAddress(args[4]) || address.protocol() != QAbstractSocket::IPv4Protocol ||
+                address.toString() != args[4]) {
+                throw std::invalid_argument("Direct routing requires a canonical IPv4 gateway");
+            }
+            const auto value = address.toIPv4Address();
+            response = exchangeDirectRouting(
+                pipe->get(), name,
+                {static_cast<std::uint8_t>(value >> 24), static_cast<std::uint8_t>(value >> 16),
+                 static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value)},
+                generation, cancel.get(), 3000);
         } else {
             response = exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
         }
@@ -90,6 +105,7 @@ int main(int argc, char** argv) {
                            {"phase", static_cast<int>(response.phase)},
                            {"generation", QString::number(response.generation)},
                            {"scope", static_cast<int>(response.scope)},
+                           {"transport", static_cast<int>(response.transport)},
                            {"paired", response.paired}};
         if (response.selected) {
             output["selected"] = QJsonObject{{"pid", static_cast<qint64>(response.selected->pid)},

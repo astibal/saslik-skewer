@@ -2,6 +2,8 @@
 #include "routing_client.hpp"
 #include "stored_pairing_handoff.hpp"
 #include <QLineEdit>
+#include <QComboBox>
+#include <QHostAddress>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -29,11 +31,21 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     auto* form = new QFormLayout;
     service_ = new QLineEdit(QSettings().value("windows/routingService", "SkewerRouting").toString(), this);
     endpoint_ = new QLineEdit(QSettings().value("windows/routingEndpoint", QSettings().value("windows/saslikEndpoint")).toString(), this);
+    transport_ = new QComboBox(this);
+    transport_->setObjectName("routingTransport");
+    transport_->addItem(tr("Encrypted tunnel (Tuntom)"), static_cast<int>(RoutingTransport::Tunnel));
+    transport_->addItem(tr("Directly reachable Saslik gateway"), static_cast<int>(RoutingTransport::Direct));
+    transport_->setCurrentIndex(qBound(0, QSettings().value("windows/routingTransport", 0).toInt(), 1));
+    gateway_ = new QLineEdit(QSettings().value("windows/directGateway").toString(), this);
+    gateway_->setObjectName("routingGateway");
+    gateway_->setPlaceholderText(tr("On-link Saslik IPv4 gateway"));
     service_->setObjectName("routingService");
     endpoint_->setObjectName("routingEndpoint");
     endpoint_->setPlaceholderText("skewer://HOST:8766/pair (already paired)");
     form->addRow(tr("Installed service"), service_);
     form->addRow(tr("Paired endpoint"), endpoint_);
+    form->addRow(tr("Whole-host transport"), transport_);
+    form->addRow(tr("Direct gateway"), gateway_);
     layout->addLayout(form);
     auto* buttons = new QHBoxLayout;
     pair_ = new QPushButton(tr("Send pairing"), this);
@@ -62,7 +74,9 @@ RoutingPanel::RoutingPanel(QWidget* parent)
         automatic_pairing_attempted_ = true;
         submit(3);
     });
-    connect(start_, &QPushButton::clicked, this, [this] { submit(1); });
+    connect(start_, &QPushButton::clicked, this, [this] {
+        submit(transport_->currentData().toInt() == static_cast<int>(RoutingTransport::Direct) ? 5 : 1);
+    });
     connect(stop_, &QPushButton::clicked, this, [this] { submit(2); });
     connect(install_, &QPushButton::clicked, this, [this] {
         const auto package = QCoreApplication::applicationDirPath();
@@ -119,6 +133,8 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     connect(endpoint_, &QLineEdit::textChanged, this, [this] {
         automatic_pairing_attempted_ = false;
     });
+    connect(transport_, &QComboBox::currentIndexChanged, this, [this] { updateControls(); });
+    connect(gateway_, &QLineEdit::textChanged, this, [this] { updateControls(); });
     connect(&timer_, &QTimer::timeout, this, [this] {
         if (!watcher_.isRunning() && !action_busy_) {
             submit(0);
@@ -139,6 +155,14 @@ RoutingPanel::RoutingPanel(QWidget* parent)
             } else {
                 known_ = true;
                 state_ = result.reply;
+                if (state_.scope == RoutingScope::WholeHost &&
+                    (state_.transport == RoutingTransport::Tunnel ||
+                     state_.transport == RoutingTransport::Direct)) {
+                    const auto index = state_.transport == RoutingTransport::Direct ? 1 : 0;
+                    transport_->blockSignals(true);
+                    transport_->setCurrentIndex(index);
+                    transport_->blockSignals(false);
+                }
                 const QStringList phases{tr("Idle"),
                                          tr("Starting"),
                                          tr("Active"),
@@ -160,8 +184,10 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                                          .arg(state_.generation));
                 } else if (state_.phase == RoutingPhase::Active &&
                            state_.scope == RoutingScope::WholeHost) {
-                    status_->setText(tr("Active — whole-host routing (generation %1)")
-                                         .arg(state_.generation));
+                    const auto mode = state_.transport == RoutingTransport::Direct
+                                          ? tr("direct gateway") : tr("encrypted tunnel");
+                    status_->setText(tr("Active — whole-host routing via %1 (generation %2)")
+                                         .arg(mode).arg(state_.generation));
                 }
                 if (state_.result != RoutingResult::Ok) {
                     status_->setText(tr("Request rejected (stale generation or busy). ") + status_->text());
@@ -172,6 +198,14 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                 QSettings().setValue("windows/routingService", result.request.service);
                 if (result.request.action == 3) {
                     QSettings().setValue("windows/routingEndpoint", result.request.endpoint);
+                }
+                if ((result.request.action == 1 || result.request.action == 5) &&
+                    state_.result == RoutingResult::Ok) {
+                    QSettings().setValue("windows/routingTransport",
+                                         result.request.action == 5 ? 1 : 0);
+                    if (result.request.action == 5) {
+                        QSettings().setValue("windows/directGateway", result.request.gateway);
+                    }
                 }
             }
             if (state_callback_) {
@@ -225,8 +259,8 @@ void RoutingPanel::startSelected(ProcessKey process) {
     if (!process.pid || !process.created || !known_ || !state_.paired) {
         return;
     }
-    Request request{4, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,
-                    process, epoch_};
+    Request request{4, service_->text().trimmed(), endpoint_->text().trimmed(), {},
+                    state_.generation, process, epoch_};
     action_busy_ = true;
     updateControls();
     status_->setText(tr("Starting selected-process routing…"));
@@ -250,11 +284,18 @@ RoutingPanel::~RoutingPanel() {
 }
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
+    const bool direct = transport_->currentData().toInt() == static_cast<int>(RoutingTransport::Direct);
+    QHostAddress gateway;
+    const bool valid_gateway = gateway.setAddress(gateway_->text().trimmed()) &&
+                               gateway.protocol() == QAbstractSocket::IPv4Protocol &&
+                               gateway.toString() == gateway_->text().trimmed();
     pair_->setEnabled(idle && !action_busy_);
-    start_->setEnabled(idle && state_.paired && !action_busy_);
+    start_->setEnabled(idle && !action_busy_ && (direct ? valid_gateway : state_.paired));
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
     service_->setEnabled(!action_busy_);
     endpoint_->setEnabled(!action_busy_);
+    transport_->setEnabled(idle && !action_busy_);
+    gateway_->setEnabled(idle && !action_busy_ && direct);
     const auto package = QCoreApplication::applicationDirPath();
     const bool install_packaged = QFileInfo::exists(QDir(package).filePath("install-routing-service.ps1")) &&
                                   QFileInfo::exists(QDir(package).filePath("wintun.dll")) &&
@@ -270,7 +311,8 @@ void RoutingPanel::updateControls() {
                         !action_busy_ && !managing);
 }
 void RoutingPanel::submit(int action) {
-    Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,
+    Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(),
+                    gateway_->text().trimmed(), state_.generation,
                     std::nullopt, epoch_};
     if (action) {
         action_busy_ = true;
@@ -299,6 +341,19 @@ void RoutingPanel::dispatch(Request request) {
             if (request.selected) {
                 result.reply = exchangeSelectedRouting(pipe->get(), name, *request.selected,
                                                        request.generation, cancel->get(), 2000);
+            } else if (request.action == 5) {
+                QHostAddress address;
+                if (!address.setAddress(request.gateway) ||
+                    address.protocol() != QAbstractSocket::IPv4Protocol ||
+                    address.toString() != request.gateway) {
+                    throw std::invalid_argument("Direct routing requires a canonical IPv4 gateway");
+                }
+                const auto value = address.toIPv4Address();
+                result.reply = exchangeDirectRouting(
+                    pipe->get(), name,
+                    {static_cast<std::uint8_t>(value >> 24), static_cast<std::uint8_t>(value >> 16),
+                     static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value)},
+                    request.generation, cancel->get(), 2000);
             } else {
                 const auto command = request.action == 3
                                          ? RoutingCommand::Status

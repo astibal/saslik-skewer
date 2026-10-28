@@ -2,6 +2,7 @@
 #include "service_host.hpp"
 #include "whole_host_policy.hpp"
 #include "selected_service_tunnel.hpp"
+#include "direct_host_policy.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QTextStream>
@@ -73,6 +74,9 @@ int main(int argc, char** argv) {
                         QByteArray(reinterpret_cast<const char*>(pairing.key.data()), pairing.key.size()));
                     runSelectedServiceTunnel(divert, std::move(target), owner, control, peer, endpoint.port(),
                                              cancel, state);
+                },
+                [&](std::array<std::uint8_t, 4> gateway, HANDLE cancel, RoutingSignals& state) {
+                    runDirectHostRouting(divert, gateway, cancel, state);
                 });
             return 0;
         });

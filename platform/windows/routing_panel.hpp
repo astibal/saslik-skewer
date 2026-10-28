@@ -7,6 +7,7 @@
 #include <functional>
 #include <optional>
 class QLineEdit;
+class QComboBox;
 class QLabel;
 class QPushButton;
 
@@ -25,7 +26,7 @@ public:
 private:
     struct Request {
         int action{};
-        QString service, endpoint;
+        QString service, endpoint, gateway;
         std::uint64_t generation{};
         std::optional<ProcessKey> selected;
         unsigned epoch{};
@@ -40,6 +41,8 @@ private:
     void updateControls();
     QLineEdit* service_{};
     QLineEdit* endpoint_{};
+    QLineEdit* gateway_{};
+    QComboBox* transport_{};
     QLabel* status_{};
     QPushButton* pair_{};
     QPushButton* start_{};

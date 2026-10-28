@@ -104,6 +104,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             detail = stageDetail(signals_.stage.load());
         }
     }
-    return {result, phase, generation_, RoutingScope::None, std::nullopt, detail};
+    return {result, phase, generation_, RoutingScope::None, RoutingTransport::None,
+            std::nullopt, detail};
 }
 } // namespace skewer::windows

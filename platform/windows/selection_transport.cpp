@@ -427,7 +427,8 @@ void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD t
     serveRoutingCommand(pipe, ServiceOwner::fromToken(owner_token), cancel, timeout_ms, handler);
 }
 void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
-                         const RoutingHandler& handler, const SelectedRoutingHandler& selected) {
+                         const RoutingHandler& handler, const SelectedRoutingHandler& selected,
+                         const DirectRoutingHandler& direct) {
     if (!handler) {
         throw std::invalid_argument("Missing routing handler");
     }
@@ -435,7 +436,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 3 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 4 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -463,20 +464,36 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
             throw std::runtime_error("Selected routing identity exited during authorization");
         }
         result = selected(std::move(target), getGeneration(request.data() + 24));
+    } else if (request[22] == 4) {
+        if (!direct) {
+            throw std::runtime_error("Direct routing is not supported by this service");
+        }
+        std::array<std::uint8_t, 4> gateway{};
+        handoffTransfer(pipe, gateway.data(), gateway.size(), false, cancel, deadline);
+        if (std::ranges::all_of(gateway, [](std::uint8_t value) { return value == 0; }) ||
+            gateway[0] == 127 || gateway[0] >= 224) {
+            throw std::invalid_argument("Invalid direct-routing gateway");
+        }
+        result = direct(gateway, getGeneration(request.data() + 24));
     } else {
         result = handler(static_cast<RoutingCommand>(request[22]), getGeneration(request.data() + 24));
     }
+    const bool has_scope = result.scope != RoutingScope::None;
+    const bool has_transport = result.transport != RoutingTransport::None;
     if (result.result > RoutingResult::Busy || result.phase > RoutingPhase::Failed ||
-        result.scope > RoutingScope::SelectedProcess ||
-        (result.scope == RoutingScope::SelectedProcess) != result.selected.has_value()) {
+        result.scope > RoutingScope::SelectedProcess || result.transport > RoutingTransport::Direct ||
+        has_scope != has_transport ||
+        (result.scope == RoutingScope::SelectedProcess) != result.selected.has_value() ||
+        (result.scope == RoutingScope::SelectedProcess && result.transport != RoutingTransport::Tunnel) ||
+        (result.transport == RoutingTransport::Direct && result.scope != RoutingScope::WholeHost)) {
         throw std::logic_error("Invalid routing backend response");
     }
     if (result.detail.size() > 255) result.detail.resize(255);
-    std::array<std::uint8_t, 294> response{'S',
+    std::array<std::uint8_t, 295> response{'S',
                                           'K',
                                           'R',
                                           'C',
-                                          4,
+                                          5,
                                           static_cast<std::uint8_t>(result.result),
                                           static_cast<std::uint8_t>(result.phase),
                                           static_cast<std::uint8_t>(result.scope)};
@@ -487,13 +504,15 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     }
     response[36] = static_cast<std::uint8_t>(result.detail.size());
     response[37] = result.paired ? 1 : 0;
-    std::copy(result.detail.begin(), result.detail.end(), response.begin() + 38);
+    response[38] = static_cast<std::uint8_t>(result.transport);
+    std::copy(result.detail.begin(), result.detail.end(), response.begin() + 39);
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
 namespace {
 RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std::uint8_t operation,
                              std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
-                             const SelectionRequest* selection) {
+                             const SelectionRequest* selection,
+                             const std::array<std::uint8_t, 4>* gateway) {
     const auto deadline = handoffDeadline(cancel, timeout_ms);
     auto server = verifySelectionService(pipe, service_name);
     std::array<std::uint8_t, 32> request{};
@@ -508,10 +527,15 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         auto bytes = *selection;
         handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
     }
-    std::array<std::uint8_t, 294> response{};
+    if (gateway) {
+        auto bytes = *gateway;
+        handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
+    }
+    std::array<std::uint8_t, 295> response{};
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != 4 || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
+        response[4] != 5 || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
+        response[38] > static_cast<unsigned>(RoutingTransport::Direct) ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
         throw std::runtime_error("Invalid routing response or exited service");
     }
@@ -526,13 +550,14 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         selected = decodeSelectionRequest(encoded);
     }
     const auto detail_size = response[36];
-    if (std::ranges::any_of(std::span(response).subspan(38 + detail_size),
+    if (std::ranges::any_of(std::span(response).subspan(39 + detail_size),
                            [](std::uint8_t value) { return value != 0; })) {
         throw std::runtime_error("Invalid routing response padding");
     }
-    std::string detail(reinterpret_cast<const char*>(response.data() + 38), detail_size);
+    std::string detail(reinterpret_cast<const char*>(response.data() + 39), detail_size);
     return {static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
-            getGeneration(response.data() + 8), scope, selected, std::move(detail), response[37] != 0};
+            getGeneration(response.data() + 8), scope, static_cast<RoutingTransport>(response[38]),
+            selected, std::move(detail), response[37] != 0};
 }
 } // namespace
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
@@ -541,11 +566,16 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
         throw std::invalid_argument("Unknown routing command");
     }
     return exchangeRouting(pipe, service_name, static_cast<std::uint8_t>(command), generation, cancel,
-                           timeout_ms, nullptr);
+                           timeout_ms, nullptr, nullptr);
 }
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
                                      std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
     const auto selection = encodeSelectionRequest(target);
-    return exchangeRouting(pipe, service_name, 3, generation, cancel, timeout_ms, &selection);
+    return exchangeRouting(pipe, service_name, 3, generation, cancel, timeout_ms, &selection, nullptr);
+}
+RoutingReply exchangeDirectRouting(HANDLE pipe, const std::wstring& service_name,
+                                   std::array<std::uint8_t, 4> gateway, std::uint64_t generation,
+                                   HANDLE cancel, DWORD timeout_ms) {
+    return exchangeRouting(pipe, service_name, 4, generation, cancel, timeout_ms, nullptr, &gateway);
 }
 } // namespace skewer::windows
