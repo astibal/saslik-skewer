@@ -43,6 +43,11 @@ installer and the three signed driver runtime files beside the desktop client;
 the Routing tab enables its standard UAC install/upgrade action only when that
 complete set is present.
 
+`packaging/package-windows.sh` creates the equivalent portable release ZIP
+from an already verified cross-build. It stages an allowlisted file set rather
+than archiving a development directory, so test logs, pairing state and local
+credentials cannot enter the artifact accidentally.
+
 The LocalSystem service uses Manual startup. Installation starts its IPC server
 in **Idle**, not routing. In the GUI Routing tab, send the stored pairing and
 explicitly start routing. Closing the GUI does not stop the service or routing.
