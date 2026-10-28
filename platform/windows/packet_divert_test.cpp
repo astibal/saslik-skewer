@@ -15,6 +15,7 @@
 #ifdef SKEWER_TEST_TUNNEL_PATH
 #include "packet_queue.hpp"
 #include "tunnel_pump.hpp"
+#include "selected_tunnel_device.hpp"
 #endif
 #include <ws2tcpip.h>
 #include <windivert.h>
@@ -168,6 +169,90 @@ bool readable(SOCKET socket, long milliseconds) {
 }
 
 #ifdef SKEWER_TEST_TUNNEL_PATH
+void translatedUdpSocket(const std::wstring& path) {
+    using namespace skewer::windows;
+    Socket source(AF_INET), destination(AF_INET);
+    const auto local = bindLoopback(source.value, AF_INET);
+    const auto remote = bindLoopback(destination.value, AF_INET);
+    traffic::PacketCapture capture(
+        path, "outbound and loopback and ip and udp and udp.SrcPort == " + std::to_string(port(local)) +
+                  " and udp.DstPort == " + std::to_string(port(remote)));
+    Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(static_cast<bool>(stop), "Create translated capture cancellation");
+    const auto identity = processKey(GetCurrentProcess(), GetCurrentProcessId());
+    ProcessTarget pinned(identity);
+    const skewer::traffic::FlowIdentity owner{{identity.pid, identity.created}, 1};
+    bool healthy = true;
+    SelectedTunnelDevice device(
+        {10, 253, 0, 10},
+        [&](auto candidate) {
+            // Exclusive socket endpoints are owned by this fixture. This is not a
+            // general PID resolver; production authorization remains separate.
+            return candidate == owner && pinned.running();
+        },
+        [&] { return healthy; });
+    PacketQueue peerDevice;
+    UdpEndpoint clientUdp(UdpAddress::numeric("127.0.0.1", 0)), peerUdp(UdpAddress::numeric("127.0.0.1", 0));
+    tuntom::ascon::key_type key{};
+    key.fill(0x75);
+    TunnelPump client(device, clientUdp, peerUdp.localAddress(), 93, key);
+    TunnelPump peer(peerDevice, peerUdp, clientUdp.localAddress(), 93, key, true);
+    const auto cycle = [&] {
+        const auto now = TunnelPump::Clock::now();
+        client.step(now);
+        peer.step(now);
+        Sleep(1);
+    };
+    const auto deadline = GetTickCount64() + 5000;
+    while (GetTickCount64() < deadline &&
+           !(client.healthy(TunnelPump::Clock::now()) && peer.healthy(TunnelPump::Clock::now()))) {
+        cycle();
+    }
+    require(client.healthy(TunnelPump::Clock::now()) && peer.healthy(TunnelPump::Clock::now()),
+            "Translated capture handshake failed");
+    constexpr char payload[] = "selected-socket-through-translated-tunnel";
+    require(sendto(source.value, payload, sizeof(payload), 0, reinterpret_cast<const sockaddr*>(&remote),
+                   sizeof(sockaddr_in)) == sizeof(payload),
+            "Send translated capture fixture");
+    auto held = capture.next(stop.get(), 2000);
+    require(held.packet.has_value() && !readable(destination.value, 50), "Original packet escaped capture");
+    require(device.enqueue(owner, held.packet->bytes), "Captured packet not accepted by translator");
+    std::optional<SelectedTunnelDevice::Packet> response;
+    while (GetTickCount64() < deadline && !response) {
+        cycle();
+        if (auto wire = peerDevice.takeReceived()) {
+            const auto tuple = skewer::traffic::parsePacketTuple(*wire);
+            require(tuple.tuple && tuple.tuple->source[0] == 10, "Tunnel source not translated");
+            // Simulate the destination echo response on the far side, not an
+            // unchanged packet echo. The client must restore its local socket.
+            for (unsigned i = 0; i < 4; ++i) {
+                std::swap((*wire)[12 + i], (*wire)[16 + i]);
+            }
+            std::swap((*wire)[20], (*wire)[22]);
+            std::swap((*wire)[21], (*wire)[23]);
+            require(peerDevice.enqueue(*wire), "Translated reply rejected");
+        }
+        response = device.takeReceived();
+    }
+    require(response && response->owner == owner, "No restored translated response");
+    require(!readable(source.value, 50), "Reply reached socket before reinjection");
+    // Windows loopback packets are always injected outbound, including replies.
+    capture.reinject({std::move(response->bytes), held.packet->address});
+    require(readable(source.value, 2000), "Restored reply did not reach original socket");
+    std::array<char, 128> received{};
+    sockaddr_storage sender{};
+    int senderSize = sizeof(sender);
+    const auto count = recvfrom(source.value, received.data(), received.size(), 0,
+                                reinterpret_cast<sockaddr*>(&sender), &senderSize);
+    require(count == sizeof(payload) && std::equal(received.begin(), received.begin() + count, payload) &&
+                port(sender) == port(remote),
+            "Restored socket payload/peer mismatch");
+    require(!readable(destination.value, 50), "Original packet was also delivered directly");
+    healthy = false;
+    require(!device.enqueue(owner, held.packet->bytes), "Lost health accepted captured packet");
+    std::cout << "PASS: captured UDP socket -> translated encrypted tunnel -> restored socket reply\n";
+}
+
 void tcpTunnel(const std::wstring& path, int family) {
     using namespace skewer::windows;
     Socket source(family, true), listener(family, true);
@@ -549,6 +634,7 @@ int wmain(int argc, wchar_t** argv) {
         exercise(module, path, AF_INET, true);
         exercise(module, path, AF_INET6, true);
 #ifdef SKEWER_TEST_TUNNEL_PATH
+        translatedUdpSocket(path);
         tcpTunnel(path, AF_INET);
         tcpTunnel(path, AF_INET6);
 #endif

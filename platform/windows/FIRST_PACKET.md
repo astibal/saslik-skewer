@@ -302,3 +302,15 @@ and checks bounded queues. Identities in this test are synthetic: this does not
 prove OS ownership resolution or physical-egress enforcement. The production
 capture resolver, reply metadata/reinjection and GUI selections still need to be
 connected; no new per-application capability is advertised yet.
+
+The elevated `packet_divert_test` additionally verifies the translated path with
+a real, exclusively bound IPv4 UDP socket. A narrowly scoped WinDivert filter
+holds its loopback datagram; the selected device translates and encrypts it.
+The test peer constructs a reverse-direction echo reply, sends it through the
+encrypted transport, and the client restores and reinjects it. `recvfrom` on the
+original socket must return the original payload and destination port as sender.
+The direct destination remains unreadable before and after the test, proving no
+duplicate direct delivery in this fixture. Loopback replies use Windows' outbound
+loopback metadata; physical-interface reply metadata still needs its own test.
+Ownership is known because the fixture owns exclusive socket endpoints; this is
+not a general proof for arbitrary Windows processes or shared sockets.
