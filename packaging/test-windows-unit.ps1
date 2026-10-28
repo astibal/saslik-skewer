@@ -31,6 +31,7 @@ $tests = @(
     @{ Name = 'windows_tunnel_dns'; File = 'tunnel_dns_test.exe' },
     @{ Name = 'windows_service_installer'; File = 'service_installer_test.exe' },
     @{ Name = 'windows_runtime_trust'; File = 'runtime_trust_test.exe' },
+    @{ Name = 'windows_routing_panel'; File = 'routing_panel_test.exe' },
     @{ Name = 'tunnel_flows'; File = 'tunnel_flows_test.exe' },
     @{ Name = 'packet_rewrite'; File = 'packet_rewrite_test.exe' },
     @{ Name = 'tunnel_lease'; File = 'tunnel_lease_test.exe' },
