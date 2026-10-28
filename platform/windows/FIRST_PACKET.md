@@ -254,3 +254,19 @@ their independent tables. Its one-second age bound is a fixture setting, not a
 production guarantee. `Corroborated` is intentionally not `PacketOwner::Unique`:
 the generic service routing policy and physical-egress acceptance tests remain
 unfinished. No diagnostic decision automatically grants packet release.
+
+### Endpoint translation for selected traffic
+
+The portable `rewriteIpv4Endpoint` primitive rewrites a source or destination
+address/port only when the complete packet matches its expected flow tuple.
+It recomputes IPv4 and TCP/UDP checksums from bytes, including captured packets
+whose checksums were deferred to offload, and encodes a UDP checksum of zero as
+all ones. Rejected input is unchanged; fragments, IPv6 and IP options remain
+unsupported by this translator. Tests cover both directions, payload integrity,
+odd/large payloads, flow mismatch, truncation and UDP zero-checksum encoding.
+
+This is a prerequisite for translating selected host sockets to the assigned
+tunnel address and restoring replies, not an enabled per-application backend.
+Flow allocation, collision handling, lifetime tracking, return-path reinjection
+and service integration still have to use this primitive. Translation does not
+authenticate a process or turn diagnostic ownership evidence into authority.
