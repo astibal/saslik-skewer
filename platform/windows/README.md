@@ -293,7 +293,12 @@ shared by control and UDP transport; IPv6 transport selection remains separate w
 `paired_tunnel_live --live ABSOLUTE_WINTUN_DLL PAIRED_ENDPOINT IPV4_PEER` is an
 explicit 45-second developer probe using a pairing saved by `skewer-control`.
 It creates an ephemeral adapter, prints authenticated public IP metadata and
-cleans up the adapter/lease on exit. It does not assign addresses or routes.
+cleans up the adapter/lease on exit. `AddressedTunnelControl` configures its
+authenticated IPv4 /30 and MTU 1280 through IP Helper before starting the pump.
+Existing subnet routes are rejected before assignment; DAD must complete within
+eight seconds. Failed setup closes the remote lease. Address cleanup only deletes
+the owned address with matching attributes, with adapter destruction as a backstop.
+No physical NIC or default route is modified.
 Do not expose application traffic until the external guard is installed.
 
 The Windows VM tests cover encrypted loopback payloads, packet-boundary denial
@@ -304,12 +309,18 @@ the explicit paired Wintun probe is covered separately by the live test below.
 Linux regressions passed (38/38).
 
 `tests/paired-tunnel-live.ps1` drives the real paired probe. It verifies the
-Wintun signature, validates authenticated /30 metadata and route conflicts,
-configures only the fresh adapter in ActiveStore, sends three source-bound
+Wintun signature and independently verifies the native /30, MTU, preferred
+address state and subnet route on the fresh adapter. It sends three source-bound
 pings, and optionally tests HTTPS through Smithproxy using `-ConnectPort 33128`.
 The HTTPS test deliberately ignores the MITM certificate trust for this lab
 probe only; it does not install a CA or change browser policy. Default routes
 are compared before/after and the owned adapter must disappear.
+
+On 2026-10-28 the native addressing path passed on the Windows VM: preferred
+/30 address, MTU 1280, owned subnet route, three pings and HTTPS over CONNECT.
+The probe reported 47 transmitted and 19 received inner packets; adapter cleanup
+passed and default routes were unchanged. This still exercises the developer
+probe, not a deployed GUI-to-service routing session.
 
 On 2026-10-27 the Windows VM passed this path against a running Saslik workspace:
 `curl -> paired Wintun/Tuntom -> Smithproxy CONNECT -> HTTPS example.com`.

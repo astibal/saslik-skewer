@@ -1,6 +1,7 @@
 #include "paired_tunnel.hpp"
 #include "wintun_device.hpp"
 #include "processes.hpp"
+#include "tunnel_address.hpp"
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QTextStream>
@@ -10,7 +11,7 @@ using namespace skewer::windows;
 namespace {
 class ReportingControl final : public TunnelControl {
 public:
-    explicit ReportingControl(PskTunnelControl& control) : control_(control) {}
+    explicit ReportingControl(TunnelControl& control) : control_(control) {}
     PairedTunnel open() override {
         auto value = control_.open();
         // Authenticated public configuration only. Never print the derived key.
@@ -25,12 +26,12 @@ public:
     void close(const Tuntom::Endpoint& endpoint) override { control_.close(endpoint); }
 
 private:
-    PskTunnelControl& control_;
+    TunnelControl& control_;
 };
 } // namespace
 
 // Explicit developer probe: one ephemeral adapter and a 45-second paired
-// session. IP configuration is external; default routes and filters are untouched.
+// session. IP/MTU are native; default routes and filters are untouched here.
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     app.setOrganizationName("Saslik");
@@ -43,13 +44,14 @@ int main(int argc, char** argv) {
     }
     try {
         PskTunnelControl psk(QUrl(args[3]), args[4]);
-        ReportingControl control(psk);
         Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         if (!stop) {
             throw std::runtime_error("Cannot create cancellation event");
         }
         const auto name = L"SkewerPaired-" + std::to_wstring(GetCurrentProcessId());
         WintunDevice device(loadWintun(args[2].toStdWString()), name);
+        AddressedTunnelControl addressed(psk, device, stop.get());
+        ReportingControl control(addressed);
         QTextStream(stdout) << "ADAPTER " << QString::fromStdWString(name) << Qt::endl;
         std::jthread timer([event = stop.get()](std::stop_token token) {
             const auto deadline = TunnelPump::Clock::now() + std::chrono::seconds(45);

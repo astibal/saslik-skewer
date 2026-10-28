@@ -73,8 +73,7 @@ try {
         Start-Sleep -Milliseconds 100
     } while ((Get-Date) -lt $deadline)
     if (!$metadata) { throw 'No authenticated endpoint metadata' }
-    # Validate again before privileged configuration, even though the C++ control
-    # client already validates the authenticated address contract.
+    # Independently verify the native client's authenticated address setup.
     if ($metadata.server_address -notmatch '^10\.([0-9]+)\.([0-9]+)\.([0-9]+)/30$' -or
         $metadata.client_address -notmatch '^10\.([0-9]+)\.([0-9]+)\.([0-9]+)/30$') { throw 'Invalid tunnel prefix' }
     $server = ([System.Net.IPAddress]::Parse($metadata.server_address.Split('/')[0]))
@@ -83,25 +82,18 @@ try {
     if ($s[1] -ne $c[1] -or $s[2] -ne $c[2] -or $s[3] % 4 -ne 1 -or $c[3] -ne $s[3] + 1) {
         throw 'Invalid tunnel address pair'
     }
-    foreach ($destination in @($server, $client)) {
-        $selected = @(Find-NetRoute -RemoteIPAddress $destination.ToString() |
-            Where-Object { $_.PSObject.Properties.Name -contains 'DestinationPrefix' })
-        if ($selected.Count -ne 1 -or $selected[0].DestinationPrefix -ne '0.0.0.0/0') {
-            throw 'Tunnel subnet overlaps an existing route; refusing to override it'
-        }
-    }
     $adapter = Get-NetAdapter -Name $name
-    Set-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -NlMtuBytes 1280 `
-        -Dhcp Disabled -PolicyStore ActiveStore
-    New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $client.ToString() `
-        -PrefixLength 30 -PolicyStore ActiveStore | Out-Null
-    $deadline = (Get-Date).AddSeconds(8)
-    do {
-        $address = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $client.ToString()
-        if ($address.AddressState -eq 'Preferred') { break }
-        Start-Sleep -Milliseconds 100
-    } while ((Get-Date) -lt $deadline)
-    if ($address.AddressState -ne 'Preferred') { throw 'Tunnel address did not complete DAD' }
+    $address = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $client.ToString() -PolicyStore ActiveStore
+    $interface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -PolicyStore ActiveStore
+    if ($address.AddressState -ne 'Preferred' -or $address.PrefixLength -ne 30 -or
+        $interface.NlMtu -ne 1280) {
+        throw "Native tunnel setup is incorrect: state=$($address.AddressState), prefix=$($address.PrefixLength), MTU=$($interface.NlMtu)"
+    }
+    $selected = @(Find-NetRoute -RemoteIPAddress $server.ToString() |
+        Where-Object { $_.PSObject.Properties.Name -contains 'DestinationPrefix' })
+    if ($selected.Count -ne 1 -or $selected[0].InterfaceIndex -ne $adapter.ifIndex) {
+        throw 'Native tunnel subnet route does not use the owned adapter'
+    }
     $successes = 0
     for ($attempt = 0; $attempt -lt 6 -and $successes -lt 3; ++$attempt) {
         & ping.exe -4 -S $client.ToString() -n 1 -w 1000 $server.ToString()
