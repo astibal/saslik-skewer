@@ -41,7 +41,7 @@ int providePsk(SSL* ssl, const EVP_MD* digest, const unsigned char** identity,
     *identity = reinterpret_cast<const unsigned char*>(credentials->identity.constData());
     *length = credentials->identity.size(); *output = session; return 1;
 }
-QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonObject& request, const QString& connect_host = {})
+QJsonObject exchange(const QUrl& endpoint, const Credentials& credentials, const QJsonObject& request, const QString& connect_host = {})
 {
     [[maybe_unused]] PairingPlatform::SignalGuard pipe_guard;
     if (credentials.key.size()!=32 || credentials.identity.isEmpty()) throw std::runtime_error("Invalid pairing credentials");
@@ -58,7 +58,7 @@ QJsonObject exchange(const QUrl& endpoint, Credentials credentials, const QJsonO
     SSL_CTX_set_psk_use_session_callback(context.get(),providePsk);
     std::unique_ptr<SSL,decltype(&SSL_free)> ssl(SSL_new(context.get()),SSL_free);
     if (!ssl) throw std::runtime_error("Cannot initialize TLS session");
-    SSL_set_app_data(ssl.get(),&credentials);
+    SSL_set_app_data(ssl.get(),const_cast<Credentials*>(&credentials));
     if (!SSL_set_fd(ssl.get(), transport.descriptor())) throw std::runtime_error("Cannot bind TLS socket");
     if (SSL_connect(ssl.get())!=1 || SSL_version(ssl.get())!=TLS1_3_VERSION || SSL_get0_peer_certificate(ssl.get()))
         throw std::runtime_error("TLS-PSK authentication failed (no plaintext fallback)");
@@ -107,17 +107,72 @@ void save(const QString& path,const QJsonObject& value)
 }
 
 namespace {
-Credentials loadCredentials(const QUrl& endpoint)
+void validateEndpoint(const QUrl& endpoint)
 {
-    if (endpoint.scheme()!="skewer" || endpoint.host().isEmpty() || endpoint.port()<1
+    if (!endpoint.isValid() || endpoint.scheme()!="skewer" || endpoint.host().isEmpty() || endpoint.port()<1
         || endpoint.hasFragment() || endpoint.hasQuery() || !endpoint.userInfo().isEmpty() || endpoint.path()!="/pair")
         throw std::runtime_error("Invalid paired endpoint");
+}
+Credentials loadCredentials(const QUrl& endpoint)
+{
+    validateEndpoint(endpoint);
     QFile file(statePath(endpoint));
     if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("No pairing for this endpoint");
     if (file.size() > 65536) throw std::runtime_error("Pairing file exceeds bounds");
     const auto value=QJsonDocument::fromJson(PairingPlatform::decode(file.readAll())).object();
     return {value["identity"].toString().toUtf8(),QByteArray::fromBase64(value["psk"].toString().toLatin1(),QByteArray::Base64UrlEncoding|QByteArray::AbortOnBase64DecodingErrors)};
 }
+}
+
+struct PairedControl::Impl {
+    QUrl endpoint;
+    QString connect_host;
+    Credentials credentials;
+    ~Impl() {
+        // Best-effort clearing of this object's owned buffer, not a promise
+        // about caller copies, TLS internals, swap or process crash dumps.
+        OPENSSL_cleanse(credentials.key.data(), static_cast<size_t>(credentials.key.size()));
+    }
+};
+
+PairedControl::PairedControl(QUrl endpoint, QByteArray identity, QByteArray key, QString connect_host) {
+    validateEndpoint(endpoint);
+    if (key.size() != 32 || identity.isEmpty() || identity.size() > 256 || identity.contains('\0')) {
+        throw std::invalid_argument("Invalid control credential snapshot");
+    }
+    impl_ = std::make_unique<Impl>();
+    impl_->endpoint = std::move(endpoint);
+    impl_->connect_host = std::move(connect_host);
+    // Own detached storage: wiping must not mutate a caller's QByteArray.
+    impl_->credentials = {std::move(identity), std::move(key)};
+    impl_->credentials.key.detach();
+}
+PairedControl::~PairedControl() = default;
+
+std::unique_ptr<PairedControl> PairedControl::load(const QUrl& endpoint, const QString& connect_host) {
+    auto credentials = loadCredentials(endpoint);
+    return std::make_unique<PairedControl>(endpoint, std::move(credentials.identity),
+                                           std::move(credentials.key), connect_host);
+}
+PairedTunnel PairedControl::open() {
+    const auto response = exchange(impl_->endpoint, impl_->credentials, {{"action", "tunnel-open"}}, impl_->connect_host);
+    const auto tunnel = Tuntom::endpointFromResponse(response);
+    return {tunnel, Tuntom::deriveKey(impl_->credentials.key, tunnel.context.toLatin1())};
+}
+void PairedControl::renew(const Tuntom::Endpoint& tunnel) {
+    const auto renewed = Tuntom::endpointFromResponse(exchange(impl_->endpoint, impl_->credentials,
+        {{"action", "tunnel-heartbeat"}, {"context", tunnel.context}}, impl_->connect_host));
+    if (renewed.context != tunnel.context || renewed.id != tunnel.id || renewed.leaseSeconds != tunnel.leaseSeconds
+        || renewed.serverAddress != tunnel.serverAddress || renewed.clientAddress != tunnel.clientAddress) {
+        throw std::runtime_error("Tunnel endpoint changed during renewal");
+    }
+}
+void PairedControl::close(const Tuntom::Endpoint& tunnel) {
+    const auto response = exchange(impl_->endpoint, impl_->credentials,
+        {{"action", "tunnel-close"}, {"context", tunnel.context}}, impl_->connect_host);
+    if (!response.value("ok").toBool()) {
+        throw std::runtime_error("Tunnel close rejected");
+    }
 }
 
 QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request)
@@ -127,27 +182,17 @@ QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request)
 
 PairedTunnel openPairedTunnel(const QUrl& endpoint, const QString& connect_host)
 {
-    // Authenticate and derive from the same credential snapshot, even if a
-    // concurrent pairing operation replaces the file while this call runs.
-    const auto credentials = loadCredentials(endpoint);
-    const auto response = exchange(endpoint, credentials, {{"action", "tunnel-open"}}, connect_host);
-    const auto tunnel = Tuntom::endpointFromResponse(response);
-    return {tunnel, Tuntom::deriveKey(credentials.key, tunnel.context.toLatin1())};
+    return PairedControl::load(endpoint, connect_host)->open();
 }
 
 void heartbeatPairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel, const QString& connect_host)
 {
-    const auto renewed = Tuntom::endpointFromResponse(exchange(endpoint, loadCredentials(endpoint),
-        {{"action", "tunnel-heartbeat"}, {"context", tunnel.context}}, connect_host));
-    if (renewed.context != tunnel.context || renewed.id != tunnel.id || renewed.leaseSeconds != tunnel.leaseSeconds
-        || renewed.serverAddress != tunnel.serverAddress || renewed.clientAddress != tunnel.clientAddress)
-        throw std::runtime_error("Tunnel endpoint changed during renewal");
+    PairedControl::load(endpoint, connect_host)->renew(tunnel);
 }
 
 void closePairedTunnel(const QUrl& endpoint, const Tuntom::Endpoint& tunnel, const QString& connect_host)
 {
-    const auto response = exchange(endpoint, loadCredentials(endpoint), {{"action", "tunnel-close"}, {"context", tunnel.context}}, connect_host);
-    if (!response.value("ok").toBool()) throw std::runtime_error("Tunnel close rejected");
+    PairedControl::load(endpoint, connect_host)->close(tunnel);
 }
 
 QJsonObject pairedStatus(const QUrl& endpoint)

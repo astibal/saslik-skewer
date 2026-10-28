@@ -17,14 +17,15 @@ public:
 class PskTunnelControl final : public TunnelControl {
 public:
     PskTunnelControl(QUrl endpoint, QString peer);
+    PskTunnelControl(QUrl endpoint, QString peer, QByteArray identity, QByteArray key);
     PairedTunnel open() override;
     void renew(const Tuntom::Endpoint&) override;
     void close(const Tuntom::Endpoint&) override;
     const QString& peer() const { return peer_; }
 
 private:
-    QUrl endpoint_;
     QString peer_;
+    std::unique_ptr<PairedControl> control_;
 };
 
 // Called only by the packet worker. The external egress guard must already be

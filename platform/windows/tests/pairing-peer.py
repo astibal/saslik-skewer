@@ -67,13 +67,14 @@ def main():
                 except (ssl.SSLError, ValueError, OSError):
                     # A deliberately invalid PSK must not terminate the listener.
                     continue
-            if actions.count("tunnel-close") == 2:
+            if actions.count("tunnel-close") == 3:
                 expected = ["enroll", "commit", "tunnel-open", "tunnel-heartbeat",
                             "tunnel-open", "tunnel-close", "tunnel-open",
+                            "tunnel-heartbeat", "tunnel-close", "tunnel-open",
                             "tunnel-heartbeat", "tunnel-close"]
                 if actions != expected:
                     raise RuntimeError(f"Unexpected control sequence: {actions}")
-                print("PASS: enrollment, lease reuse, renewal, close and stale rejection", flush=True)
+                print("PASS: enrollment, lease reuse, stale rejection and storage-independent snapshot", flush=True)
                 return
     raise RuntimeError("Control fixture timed out")
 

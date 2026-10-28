@@ -26,17 +26,23 @@ void validatePeer(const QString& peer) {
 } // namespace
 
 PskTunnelControl::PskTunnelControl(QUrl endpoint, QString peer)
-    : endpoint_(std::move(endpoint)), peer_(std::move(peer)) {
+    : peer_(std::move(peer)) {
     validatePeer(peer_);
+    control_ = PairedControl::load(endpoint, peer_);
+}
+PskTunnelControl::PskTunnelControl(QUrl endpoint, QString peer, QByteArray identity, QByteArray key)
+    : peer_(std::move(peer)) {
+    validatePeer(peer_);
+    control_ = std::make_unique<PairedControl>(std::move(endpoint), std::move(identity), std::move(key), peer_);
 }
 PairedTunnel PskTunnelControl::open() {
-    return openPairedTunnel(endpoint_, peer_);
+    return control_->open();
 }
 void PskTunnelControl::renew(const Tuntom::Endpoint& endpoint) {
-    heartbeatPairedTunnel(endpoint_, endpoint, peer_);
+    control_->renew(endpoint);
 }
 void PskTunnelControl::close(const Tuntom::Endpoint& endpoint) {
-    closePairedTunnel(endpoint_, endpoint, peer_);
+    control_->close(endpoint);
 }
 
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,

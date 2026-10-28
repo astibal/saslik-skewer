@@ -29,6 +29,23 @@ int main(int argc, char** argv)
     if (pairingCommand({"skewer", "pair", "-"}) != 0) return 3;
     try {
         const QUrl address(app.arguments()[1]);
+        for (int size : {0, 31, 33}) {
+            bool rejected = false;
+            try { PairedControl invalid(address, "fixture-client", QByteArray(size, 'p')); }
+            catch (const std::exception&) { rejected = true; }
+            if (!rejected) return 11;
+        }
+        for (const auto& identity : {QByteArray(), QByteArray(257, 'i'), QByteArray("i\0d", 3)}) {
+            bool rejected = false;
+            try { PairedControl invalid(address, identity, QByteArray(32, 'p')); }
+            catch (const std::exception&) { rejected = true; }
+            if (!rejected) return 12;
+        }
+        const QByteArray callerKey(32, 'p');
+        {
+            PairedControl owned(address, "fixture-client", callerKey);
+        }
+        if (callerKey != QByteArray(32, 'p')) return 13;
         const auto first = openPairedTunnel(address);
         if (first.key.size() != 16) return 4;
         heartbeatPairedTunnel(address, first.endpoint);
@@ -41,7 +58,19 @@ int main(int argc, char** argv)
         try { heartbeatPairedTunnel(address, first.endpoint); }
         catch (const std::exception&) { staleRejected = true; }
         closePairedTunnel(address, replacement.endpoint);
-        return staleRejected ? 0 : 7;
+        if (!staleRejected) return 7;
+        auto snapshot = PairedControl::load(address);
+        // Once handed off, the worker must not depend on the GUI user's file.
+        if (!QFile::remove(path)) return 9;
+        bool storageRequired = false;
+        try { (void)PairedControl::load(address); }
+        catch (const std::exception&) { storageRequired = true; }
+        if (!storageRequired) return 10;
+        const auto independent = snapshot->open();
+        snapshot->renew(independent.endpoint);
+        snapshot->close(independent.endpoint);
+        QTextStream(stdout) << "PASS: credential snapshot survives removal of user pairing storage\n";
+        return 0;
     } catch (const std::exception& error) {
         QTextStream(stderr) << error.what() << '\n';
         return 1;

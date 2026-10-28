@@ -18,6 +18,21 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Storage-independent paired control
+
+Windows `PskTunnelControl` now retains one `PairedControl` credential snapshot
+for open, renewal and close. User DPAPI storage is read once, not by every
+renewal. The explicit-credential constructor supports a future authenticated
+service handoff without giving LocalSystem access to the user's pairing files.
+It does not itself authorize IPC or persist the handed-off key.
+
+Snapshot keys have bounded length, use separately owned memory, and are cleared
+best-effort on destruction. This does not erase caller/TLS copies or protect
+against crash dumps. Existing Linux convenience functions retain their previous
+per-call loading behavior. The TLS-PSK fixture checks invalid credentials,
+enrollment, stale leases, and a complete open/renew/close after removing only
+the isolated test pairing file. Windows additionally exercises DPAPI.
+
 ### Guard lifetime independent of the tunnel
 
 `runGuardedWorker` supervises the session separately from the physical-egress
