@@ -2,8 +2,9 @@
 
 Linux is the behavioral reference, not just the widget layout. No Windows UI
 control may claim routing protection before a privileged backend actually
-enforces it. This document records the implementation boundary, not a claim that
-Windows tunneling or filtering is already available.
+enforces it. This document records the implementation boundary. Windows
+whole-host IPv4 and selected-process IPv4 TCP/UDP routing are available; the
+limits below remain part of the contract.
 
 ## First-release scope: lab routing, not security isolation
 
@@ -69,7 +70,7 @@ their own tunnel. Application identity must resist PID reuse and preserve
 instance boundaries. An executable-path-only firewall rule is not by itself
 equivalent to selecting one running application instance.
 
-## Planned whole-host scope
+## Whole-host scope
 
 The target also includes whole-host routing, independently selectable from
 direct-next-hop versus tunnel transport. Application mode must continue to leave

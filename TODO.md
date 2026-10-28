@@ -3,8 +3,8 @@
 ## Windows first release: WinDivert lab routing
 
 WinDivert is the selected interception backend. A custom WFP kernel driver is
-not a first-release dependency. Windows routing is still under development;
-these items are acceptance gates, not implemented capabilities.
+not a first-release dependency. Windows IPv4 routing is implemented and has
+passed the native VM cases listed below; unchecked items remain release gates.
 
 Transport milestones verified independently of the remaining service/UI gates:
 
@@ -26,10 +26,12 @@ Transport milestones verified independently of the remaining service/UI gates:
   verify readiness before resuming forwarding.
 - [x] Retry selected-process and whole-host transport with bounded backoff while
   retaining interception. Publish Active only after a fresh healthy generation.
-- [ ] Test physical egress for TCP/UDP and IPv4/IPv6, initial packets, existing
-  sockets, pre-existing descendants, shared DNS, reconnect and GUI restart.
-  New routed-launch TCP and uniquely bound UDP descendants are covered. Reject unsupported
-  cases visibly rather than claiming they are routed.
+- [ ] Complete physical-egress coverage for IPv6, already-open sockets, orphaned
+  handoffs and ambiguous shared binds. Native VM tests now cover selected-root,
+  new-descendant and adopted pre-existing-descendant IPv4 TCP/HTTPS; uniquely
+  bound root/descendant UDP/DNS; initial suspended launch; reconnect; GUI restart;
+  whole-host DNS/HTTP/HTTPS; and tunnel-loss blocking. Unsupported cases must
+  remain visibly rejected rather than being presented as routed.
 - [x] Report service failure accurately. Test and document that owner termination
   removes WinDivert filters and may restore direct connectivity. Automatic restart
   improves availability but cannot guarantee leak-free recovery.
@@ -48,21 +50,24 @@ per-instance protection surviving service failure becomes a product requirement.
 ## Target: whole-host routing through Saslik
 
 Whole-host routing is an explicit alternative to application selection, for both
-Linux and Windows. Windows is not enabled yet; Linux implementation status is
-listed below. Whole-host scope does not implicitly include traffic
-forwarded from VMs, bridges or other machines.
+Linux and Windows. Both platforms implement local-host IPv4 routing with explicit
+IPv6 blocking. The Windows SCM service, authenticated IPC, GUI state restoration,
+route/DNS mutation, loss blocking and cleanup passed native VM integration on
+2026-10-28. Whole-host scope does not implicitly include traffic forwarded from
+VMs, bridges or other machines.
 
-The initial portable `routing_scope.hpp` admission model is unit-tested but not
-wired into IPC, UI or route mutation. It keeps empty application selection inert,
-requires separate backend capability and authorization for whole-host scope,
-and rejects invalid enum values. This does not complete the activation checklist.
+The portable `routing_scope.hpp` admission model is wired into the privileged
+workers and UI. It keeps empty application selection inert, requires separate
+backend capability and authorization for whole-host scope, and rejects invalid
+enum values. The unchecked items below describe remaining cross-platform parity
+and release coverage, not absence of the implemented tunnelled IPv4 mode.
 
 - [ ] Expose routing scope (selected applications / whole host) independently
   from transport (direct next hop / Tuntom). Require explicit privileged consent
   for whole-host activation; never infer it from an empty application selection.
 - [ ] Support direct routing through a reachable Saslik gateway and tunnelled
   routing to a remote Saslik. Validate the return path before reporting ready.
-- [ ] Before redirecting host traffic, preserve the tunnel peer's underlay path
+- [x] Before redirecting host traffic, preserve the tunnel peer's underlay path
   using the original gateway/interface. Exempt only required transport/control
   traffic; do not blanket-exempt every application talking to the peer address.
 - [ ] Handle endpoint changes, DNS bootstrap and physical interface/gateway
@@ -73,11 +78,11 @@ and rejects invalid enum values. This does not complete the activation checklist
   private networks. Route normal DNS through the chosen path.
 - [ ] Cover IPv4 and IPv6. Unsupported families/protocols must be explicitly
   blocked or rejected, never silently bypass a claimed whole-host mode.
-- [ ] Keep host data traffic blocked during tunnel loss while the worker lives;
+- [x] Keep host data traffic blocked during tunnel loss while the worker lives;
   permit only the bounded recovery/control paths. No automatic direct fallback.
 - [ ] Make activation, scope switching and rollback transactional. Remove only
   Skewer-owned changes, preserving concurrent DHCP, VPN and administrator updates.
-- [ ] Distinguish pause/block from explicit Release host, which intentionally
+- [x] Distinguish pause/block from explicit Release host, which intentionally
   restores normal routing. GUI closure must do neither. Document worker-crash
   behavior separately; no stronger guarantees than the tested backend provides.
 - [ ] Test real egress, peer relocation, DHCP renewal, reconnect, return traffic,
