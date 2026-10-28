@@ -18,6 +18,28 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Native route ownership
+
+`OwnedRoute` is the native IP Helper building block for replacing the live
+experiment's PowerShell route setup. It creates ActiveStore IPv4 routes and
+never adopts or overwrites an existing route. Explicit cleanup distinguishes
+removed, missing, externally changed and failed routes; the future service must
+inspect that result while its egress guard remains armed. Destruction is only a
+best-effort fallback, not crash recovery.
+
+Cleanup compares writable policy attributes and preserves observed changes.
+IP Helper provides no atomic compare-and-delete: simultaneous administrator
+updates and identical delete/recreate cannot be distinguished reliably. This is
+not a security boundary. Interface defaults are specified explicitly rather
+than comparing the API initializer's unspecified values against normalized rows.
+
+Run `owned_route_test.exe --live` only in an elevated disposable Windows VM.
+It creates a temporary `203.0.113.254/32` route, sends no traffic, and checks
+conflict refusal, explicit/destructor cleanup, already-missing routes and
+preservation after an administrator-style metric change. It refuses an existing
+fixture route. This test is intentionally excluded from automatic CTest runs.
+The primitive is not yet wired into the production service or GUI.
+
 ### Whole-host IPv4 live experiment
 
 `tests/paired-tunnel-live.ps1 -WholeHostTest -WinDivertDirectory PATH
