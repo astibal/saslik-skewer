@@ -53,7 +53,10 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     status_->setWordWrap(true);
     layout->addWidget(status_);
     layout->addStretch();
-    connect(pair_, &QPushButton::clicked, this, [this] { submit(3); });
+    connect(pair_, &QPushButton::clicked, this, [this] {
+        automatic_pairing_attempted_ = true;
+        submit(3);
+    });
     connect(start_, &QPushButton::clicked, this, [this] { submit(1); });
     connect(stop_, &QPushButton::clicked, this, [this] { submit(2); });
     connect(install_, &QPushButton::clicked, this, [this] {
@@ -81,8 +84,12 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     connect(service_, &QLineEdit::textChanged, this, [this] {
         ++epoch_;
         known_ = false;
+        automatic_pairing_attempted_ = false;
         updateControls();
         status_->setText(tr("Checking service…"));
+    });
+    connect(endpoint_, &QLineEdit::textChanged, this, [this] {
+        automatic_pairing_attempted_ = false;
     });
     connect(&timer_, &QTimer::timeout, this, [this] {
         if (!watcher_.isRunning() && !action_busy_) {
@@ -97,6 +104,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
             }
             if (!result.error.isEmpty()) {
                 known_ = false;
+                automatic_pairing_attempted_ = false;
                 status_->setText(
                     tr("Service unavailable or request failed: %1. No automatic retry of Start/Stop.")
                         .arg(result.error));
@@ -145,6 +153,19 @@ RoutingPanel::RoutingPanel(QWidget* parent)
             dispatch(std::move(request));
         }
         updateControls();
+        if (known_ && !automatic_pairing_attempted_ && !action_busy_ && !pending_ &&
+            !endpoint_->text().trimmed().isEmpty() &&
+            (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed)) {
+            // Pairing handoff changes only service memory. It never starts a
+            // routing generation and is safe to restore after service reboot.
+            automatic_pairing_attempted_ = true;
+            QTimer::singleShot(0, this, [this] {
+                if (!action_busy_ && !watcher_.isRunning()) {
+                    status_->setText(tr("Restoring paired control to the idle service…"));
+                    submit(3);
+                }
+            });
+        }
     });
     updateControls();
     timer_.start(2000);

@@ -53,6 +53,7 @@ private:
     unsigned epoch_{};
     bool known_{};
     bool action_busy_{};
+    bool automatic_pairing_attempted_{};
     StateCallback state_callback_;
 };
 } // namespace skewer::windows
