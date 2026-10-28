@@ -18,6 +18,35 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Guard lifetime independent of the tunnel
+
+`runGuardedWorker` supervises the session separately from the physical-egress
+WinDivert consumer. A session exception or unexpected return is retained in the
+result, but the guard keeps draining and discarding until explicit cancellation.
+Cancellation joins the session and requires successful route cleanup before
+returning. Cleanup exceptions/failures retry at bounded intervals; they never
+authorize direct fallback. A pre-cancelled worker does not start a session.
+
+`runGuardedPairedTunnel` composes this supervisor with the paired packet worker
+and native `TunnelRoutes`. The caller must already have armed a trusted guard,
+configured the adapter and validated the route plan. An externally changed route
+is deliberately unresolved: SCM shutdown may remain pending rather than release
+protection. Administrative recovery for that condition is not yet exposed.
+Fatal capture failure or process termination still has WinDivert's documented
+owner-lifetime limitation; this is not a persistent kernel kill switch.
+
+`guarded_worker_test --live TRUSTED_DLL` uses a real handle with a fixed false
+filter to check failed/returned sessions, cancellation and retrying cleanup.
+`tests/capture-service-live.ps1` additionally checks that a simulated tunnel
+failure leaves its temporary LocalSystem service running until explicit STOP.
+These fixtures alter no routing and do not prove packet blocking; whole-host
+packet blocking is covered separately by the live experiment below.
+
+This composition is not yet an installed production service or GUI action.
+Authenticated start/stop IPC, user-bound pairing credentials and installation
+still need integration. GUI routing controls remain disabled until that path is
+implemented and tested end to end.
+
 ### Native route ownership
 
 `OwnedRoute` is the native IP Helper building block for replacing the live

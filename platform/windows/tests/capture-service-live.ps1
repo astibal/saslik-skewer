@@ -21,9 +21,11 @@ if ((Get-AuthenticodeSignature (Join-Path $root 'WinDivert64.sys')).Status -ne '
 }
 $created = @()
 try {
-    foreach ($failure in @($false, $true)) {
-        $name = 'SkewerCapture-' + $id + $(if ($failure) { '-failure' } else { '-stop' })
-        $command = '"' + $exe + '" ' + $name + $(if ($failure) { ' --missing-dll' } else { '' })
+    foreach ($mode in @('stop', 'failure', 'session-failure')) {
+        $failure = $mode -eq 'failure'
+        $sessionFailure = $mode -eq 'session-failure'
+        $name = 'SkewerCapture-' + $id + '-' + $mode
+        $command = '"' + $exe + '" ' + $name + $(if ($failure) { ' --missing-dll' } elseif ($sessionFailure) { ' --session-failure' } else { '' })
         $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
             Name = $name; DisplayName = $name; PathName = $command
             ServiceType = [byte]16; ErrorControl = [byte]1; StartMode = 'Manual'; StartName = 'LocalSystem'
@@ -39,13 +41,20 @@ try {
         $deadline = (Get-Date).AddSeconds(10)
         do {
             $text = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
-            if ($text -match 'capture_ready|failed') { break }
+            if (($sessionFailure -and $text -match 'session_failed_guard_retained') -or
+                (!$sessionFailure -and $text -match 'capture_ready|failed')) { break }
             Start-Sleep -Milliseconds 100
         } while ((Get-Date) -lt $deadline)
         if ($failure) {
             if ($text -notmatch 'failed' -or $text -match 'capture_ready') { throw 'False capture readiness' }
         } else {
             if ($text -notmatch 'capture_ready') { throw 'Capture never became ready' }
+            if ($sessionFailure) {
+                if ($text -notmatch 'session_failed_guard_retained') { throw 'Session failure was not observed' }
+                Start-Sleep -Seconds 1
+                if ((Get-Service $name).Status -ne 'Running') { throw 'Tunnel failure stopped the guard service' }
+                Write-Output 'PASS: failed tunnel session leaves SCM service and guard alive until explicit stop'
+            }
             Stop-Service $name
         }
         $service = Get-Service $name

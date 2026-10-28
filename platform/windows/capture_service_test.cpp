@@ -1,5 +1,6 @@
 #include "service_host.hpp"
 #include "packet_capture.hpp"
+#include "guarded_worker.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -16,7 +17,8 @@ int wmain(int argc, wchar_t** argv) {
         if (!name.starts_with(L"SkewerCapture-") || name.size() > 100 ||
             name.find_first_not_of(L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-") !=
                 std::wstring::npos ||
-            (argc == 3 && std::wstring(argv[2]) != L"--missing-dll")) {
+            (argc == 3 && std::wstring(argv[2]) != L"--missing-dll" &&
+             std::wstring(argv[2]) != L"--session-failure")) {
             throw std::invalid_argument("Invalid capture fixture arguments");
         }
         std::wstring module(32768, L'\0');
@@ -26,9 +28,11 @@ int wmain(int argc, wchar_t** argv) {
         }
         module.resize(length);
         const auto root = std::filesystem::path(module).parent_path();
-        const auto dll = root / (argc == 3 ? L"missing-windivert.dll" : L"WinDivert.dll");
+        const bool session_failure = argc == 3 && std::wstring(argv[2]) == L"--session-failure";
+        const bool missing_dll = argc == 3 && std::wstring(argv[2]) == L"--missing-dll";
+        const auto dll = root / (missing_dll ? L"missing-windivert.dll" : L"WinDivert.dll");
         const auto log = root / (name + L".status");
-        return skewer::windows::runService(name, [dll, log](HANDLE stop) -> DWORD {
+        return skewer::windows::runService(name, [dll, log, session_failure](HANDLE stop) -> DWORD {
             std::ofstream output(log);
             output.exceptions(std::ios::badbit | std::ios::failbit);
             // SCM RUNNING and successful handle acquisition are distinct from
@@ -44,17 +48,29 @@ int wmain(int argc, wchar_t** argv) {
                 {
                     Capture capture(dll.wstring(), "false");
                     report("capture_ready", capture.stats());
-                    const auto deadline = GetTickCount64() + 60000;
-                    for (;;) {
-                        const auto result = capture.next(stop, 250);
-                        if (result.status == Capture::Status::Cancelled) {
-                            break;
+                    if (session_failure) {
+                        const auto result = skewer::windows::runGuardedWorker(
+                            capture, stop, [](HANDLE) { throw std::runtime_error("Fixture tunnel failure"); },
+                            [&] {
+                                report("session_failed_guard_retained", capture.stats());
+                                return true;
+                            });
+                        if (!result.session_error || !result.unexpected_session_exit) {
+                            throw std::runtime_error("Fixture failure was not retained");
                         }
-                        if (result.status == Capture::Status::Packet) {
-                            throw std::runtime_error("Impossible fixture filter captured traffic");
-                        }
-                        if (GetTickCount64() >= deadline) {
-                            throw std::runtime_error("Capture service fixture lifetime exceeded");
+                    } else {
+                        const auto deadline = GetTickCount64() + 60000;
+                        for (;;) {
+                            const auto result = capture.next(stop, 250);
+                            if (result.status == Capture::Status::Cancelled) {
+                                break;
+                            }
+                            if (result.status == Capture::Status::Packet) {
+                                throw std::runtime_error("Impossible fixture filter captured traffic");
+                            }
+                            if (GetTickCount64() >= deadline) {
+                                throw std::runtime_error("Capture service fixture lifetime exceeded");
+                            }
                         }
                     }
                     stats = capture.stats();
