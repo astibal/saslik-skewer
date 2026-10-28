@@ -114,6 +114,9 @@ public:
         buildLauncher();
 #ifdef SKEWER_WINDOWS_PAIRING
         buildSaslikPage();
+        routing_status_bar_ = new QLabel(tr("Routing: checking…"), this);
+        routing_status_bar_->setAccessibleName(tr("Windows routing status"));
+        statusBar()->addPermanentWidget(routing_status_bar_);
         routing_panel_ = new skewer::windows::RoutingPanel(this);
         pages()->addTab(routing_panel_, tr("Routing"));
         routing_panel_->setStateCallback(
@@ -456,6 +459,7 @@ private:
                                   : QString{};
         browser_->setRoutingState(known, selected && retained ? identity : QString{});
         connections_->setRoutingState(known, state);
+        updateRoutingSummary(known, state, selected, retained);
         updateApplicationActions();
         if (!known) {
             page_->action_status->setText(tr("Routing service unavailable; process state is unknown."));
@@ -476,6 +480,39 @@ private:
         } else {
             page_->action_status->setText(tr("No process is individually routed."));
         }
+    }
+
+    void updateRoutingSummary(bool known, const skewer::windows::RoutingReply& state,
+                              bool selected, bool retained) {
+        QString text;
+        QString color = QStringLiteral("#8a9199");
+        if (!known) {
+            text = tr("Routing unavailable");
+            color = QStringLiteral("#ef5b6a");
+        } else if (state.phase == skewer::windows::RoutingPhase::Blocked) {
+            text = tr("Routing blocked");
+            color = QStringLiteral("#ef5b6a");
+        } else if (state.phase == skewer::windows::RoutingPhase::Failed) {
+            text = tr("Routing failed");
+            color = QStringLiteral("#ef5b6a");
+        } else if (state.phase == skewer::windows::RoutingPhase::Starting ||
+                   state.phase == skewer::windows::RoutingPhase::Stopping) {
+            text = state.phase == skewer::windows::RoutingPhase::Starting
+                       ? tr("Routing starting") : tr("Routing stopping");
+            color = QStringLiteral("#d8a93f");
+        } else if (state.phase == skewer::windows::RoutingPhase::Active &&
+                   state.scope == skewer::windows::RoutingScope::WholeHost) {
+            text = tr("Whole host routed");
+            color = QStringLiteral("#41b879");
+        } else if (selected && retained) {
+            text = tr("PID %1 routed").arg(state.selected->pid);
+            color = QStringLiteral("#41b879");
+        } else {
+            text = tr("Routing idle");
+        }
+        routing_status_bar_->setText(text);
+        routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
+        tray_->setToolTip(tr("Skewer\n%1").arg(text));
     }
 
     void updateApplicationActions() {
@@ -564,6 +601,7 @@ private:
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};
     skewer::windows::RoutingPanel* routing_panel_{};
+    QLabel* routing_status_bar_{};
     skewer::windows::ConnectionsPanel* connections_{};
     skewer::windows::RoutingReply routing_state_{};
     bool routing_known_{};

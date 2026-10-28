@@ -49,6 +49,11 @@ try {
         throw "Routing actions do not reflect one authoritative service state (Attach=$($attach.Current.IsEnabled), Release=$($release.Current.IsEnabled))"
     }
     'PASS: authoritative Attach/Release controls' | Out-File $log -Append
+    $routingStatus = FindNamed $window 'Windows routing status'
+    if (!$routingStatus -or [string]::IsNullOrWhiteSpace($routingStatus.Current.Name)) {
+        throw 'Authoritative routing status is not visible outside the Routing tab'
+    }
+    'PASS: persistent routing status indicator' | Out-File $log -Append
     foreach ($tab in @('Applications', 'CA Trust', 'Runtime Trust', 'Connections', 'Saslik', 'Routing')) {
         if (!(FindNamed $window $tab)) { throw "Missing tab: $tab" }
     }
