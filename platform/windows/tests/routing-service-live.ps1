@@ -39,6 +39,10 @@ try {
     if ($result.ReturnValue -ne 0) { throw 'Create service failed' }
     $created = $true
     Start-Service $name
+    $initial = AwaitPhase 0
+    & $exe --client $name 1 $initial.generation
+    if ($LASTEXITCODE -eq 0) { throw 'Unpaired service accepted Start' }
+    if ((Command 0 0).phase -ne 0) { throw 'Rejected Start changed service state' }
     $paired = $false
     for ($i = 0; $i -lt 20; ++$i) {
         & $exe --pair $name
@@ -51,6 +55,9 @@ try {
     $started = Command 1 $initial.generation
     if ($started.result -ne 0 -or $started.generation -eq $initial.generation) { throw 'Start rejected' }
     $blocked = AwaitPhase 3
+    & $exe --pair $name
+    if ($LASTEXITCODE -eq 0) { throw 'Active generation accepted replacement pairing' }
+    if ((Command 0 0).phase -ne 3) { throw 'Rejected pairing disturbed the active generation' }
     # Every command runs in a fresh process. The START client is already gone.
     if ((Get-Service $name).Status -ne 'Running') { throw 'Client exit stopped service' }
     $busy = Command 1 $started.generation

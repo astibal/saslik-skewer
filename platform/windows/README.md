@@ -20,6 +20,14 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ### Generation-bound routing commands
 
+`serveRoutingService` is the shared service command loop, independent of the
+test executable. The installed host supplies its trusted owner token, stop event
+and paired runner. The loop owns both authenticated pipes and the memory-only
+pairing snapshot. It refuses Start before pairing and replacement credentials
+while a generation is running or stopping. Its controller is destroyed before
+credentials, so SCM stop joins the runner before wiping the pairing. Client
+disconnects and malformed requests do not stop an active generation.
+
 `RoutingController` owns an asynchronous runtime independently of IPC clients.
 Authenticated start/stop/status commands report Idle, Starting, Active, Blocked,
 Stopping or Failed, with a monotonically increasing runtime generation seeded

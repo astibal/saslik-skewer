@@ -2,6 +2,7 @@
 #include "pairing_handoff.hpp"
 #include "guarded_worker.hpp"
 #include "service_host.hpp"
+#include "routing_service.hpp"
 #include <filesystem>
 #include <iostream>
 
@@ -101,46 +102,17 @@ int wmain(int argc, wchar_t** argv) {
                 return 52;
             }
             Handle token(raw);
-            auto commands = createSelectionPipe(name, token.get());
-            auto pairings = createSelectionPipe(name + L"-pair", token.get());
-            std::unique_ptr<PairingHandoff> pairing;
-            RoutingController controller([&](HANDLE cancel, RoutingSignals& signals) {
-                // Only the command thread replaces pairing, and only while idle.
-                if (!pairing || pairing->identity != "public-fixture" || pairing->key[0] != 0x5a) {
-                    throw std::runtime_error("Missing fixture pairing");
-                }
-                traffic::PacketCapture guard(dll.wstring(), "false");
-                runGuardedWorker(
-                    guard, cancel, [](HANDLE) { throw std::runtime_error("Fixture tunnel failed"); },
-                    [] { return true; }, &signals.blocked);
-            });
-            const auto deadline = GetTickCount64() + 60000;
-            while (WaitForSingleObject(stop, 0) == WAIT_TIMEOUT && GetTickCount64() < deadline) {
-                try {
-                    acceptSelection(commands->get(), stop, 100);
-                    serveRoutingCommand(commands->get(), token.get(), stop, 2000,
-                                        [&](RoutingCommand command, std::uint64_t generation) {
-                                            if (command == RoutingCommand::Start && !pairing) {
-                                                throw std::runtime_error("Pair first");
-                                            }
-                                            return controller.command(command, generation);
-                                        });
-                    finishSelection(commands->get(), stop, 500);
-                } catch (const std::exception&) {
-                }
-                DisconnectNamedPipe(commands->get());
-                try {
-                    acceptSelection(pairings->get(), stop, 100);
-                    const auto state = controller.command(RoutingCommand::Status, 0);
-                    if (state.phase != RoutingPhase::Idle && state.phase != RoutingPhase::Failed) {
-                        throw std::runtime_error("Cannot replace active pairing");
-                    }
-                    pairing = receivePairingHandoff(pairings->get(), token.get(), stop, 2000);
-                    finishSelection(pairings->get(), stop, 500);
-                } catch (const std::exception&) {
-                }
-                DisconnectNamedPipe(pairings->get());
-            }
+            serveRoutingService(name, token.get(), stop,
+                                [&](const PairingHandoff& pairing, HANDLE cancel, RoutingSignals& signals) {
+                                    if (pairing.identity != "public-fixture" || pairing.key[0] != 0x5a) {
+                                        throw std::runtime_error("Missing fixture pairing");
+                                    }
+                                    traffic::PacketCapture guard(dll.wstring(), "false");
+                                    runGuardedWorker(
+                                        guard, cancel,
+                                        [](HANDLE) { throw std::runtime_error("Fixture tunnel failed"); },
+                                        [] { return true; }, &signals.blocked);
+                                });
             return 0; // Controller cancels and joins before SCM sees STOPPED.
         });
     } catch (const std::exception& error) {
