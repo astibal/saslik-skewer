@@ -422,6 +422,14 @@ minimized. Network I/O runs off the UI thread. Stop reporting and closing the
 window leave pairing, applications and routing untouched; Saslik marks presence
 offline after its report timeout (currently thirty seconds).
 
+After an accepted report, the same tab refreshes authenticated lab status over
+the saved TLS-PSK channel. It shows workspace and ingress availability, the
+advertised gateway/interface, lab and Smithproxy state, Smithproxy PID,
+end-to-end checks and the locally advertised CA fingerprint. **Open Saslik** and
+**Open Spider** accept only credential-free HTTP(S) targets; loopback targets
+are rewritten to the paired Saslik host. The application never opens them
+automatically.
+
 The device list is populated by reports, not enrollment alone. Reports contain
 the hostname, Skewer version and an exact CryptoAPI observation of the last CA
 downloaded from Saslik in `Current User\\ROOT`. If the exact same CA is present

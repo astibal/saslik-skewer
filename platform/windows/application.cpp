@@ -35,6 +35,9 @@
 #include "runtime_trust_panel.hpp"
 #include <QSettings>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QHostAddress>
+#include <QJsonObject>
 #endif
 #include <cstdio>
 #include <cstring>
@@ -77,6 +80,13 @@ struct LaunchResult {
     bool routed{};
     QString error;
 };
+#ifdef SKEWER_WINDOWS_PAIRING
+struct PairedStatusResult {
+    QString source;
+    QJsonObject value;
+    QString error;
+};
+#endif
 LaunchResult launch(const QString& executable, const QStringList& arguments, const QString& service, bool routed,
                     const std::shared_ptr<skewer::windows::Handle>& cancel,
                     const skewer::windows::EnvironmentOverrides& environment) {
@@ -141,6 +151,7 @@ public:
         report_timer_.stop();
         pairing_watcher_.waitForFinished();
         report_watcher_.waitForFinished();
+        paired_status_watcher_.waitForFinished();
 #endif
         scan_watcher_.waitForFinished();
         SetEvent(launch_cancel_->get());
@@ -182,6 +193,28 @@ private:
         report_status_ = new QLabel(tr("Not reporting. Pair first using skewer-control pair - ."), page);
         report_status_->setWordWrap(true);
         layout->addWidget(report_status_);
+        paired_status_ = new QLabel(tr("Authenticated lab status has not been loaded yet."), page);
+        paired_status_->setObjectName("pairedLabStatus");
+        paired_status_->setAccessibleName(tr("Authenticated lab status"));
+        paired_status_->setWordWrap(true);
+        paired_status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(paired_status_);
+        auto* links = new QHBoxLayout;
+        open_saslik_ = new QPushButton(tr("Open Saslik"), page);
+        open_spider_ = new QPushButton(tr("Open Spider"), page);
+        for (auto* button : {open_saslik_, open_spider_}) {
+            button->setEnabled(false);
+            links->addWidget(button);
+            connect(button, &QPushButton::clicked, this, [button] {
+                const QUrl target(button->property("targetUrl").toString());
+                if ((target.scheme() == "http" || target.scheme() == "https") &&
+                    target.userInfo().isEmpty()) {
+                    QDesktopServices::openUrl(target);
+                }
+            });
+        }
+        links->addStretch();
+        layout->addLayout(links);
         layout->addStretch();
         pages()->addTab(page, tr("Saslik"));
         report_timer_.setInterval(10000);
@@ -248,6 +281,69 @@ private:
             QSettings().setValue("windows/saslikEndpoint", endpoint_->text().trimmed());
             report_status_->setText(tr("Report accepted at %1. Routing status is independent.")
                                         .arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+            refreshPairedStatus();
+        });
+        connect(&paired_status_watcher_, &QFutureWatcher<PairedStatusResult>::finished, this, [this] {
+            const auto result = paired_status_watcher_.result();
+            if (result.source != endpoint_->text().trimmed()) {
+                return;
+            }
+            const auto setLink = [this](QPushButton* button, QUrl target) {
+                const QUrl endpoint(endpoint_->text().trimmed());
+                if (QHostAddress(target.host()).isLoopback() || target.host() == "localhost") {
+                    target.setHost(endpoint.host());
+                }
+                const bool valid = target.isValid() && !target.host().isEmpty() &&
+                                   (target.scheme() == "http" || target.scheme() == "https") &&
+                                   target.userInfo().isEmpty();
+                button->setProperty("targetUrl", valid ? target.toString() : QString{});
+                button->setToolTip(valid ? target.toDisplayString() : QString{});
+                button->setEnabled(valid);
+            };
+            if (!result.error.isEmpty()) {
+                paired_status_->setText(tr("Authenticated lab status unavailable: %1").arg(result.error));
+                setLink(open_saslik_, {});
+                setLink(open_spider_, {});
+                return;
+            }
+            const auto status = result.value;
+            const auto lab = status.value("lab_status").toObject();
+            const auto proxy = lab.value("services").toObject().value("smithproxy").toObject();
+            const auto end_to_end = lab.value("end_to_end").toObject();
+            QStringList checks;
+            const auto check_values = end_to_end.value("checks").toObject();
+            for (auto it = check_values.begin(); it != check_values.end(); ++it) {
+                checks << it.key() + ": " + it.value().toObject().value("state").toString(tr("unknown"));
+            }
+            const auto observation = skewer::windows::advertisedCaObservation();
+            paired_status_->setText(
+                tr("Authenticated via TLS-PSK\n"
+                   "Workspace: %1 · lab ingress: %2\n"
+                   "Gateway: %3 · interface: %4\n"
+                   "Lab: %5 · Smithproxy: %6 · PID: %7\n"
+                   "Internet: %8%9\n"
+                   "Locally advertised CA SHA-256: %10\nUpdated: %11")
+                    .arg(status.value("workspace").toString(tr("unknown")),
+                         status.value("available").toBool() ? tr("available") : tr("unavailable"),
+                         status.value("gateway").toString(tr("—")),
+                         status.value("host_interface").toString(tr("—")),
+                         lab.value("runtime_state").toString(tr("unknown")),
+                         proxy.value("state").toString(tr("unknown")),
+                         proxy.value("pid").isDouble() ? QString::number(proxy.value("pid").toInt())
+                                                       : tr("—"),
+                         checks.isEmpty() ? tr("not measured") : checks.join(" · "),
+                         end_to_end.value("stale").toBool() ? tr(" (stale)") : QString{},
+                         observation.fingerprint.isEmpty() ? tr("not downloaded")
+                                                           : observation.fingerprint,
+                         QDateTime::currentDateTime().toString(Qt::ISODate)));
+            QUrl web;
+            web.setScheme("https");
+            web.setHost(QUrl(result.source).host());
+            web.setPort(status.value("ui_port").toInt(-1));
+            web.setPath("/");
+            setLink(open_saslik_, status.value("ui_port").toInt() > 0 ? web : QUrl{});
+            const auto spider = lab.value("endpoints").toObject().value("spider_ui").toString();
+            setLink(open_spider_, spider.isEmpty() ? QUrl{} : web.resolved(QUrl(spider)));
         });
         // A previously validated endpoint resumes presence on the next launch.
         if (!endpoint_->text().isEmpty()) {
@@ -279,6 +375,26 @@ private:
         const QUrl endpoint(endpoint_->text().trimmed());
         report_watcher_.setFuture(QtConcurrent::run(
             [endpoint] { return skewer::windows::sendClientReport(endpoint, SKEWER_VERSION); }));
+    }
+
+    void refreshPairedStatus() {
+        if (paired_status_watcher_.isRunning()) {
+            return;
+        }
+        const auto source = endpoint_->text().trimmed();
+        const QUrl endpoint(source);
+        if (!endpoint.isValid() || endpoint.scheme() != "skewer" || endpoint.host().isEmpty() ||
+            endpoint.port() <= 0 || endpoint.path() != "/pair" || endpoint.hasFragment() ||
+            endpoint.hasQuery() || !endpoint.userInfo().isEmpty()) {
+            return;
+        }
+        paired_status_watcher_.setFuture(QtConcurrent::run([endpoint, source] {
+            try {
+                return PairedStatusResult{source, pairedStatus(endpoint), {}};
+            } catch (const std::exception& error) {
+                return PairedStatusResult{source, {}, QString::fromUtf8(error.what())};
+            }
+        }));
     }
 #endif
     void buildPage() {
@@ -634,9 +750,13 @@ private:
     QPushButton* pair_button_{};
     QPushButton* report_button_{};
     QLabel* report_status_{};
+    QLabel* paired_status_{};
+    QPushButton* open_saslik_{};
+    QPushButton* open_spider_{};
     QTimer report_timer_;
     QFutureWatcher<QString> report_watcher_;
     QFutureWatcher<QPair<QString, QString>> pairing_watcher_;
+    QFutureWatcher<PairedStatusResult> paired_status_watcher_;
 #endif
 };
 } // namespace

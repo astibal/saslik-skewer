@@ -74,6 +74,12 @@ try {
     'PASS: native managed runtime-trust controls' | Out-File $log -Append
     SelectTab $window 'Saslik'
     Start-Sleep -Milliseconds 300
+    $pairedStatus = FindNamed $window 'Authenticated lab status'
+    foreach ($control in @('Open Saslik', 'Open Spider')) {
+        if (!(FindNamed $window $control)) { throw "Missing paired lab link control: $control" }
+    }
+    if (!$pairedStatus) { throw 'Missing selectable authenticated lab status panel' }
+    'PASS: authenticated paired lab status and safe link controls' | Out-File $log -Append
     $invitation = FindNamed $window 'Saslik pairing invitation'
     $pair = FindNamed $window 'Pair with Saslik'
     if (!$invitation -or !$invitation.Current.IsPassword -or !$pair -or !$pair.Current.IsEnabled) {
