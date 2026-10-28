@@ -90,6 +90,15 @@ void SocketAttemptIndex::invalidate() {
     index_.invalidate();
     tuples_.clear();
 }
+std::optional<skewer::traffic::FlowIdentity> SocketAttemptIndex::lookupFlow(PacketTuple tuple, Index::Time now) const {
+    return index_.lookupFlow(tuple, now);
+}
+std::optional<skewer::traffic::FlowIdentity> TrackedSocketObserver::lookupFlow(PacketTuple tuple) {
+    try {
+        if (!observer_.targetRunning()) { index_.invalidate(); }
+        return index_.lookupFlow(tuple, FlowIndex::Clock::now());
+    } catch (...) { index_.invalidate(); throw; }
+}
 
 TrackedSocketObserver::TrackedSocketObserver(const std::wstring& dll, ProcessKey process)
     : TrackedSocketObserver(dll, std::make_unique<ProcessTarget>(process)) {}

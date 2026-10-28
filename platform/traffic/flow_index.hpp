@@ -36,6 +36,9 @@ class FlowIndex final {
     // Closed records remain as tombstones until expiry to reject delayed opens.
     Update observe(FlowIdentity id, PacketTuple tuple, bool open, std::uint64_t event_order, Time now);
     Match lookup(PacketTuple tuple, Time now) const;
+    // Stricter diagnostic lookup: multiple socket endpoints are ambiguous even
+    // when they belong to the same process. Still not atomic OS ownership proof.
+    std::optional<FlowIdentity> lookupFlow(PacketTuple tuple, Time now) const;
     void expire(Time now);
     // Signal observer loss/overflow explicitly. No match is returned until reset.
     void invalidate();

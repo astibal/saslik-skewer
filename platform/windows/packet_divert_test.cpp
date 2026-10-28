@@ -4,6 +4,7 @@
 #include "selected_packets.hpp"
 #include "owner_evidence.hpp"
 #include "tcp_owners.hpp"
+#include "tcp_selection_resolver.hpp"
 #include "udp_owners.hpp"
 #include "packet_capture.hpp"
 #include <algorithm>
@@ -389,6 +390,7 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
     // correlation only, not the absence of another process sharing a tuple.
     traffic::TrackedFlowObserver observer(path, identity);
     traffic::TrackedSocketObserver attempts(path, std::make_unique<ProcessTarget>(identity));
+    traffic::TcpSelectionResolver tcpResolver(path, std::make_unique<ProcessTarget>(identity));
     Handle cancellation(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancellation), "Create observer cancellation event");
     const auto open = resolve<decltype(&WinDivertOpen)>(dll, "WinDivertOpen");
@@ -473,6 +475,11 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                 "Decode captured packet tuple");
         if (tcp) {
             const auto attempt = attempts.next(cancellation.get(), 2000);
+            const auto resolution = tcpResolver.resolve(*parsed.tuple,cancellation.get());
+            require(resolution.evidence == skewer::traffic::OwnerEvidence::Corroborated &&
+                        resolution.flow && resolution.flow->process ==
+                            skewer::traffic::ProcessIdentity{identity.pid,identity.created},
+                    "TCP resolver did not corroborate held SYN");
             require(attempt.status == traffic::FlowObserver::Status::Event && attempt.event &&
                         attempt.event->kind == traffic::FlowEvent::Kind::ConnectAttempt &&
                         attempt.event->process == identity &&
@@ -605,6 +612,8 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         }
         require(closed && attempts.lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unknown,
                 "Closed socket retained live ownership evidence");
+        require(!tcpResolver.resolve(*tracked_tuple,cancellation.get()).flow,
+                "TCP resolver retained a closed socket");
     }
     require(SetEvent(cancellation.get()), "Signal capture cancellation");
     require(attempts.next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,

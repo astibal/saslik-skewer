@@ -99,6 +99,12 @@ FlowIndex::Match FlowIndex::lookup(PacketTuple tuple, Time now) const {
     }
     return {Status::Observed, owner};
 }
+std::optional<FlowIdentity> FlowIndex::lookupFlow(PacketTuple tuple, Time now) const {
+    if (lookup(tuple, now).status != Status::Observed) { return std::nullopt; }
+    const auto found = tuples_.find(canonical(tuple));
+    if (found == tuples_.end() || found->second.size() != 1) { return std::nullopt; }
+    return *found->second.begin();
+}
 void FlowIndex::expire(Time now) {
     for (const auto &[id, record] : records_) {
         (void)id;

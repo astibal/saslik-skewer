@@ -343,3 +343,16 @@ ownership and an appropriate capture scope. A broad capture with this bridge
 would also drop unknown/unselected traffic and must not be presented as complete
 per-application routing. Capturing remains active until the supervisor explicitly
 destroys its handle, including after the bridge has stopped.
+
+`TcpSelectionResolver` combines a pinned selected process's CONNECT/CLOSE stream
+with both native TCP owner tables. It drains a bounded event batch before and
+after the table read, requires the same socket endpoint identity, rejects table
+observations older than 250 ms and returns explicit corroboration status. Multiple
+socket identities sharing a tuple are rejected even within the same process.
+The held-SYN VM fixture verifies IPv4/IPv6 resolution and rejection after socket
+close. A missing event or backlog yields no flow, never a direct-routing fallback.
+
+This remains non-atomic lab evidence, not `PacketOwner::Unique`. The service's
+selection policy must explicitly consume this result and preserve held/drop
+behavior for unknowns. It is TCP-only and does not supply routing for existing
+connections whose CONNECT event predates the observer, shared sockets, or UDP.

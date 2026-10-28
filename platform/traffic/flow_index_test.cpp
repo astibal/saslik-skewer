@@ -112,6 +112,18 @@ void boundsAndLoss() {
 int main() {
     try {
         basic();
+        {
+            FlowIndex index;
+            index.observe(first,packet(),true,1,start);
+            require(index.lookupFlow(packet(),start)==first,"Socket identity missing");
+            const FlowIdentity sibling{first.process,99};
+            index.observe(sibling,packet(),true,2,start);
+            require(!index.lookupFlow(packet(),start),"Same-process socket collision accepted");
+            index.observe(sibling,packet(),false,3,start);
+            require(index.lookupFlow(packet(),start)==first,"Closed competitor retained");
+            index.invalidate();
+            require(!index.lookupFlow(packet(),start),"Invalid epoch returned socket");
+        }
         identityAndOrdering();
         boundsAndLoss();
         std::cout

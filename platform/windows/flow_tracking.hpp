@@ -17,6 +17,7 @@ public:
     using Index = skewer::traffic::FlowIndex;
     Index::Update observe(const FlowEvent& event, Index::Time now);
     Index::Match lookup(skewer::traffic::PacketTuple tuple, Index::Time now) const;
+    std::optional<skewer::traffic::FlowIdentity> lookupFlow(skewer::traffic::PacketTuple tuple, Index::Time now) const;
     void invalidate();
 
 private:
@@ -34,6 +35,7 @@ public:
     TrackedSocketObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process);
     FlowObserver::Result next(HANDLE cancellation, DWORD timeout_ms);
     skewer::traffic::FlowIndex::Match lookup(skewer::traffic::PacketTuple tuple);
+    std::optional<skewer::traffic::FlowIdentity> lookupFlow(skewer::traffic::PacketTuple tuple);
 
 private:
     FlowObserver observer_;
