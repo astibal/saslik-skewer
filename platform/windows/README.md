@@ -18,6 +18,29 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Authenticated credential handoff transport
+
+`sendPairingHandoff` / `receivePairingHandoff` use a dedicated, bounded,
+message-mode connection. Before any write, the client pins the running own-process
+SCM service. The server first reads only PID/birth, verifies the actual pipe
+client PID, authenticates its token and compares ownership against the trusted
+session owner's token. Only then does it request the credential envelope.
+The explicit owner check also applies to SYSTEM, which has pipe administration
+rights but is not automatically the intended pairing owner.
+
+The envelope has fixed bounds/version, canonical zero padding and a 32-byte key.
+Temporary key buffers are cleared on scope exit. A single deadline covers the
+handshake; malformed, cancelled and oversized messages retire the connection.
+Acknowledgement means validated delivery, not persistence, tunnel startup or
+routing readiness. Endpoint semantics still require `PairedControl` validation.
+Production installer, GUI invocation and start/stop protocol are not wired yet.
+
+`selection_auth_test` checks rejection before writing to a non-SCM server and
+malformed envelopes. `tests/selection-service-live.ps1 -Handoff` verifies real
+user-to-LocalSystem delivery with public fixture credentials; `-WrongOwner`
+verifies denial before secret transfer. No actual pairing key or network policy
+is used or changed by these fixtures.
+
 ### Storage-independent paired control
 
 Windows `PskTunnelControl` now retains one `PairedControl` credential snapshot

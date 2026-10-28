@@ -2,9 +2,11 @@
 #include "selection_auth.hpp"
 #include "selection_request.hpp"
 #include "selection_transport.hpp"
+#include "pairing_handoff.hpp"
 #include <sddl.h>
 #include <iostream>
 #include <stdexcept>
+#include <future>
 
 namespace {
 using namespace skewer::windows;
@@ -21,6 +23,52 @@ template <typename Action> void rejects(Action action, const char* message) {
         rejected = true;
     }
     require(rejected, message);
+}
+void malformedHandoffTest() {
+    HANDLE raw{};
+    require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw), "Open handoff test token");
+    Handle token(raw);
+    const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
+    for (unsigned scenario = 0; scenario < 3; ++scenario) {
+        const auto suffix =
+            L"MalformedHandoff-" + std::to_wstring(key.pid) + L"-" + std::to_wstring(scenario);
+        auto server = createSelectionPipe(suffix, token.get());
+        const auto path = L"\\\\.\\pipe\\SkewerSelection-" + suffix;
+        Handle client(CreateFileW(
+            path.c_str(), FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA, 0,
+            nullptr, OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr));
+        require(bool(client), "Connect handoff test client");
+        Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        require(bool(cancel), "Create handoff test cancellation");
+        acceptSelection(server->get(), cancel.get(), 1000);
+        auto receiver = std::async(std::launch::async, [&] {
+            return receivePairingHandoff(server->get(), token.get(), cancel.get(), 1000);
+        });
+        auto hello = encodeSelectionRequest(key);
+        DWORD count{};
+        require(WriteFile(client.get(), hello.data(), hello.size(), &count, nullptr), "Send handoff hello");
+        std::array<std::uint8_t, 8> ack{};
+        require(ReadFile(client.get(), ack.data(), ack.size(), &count, nullptr) && count == ack.size(),
+                "Read handoff authorization");
+        std::array<std::uint8_t, 808> bytes{};
+        bytes[0] = 'S';
+        bytes[1] = 'K';
+        bytes[2] = 'P';
+        bytes[3] = 1;
+        bytes[4] = 1;
+        bytes[6] = 1;
+        bytes[8] = 'e';
+        bytes[520] = 'i';
+        if (scenario == 1) {
+            bytes[3] = 2;
+        }
+        if (scenario == 2) {
+            bytes[9] = 1;
+        }
+        const DWORD size = scenario == 0 ? 807 : 808;
+        require(WriteFile(client.get(), bytes.data(), size, &count, nullptr), "Send malformed handoff");
+        rejects([&] { (void)receiver.get(); }, "Malformed handoff accepted");
+    }
 }
 void transportTest() {
     const auto key = processKey(GetCurrentProcess(), GetCurrentProcessId());
@@ -48,6 +96,20 @@ void transportTest() {
                 "Accept transport client");
         Handle cancel(CreateEventW(nullptr, TRUE, scenario == 2, nullptr));
         require(static_cast<bool>(cancel), "Create cancellation event");
+        if (scenario == 0) {
+            PairingHandoff value;
+            value.endpoint = "skewer://127.0.0.1:18767/pair";
+            value.identity = "public-test";
+            value.key.fill(0x5a);
+            rejects(
+                [&] {
+                    sendPairingHandoff(client.get(), L"SkewerAbsentServiceFixture", value, cancel.get(), 50);
+                },
+                "Non-SCM server received credentials");
+            DWORD available{};
+            require(PeekNamedPipe(server.get(), nullptr, 0, nullptr, &available, nullptr) && !available,
+                    "Client wrote before authenticating server");
+        }
         if (scenario != 1 && scenario != 2) {
             const auto encoded =
                 scenario >= 5
@@ -301,6 +363,7 @@ int main(int argc, char** argv) {
         test();
         requestTest();
         transportTest();
+        malformedHandoffTest();
         listenerTest();
         if (argc == 1) {
             pipeTest();

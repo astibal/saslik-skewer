@@ -1,8 +1,11 @@
-param([string]$Directory = 'C:\SkewerDev\flow-test')
+param([string]$Directory = 'C:\SkewerDev\flow-test', [switch]$Handoff, [switch]$WrongOwner)
 $ErrorActionPreference = 'Stop'
+if ($WrongOwner) { $Handoff = $true }
 # Elevated disposable VM only. LocalSystem is required here to query the
 # launcher's token; no routing, driver, firewall or production service changes.
 $name = 'SkewerSelectionTest-' + [guid]::NewGuid().ToString('N')
+if ($Handoff) { $name += '-handoff' }
+if ($WrongOwner) { $name += '-denied' }
 $root = Join-Path $env:ProgramFiles $name
 $null = New-Item -ItemType Directory -Path $root
 $exe = Join-Path $root 'selection_service_test.exe'
@@ -31,6 +34,7 @@ try {
     Start-Sleep -Milliseconds 100
     & $exe --client $name
     if ($LASTEXITCODE -ne 0) { throw 'Second selection exchange failed' }
+    if (!$Handoff) {
     foreach ($scope in @('--scope-applications', '--scope-host')) {
         Start-Sleep -Milliseconds 100
         & $exe $scope $name
@@ -47,6 +51,15 @@ try {
         throw 'Service lost the selected target after its IPC client disconnected'
     }
     Write-Output 'PASS: service retains selected process after selecting client exits; no routing claim'
+    } else {
+        $status = Join-Path $root ($name + '.status')
+        $received = (Get-Content $status -Raw) -match 'handoff_received routing_ready=false'
+        if ($received -eq [bool]$WrongOwner) {
+            throw 'Service did not validate the public fixture credentials'
+        }
+        if ($WrongOwner) { Write-Output 'PASS: foreign owner rejected before credential transfer' }
+        else { Write-Output 'PASS: LocalSystem receives user-bound credentials without user storage or secret argv' }
+    }
     Stop-Service $name
     $service = Get-Service $name
     try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10)) }

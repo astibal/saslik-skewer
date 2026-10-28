@@ -1,4 +1,5 @@
 #include "selection_transport.hpp"
+#include "pairing_handoff.hpp"
 #include <stdexcept>
 #include <type_traits>
 #include <sddl.h>
@@ -270,5 +271,108 @@ void finishSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {
         // Peer close, cancellation, timeout or I/O failure all retire this
         // connection. There is deliberately no second request on the stream.
     }
+}
+
+namespace {
+using HandoffAck = std::array<std::uint8_t, 8>;
+constexpr HandoffAck handoff_ready{'S', 'K', 'P', 'A', 1, 0, 0, 0};
+constexpr HandoffAck handoff_received{'S', 'K', 'P', 'A', 1, 1, 0, 0};
+struct HandoffWire {
+    std::array<std::uint8_t, 808> bytes{};
+    ~HandoffWire() { SecureZeroMemory(bytes.data(), bytes.size()); }
+};
+ULONGLONG handoffDeadline(HANDLE cancel, DWORD timeout) {
+    if (!timeout || timeout > 60000 || !cancel || cancel == INVALID_HANDLE_VALUE) {
+        throw std::invalid_argument("Invalid pairing handoff budget");
+    }
+    return GetTickCount64() + timeout;
+}
+void handoffTransfer(HANDLE pipe, void* data, DWORD size, bool write, HANDLE cancel, ULONGLONG deadline) {
+    Operation operation(pipe);
+    if (operation.transfer(data, size, write, cancel, deadline) != size) {
+        throw std::runtime_error("Incomplete pairing handoff message");
+    }
+}
+void checkHandoffText(const std::string& text, size_t limit) {
+    if (text.empty() || text.size() > limit ||
+        std::any_of(text.begin(), text.end(), [](unsigned char c) { return c < 33 || c > 126; })) {
+        throw std::invalid_argument("Invalid pairing handoff text");
+    }
+}
+} // namespace
+
+void sendPairingHandoff(HANDLE pipe, const std::wstring& service_name, const PairingHandoff& value,
+                        HANDLE cancel, DWORD timeout_ms) {
+    const auto deadline = handoffDeadline(cancel, timeout_ms);
+    checkHandoffText(value.endpoint, 512);
+    checkHandoffText(value.identity, 256);
+    auto server = verifySelectionService(pipe, service_name);
+    auto hello = encodeSelectionRequest(processKey(GetCurrentProcess(), GetCurrentProcessId()));
+    handoffTransfer(pipe, hello.data(), hello.size(), true, cancel, deadline);
+    HandoffAck ack{};
+    handoffTransfer(pipe, ack.data(), ack.size(), false, cancel, deadline);
+    if (ack != handoff_ready || WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
+        throw std::runtime_error("Pairing handoff not authorized");
+    }
+    HandoffWire wire;
+    auto& bytes = wire.bytes;
+    bytes[0] = 'S';
+    bytes[1] = 'K';
+    bytes[2] = 'P';
+    bytes[3] = 1;
+    bytes[4] = value.endpoint.size() & 255;
+    bytes[5] = value.endpoint.size() >> 8;
+    bytes[6] = value.identity.size() & 255;
+    bytes[7] = value.identity.size() >> 8;
+    std::copy(value.endpoint.begin(), value.endpoint.end(), bytes.begin() + 8);
+    std::copy(value.identity.begin(), value.identity.end(), bytes.begin() + 520);
+    std::copy(value.key.begin(), value.key.end(), bytes.begin() + 776);
+    handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
+    handoffTransfer(pipe, ack.data(), ack.size(), false, cancel, deadline);
+    if (ack != handoff_received || WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
+        throw std::runtime_error("Pairing handoff not acknowledged");
+    }
+}
+
+std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, HANDLE owner_token, HANDLE cancel,
+                                                      DWORD timeout_ms) {
+    const auto deadline = handoffDeadline(cancel, timeout_ms);
+    SelectionRequest hello{};
+    handoffTransfer(pipe, hello.data(), hello.size(), false, cancel, deadline);
+    const auto key = decodeSelectionRequest(hello);
+    ULONG actual_pid{};
+    if (!GetNamedPipeClientProcessId(pipe, &actual_pid) || actual_pid != key.pid) {
+        throw std::runtime_error("Pairing caller identity mismatch");
+    }
+    auto client = authorizePipeSelection(pipe, key);
+    // The pipe ACL includes SYSTEM administration. Do not let that substitute
+    // for the intended user's ownership at this credential boundary.
+    ProcessTarget owner_bound(key, owner_token);
+    auto ack = handoff_ready;
+    handoffTransfer(pipe, ack.data(), ack.size(), true, cancel, deadline);
+    HandoffWire wire;
+    auto& bytes = wire.bytes;
+    handoffTransfer(pipe, bytes.data(), bytes.size(), false, cancel, deadline);
+    const size_t endpoint_size = bytes[4] | (unsigned(bytes[5]) << 8);
+    const size_t identity_size = bytes[6] | (unsigned(bytes[7]) << 8);
+    if (bytes[0] != 'S' || bytes[1] != 'K' || bytes[2] != 'P' || bytes[3] != 1 || endpoint_size > 512 ||
+        identity_size > 256 ||
+        std::any_of(bytes.begin() + 8 + endpoint_size, bytes.begin() + 520, [](auto b) { return b != 0; }) ||
+        std::any_of(bytes.begin() + 520 + identity_size, bytes.begin() + 776,
+                    [](auto b) { return b != 0; })) {
+        throw std::runtime_error("Invalid pairing handoff envelope");
+    }
+    auto value = std::make_unique<PairingHandoff>();
+    value->endpoint.assign(reinterpret_cast<const char*>(bytes.data() + 8), endpoint_size);
+    value->identity.assign(reinterpret_cast<const char*>(bytes.data() + 520), identity_size);
+    checkHandoffText(value->endpoint, 512);
+    checkHandoffText(value->identity, 256);
+    std::copy(bytes.begin() + 776, bytes.end(), value->key.begin());
+    if (!client->running() || !owner_bound.running()) {
+        throw std::runtime_error("Pairing caller exited during handoff");
+    }
+    ack = handoff_received;
+    handoffTransfer(pipe, ack.data(), ack.size(), true, cancel, deadline);
+    return value;
 }
 } // namespace skewer::windows
