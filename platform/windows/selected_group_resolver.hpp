@@ -25,6 +25,7 @@ private:
         std::vector<std::uint32_t> pids;
         bool unknown{};
         bool fresh{};
+        std::size_t rows{};
     };
     struct Member {
         ProcessKey process;

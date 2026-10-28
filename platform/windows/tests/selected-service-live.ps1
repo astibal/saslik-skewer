@@ -52,6 +52,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected UDP process test failed' }
+    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--descendant-udp'
+    if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant UDP test failed' }
     & curl.exe --noproxy '*' -4 -k --fail --silent --show-error --max-time 12 `
         --resolve "${HostName}:443:${Destination}" --output NUL "https://${HostName}/"
     if ($LASTEXITCODE -ne 0) { throw 'Unrelated HTTPS unavailable after selected session' }

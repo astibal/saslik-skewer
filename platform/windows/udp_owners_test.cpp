@@ -67,17 +67,20 @@ void check(bool ipv6) {
     other.pid = 123;
     std::vector<UdpOwnerRow> rows{exact, wildcard, exact, unknown, other};
     auto match = udpOwnerCandidates(rows, packet);
-    require(match.pids == std::vector<std::uint32_t>({42, 99}) && match.unknown_owner,
+    require(match.pids == std::vector<std::uint32_t>({42, 99}) && match.unknown_owner &&
+                match.matching_rows == 4,
             "Wildcard, competing or unavailable owner lost");
     packet.destination_port = 443;
     packet.destination[0] = 9;
     require(udpOwnerCandidates(rows, packet).pids == match.pids, "Remote peer narrowed bind candidates");
     packet.source_port++;
     match = udpOwnerCandidates(rows, packet);
-    require(match.pids.empty() && !match.unknown_owner, "Different port matched");
+    require(match.pids.empty() && !match.unknown_owner && match.matching_rows == 0,
+            "Different port matched");
     packet.source_port--;
     rows = {{true, {}, 1234, 77}};
-    require(udpOwnerCandidates(rows, packet).pids == std::vector<std::uint32_t>({77}),
+    require(udpOwnerCandidates(rows, packet).pids == std::vector<std::uint32_t>({77}) &&
+                udpOwnerCandidates(rows, packet).matching_rows == 1,
             "Potential dual-stack wildcard lost");
     if (!ipv6) {
         rows[0].local_address[10] = rows[0].local_address[11] = 0xff;
@@ -91,7 +94,8 @@ void check(bool ipv6) {
     }
     rows = {{ipv6, {}, 1234, 0}};
     match = udpOwnerCandidates(rows, packet);
-    require(match.pids.empty() && match.unknown_owner, "Unknown owner became an empty safe result");
+    require(match.pids.empty() && match.unknown_owner && match.matching_rows == 1,
+            "Unknown owner became an empty safe result");
     packet.protocol = 6;
     bool rejected = false;
     try {

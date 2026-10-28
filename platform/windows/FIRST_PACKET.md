@@ -510,11 +510,12 @@ its configured port while another IPv4 TCP port remains usable.
 
 The installed service now covers fresh IPv4 TCP and UDP for the selected root.
 A routed launch assigns the suspended root to a non-terminating Job Object;
-new TCP descendants inherit membership. Capture holds a child's first SYN while
-the service consumes the job notification. When CONNECT predates the child's
-observer, retained job membership plus a fresh unique TCP owner row supplies a
-stable group-flow identity. Pre-existing descendants, descendant UDP, existing
-sockets and shared/ambiguous binds remain unsupported and fail closed.
+new TCP/UDP descendants inherit membership. Capture holds a child's first packet
+while the service consumes the job notification. When CONNECT predates the
+child's observer, retained job membership plus a fresh single owner row supplies
+a stable group-flow identity. UDP requires exactly one matching bind row as well
+as one distinct PID; shared binds remain held. Pre-existing descendants,
+existing sockets and shared/ambiguous binds remain unsupported and fail closed.
 The HTTPS fixture supplies IPv4 resolution and disables certificate validation
 for that request only. Attribution failures hold packets rather than guessing
 Direct, so unrelated traffic can stall when attribution is unavailable. Service

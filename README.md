@@ -6,9 +6,9 @@ applications into a stable cgroup that can be routed through a Saslik lab.
 The Windows port uses a separate native backend; its first-release direction is
 WinDivert with a service independent of the GUI, not a custom kernel driver.
 It supports whole-host IPv4 and a selected process's fresh corroborated IPv4 TCP
-and UDP. New TCP descendants of a routed launch inherit selection through a
-Windows Job Object. Pre-existing descendants, descendant UDP, selected IPv6,
-existing sockets and ambiguous shared binds remain release gaps. Skewer is a
+and UDP. New TCP descendants and uniquely bound UDP descendants of a routed
+launch inherit selection through a Windows Job Object. Pre-existing descendants,
+selected IPv6, existing sockets and ambiguous shared binds remain release gaps. Skewer is a
 lab/testing tool, not a security isolation boundary:
 termination of the WinDivert-owning service removes its filters and may restore
 direct connectivity. See the [Windows implementation status and

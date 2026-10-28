@@ -27,8 +27,8 @@ Transport milestones verified independently of the remaining service/UI gates:
 - [x] Retry selected-process and whole-host transport with bounded backoff while
   retaining interception. Publish Active only after a fresh healthy generation.
 - [ ] Test physical egress for TCP/UDP and IPv4/IPv6, initial packets, existing
-  sockets, pre-existing descendants, descendant UDP, shared DNS, reconnect and
-  GUI restart. New routed-launch TCP descendants are covered. Reject unsupported
+  sockets, pre-existing descendants, shared DNS, reconnect and GUI restart.
+  New routed-launch TCP and uniquely bound UDP descendants are covered. Reject unsupported
   cases visibly rather than claiming they are routed.
 - [x] Report service failure accurately. Test and document that owner termination
   removes WinDivert filters and may restore direct connectivity. Automatic restart

@@ -92,6 +92,16 @@ int runHttpsDescendant(const QString& host, const QString& destination) {
     require(GetExitCodeProcess(process.get(), &exit), "Read descendant curl exit code");
     return static_cast<int>(exit);
 }
+int runUdpDescendant(const QString& host, const QString& destination) {
+    const auto child = launch(QCoreApplication::applicationFilePath().toStdWString(),
+                              {L"--udp-child", host.toStdWString(), destination.toStdWString()});
+    Handle process(child.hProcess), thread(child.hThread);
+    require(WaitForSingleObject(process.get(), 20000) == WAIT_OBJECT_0,
+            "Descendant DNS/UDP child timed out");
+    DWORD exit{};
+    require(GetExitCodeProcess(process.get(), &exit), "Read descendant DNS/UDP exit code");
+    return static_cast<int>(exit);
+}
 // Own only the child created by this fixture; never terminate a discovered PID.
 struct Child {
     PROCESS_INFORMATION process{};
@@ -137,7 +147,7 @@ private:
     bool resumed_{};
 };
 void throughService(const std::wstring& executable, const std::vector<std::wstring>& arguments,
-                    const std::wstring& name) {
+                    const std::wstring& name, const char* description) {
     Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(bool(cancel), "Create service fixture cancellation");
     const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
@@ -161,9 +171,8 @@ void throughService(const std::wstring& executable, const std::vector<std::wstri
     require(WaitForSingleObject(child.process.hProcess, 25000) == WAIT_OBJECT_0,
             "Service-routed curl timed out");
     DWORD exit{};
-    require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0,
-            "Service-routed curl HTTPS failed");
-    QTextStream(stdout) << "PASS: independently launched selected process through SCM service\n";
+    require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0, description);
+    QTextStream(stdout) << "PASS: " << description << " through SCM service\n";
 }
 } // namespace
 
@@ -190,11 +199,20 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (args.size() == 4 && args[1] == "--udp-descendant") {
+        try {
+            return runUdpDescendant(args[2], args[3]);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
-        (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant")) {
+        (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant" &&
+         args[6] != "--descendant-udp")) {
         QTextStream(stderr)
             << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
-               "[SERVICE [--udp|--descendant]|--udp]\n";
+               "[SERVICE [--udp|--descendant|--descendant-udp]|--udp]\n";
         return 2;
     }
     try {
@@ -223,9 +241,14 @@ int main(int argc, char** argv) {
                                           : std::wstring(system) + L"\\curl.exe";
         if ((args.size() == 6 && !udp_probe) || args.size() == 7) {
             const bool descendant_probe = args.size() == 7 && args[6] == "--descendant";
-            const auto service_executable = descendant_probe ? app.applicationFilePath().toStdWString()
-                                                              : executable;
-            const auto child_arguments = descendant_probe
+            const bool descendant_udp_probe = args.size() == 7 && args[6] == "--descendant-udp";
+            const auto service_executable = descendant_probe || descendant_udp_probe
+                ? app.applicationFilePath().toStdWString()
+                : executable;
+            const auto child_arguments = descendant_udp_probe
+                ? std::vector<std::wstring>{L"--udp-descendant", args[4].toStdWString(),
+                                            args[3].toStdWString()}
+                : descendant_probe
                 ? std::vector<std::wstring>{L"--https-descendant", args[4].toStdWString(),
                                             args[3].toStdWString()}
                 : udp_probe
@@ -236,7 +259,11 @@ int main(int argc, char** argv) {
                                             L"--output", L"NUL", L"--resolve",
                                             (args[4] + ":443:" + args[3]).toStdWString(),
                                             ("https://" + args[4] + "/").toStdWString()};
-            throughService(service_executable, child_arguments, args[5].toStdWString());
+            const auto description = descendant_udp_probe ? "selected descendant DNS/UDP"
+                                     : descendant_probe ? "selected descendant HTTPS"
+                                     : udp_probe ? "selected root DNS/UDP"
+                                                 : "selected root HTTPS";
+            throughService(service_executable, child_arguments, args[5].toStdWString(), description);
             return 0;
         }
         auto command = udp_probe

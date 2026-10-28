@@ -14,8 +14,8 @@ close and their filters disappear: applications may communicate through normal
 host routes. Automatic service restart does not eliminate this exposure window.
 This limitation is accepted for laboratory/testing use, not as a security boundary.
 The service implements whole-host IPv4 routing and a selected process's fresh
-corroborated IPv4 TCP and UDP traffic. New TCP descendants of a routed launch
-inherit a service-owned Job Object and are independently owner-checked. The
+corroborated IPv4 TCP and UDP traffic. New TCP and uniquely bound UDP descendants
+of a routed launch inherit a service-owned Job Object and are independently owner-checked. The
 remaining protocol and coverage limits below are release gaps, not a claim that
 routing is unavailable.
 

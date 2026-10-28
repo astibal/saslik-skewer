@@ -1,5 +1,6 @@
 #pragma once
 #include "packet_tuple.hpp"
+#include <cstddef>
 #include <chrono>
 #include <span>
 #include <vector>
@@ -15,6 +16,9 @@ struct UdpOwnerRow {
 struct UdpOwnerCandidates {
     std::vector<std::uint32_t> pids;
     bool unknown_owner{};
+    // Preserve row multiplicity: distinct-PID de-duplication alone cannot
+    // prove that one process does not share a UDP bind with another socket.
+    std::size_t matching_rows{};
 };
 
 struct UdpOwnerSnapshot {

@@ -19,7 +19,8 @@ SelectedGroupResolver::SelectedGroupResolver(const std::wstring& dll,
 
 bool SelectedGroupResolver::contains(skewer::traffic::ProcessIdentity process) const {
     return std::ranges::any_of(members_, [&](const auto& member) {
-        return member.process.pid == process.pid && member.process.created == process.created;
+        return member.process.pid == process.pid && member.process.created == process.created &&
+               member.resolver->running();
     });
 }
 
@@ -46,16 +47,16 @@ SelectedGroupResolver::ownerCandidates(skewer::traffic::PacketTuple tuple) const
     };
     if (tuple.protocol == IPPROTO_TCP) {
         const auto snapshot = captureTcpOwners();
-        return {tcpOwnerCandidates(snapshot.rows, tuple), false,
-                valid(snapshot.started, snapshot.completed)};
+        auto candidates = tcpOwnerCandidates(snapshot.rows, tuple);
+        return {candidates, false, valid(snapshot.started, snapshot.completed), candidates.size()};
     }
     if (tuple.protocol == IPPROTO_UDP) {
         const auto snapshot = captureUdpOwners();
         auto candidates = udpOwnerCandidates(snapshot.rows, tuple);
         return {std::move(candidates.pids), candidates.unknown_owner,
-                valid(snapshot.started, snapshot.completed)};
+                valid(snapshot.started, snapshot.completed), candidates.matching_rows};
     }
-    return {{}, true, false};
+    return {{}, true, false, 0};
 }
 
 skewer::traffic::FlowIdentity
@@ -109,11 +110,14 @@ SelectedOwnerResolver::Result SelectedGroupResolver::resolve(skewer::traffic::Pa
                     : Disposition::Hold};
     }
 
-    // Newly inherited TCP children can create CONNECT before the service
+    // Newly inherited children can create CONNECT before the service
     // consumes JOB_OBJECT_MSG_NEW_PROCESS. Capture already holds their SYN.
-    // A fresh, unique owner row plus retained Job membership safely bridges
-    // that observation gap without weakening unrelated/direct decisions.
-    if (tuple.protocol == IPPROTO_TCP && evidence.fresh && !unknown && candidates.size() == 1) {
+    // A fresh, single owner row plus retained Job membership safely bridges
+    // that observation gap. UDP requires exactly one matching bind row, not
+    // merely one distinct PID, so same-process shared binds remain held.
+    const bool unique_group_socket = evidence.fresh && !unknown && candidates.size() == 1 &&
+                                     evidence.rows == 1;
+    if ((tuple.protocol == IPPROTO_TCP || tuple.protocol == IPPROTO_UDP) && unique_group_socket) {
         const auto found = std::ranges::find_if(members_,
             [&](const auto& member) { return member.process.pid == candidates.front(); });
         if (found != members_.end() && found->process != group_.root()) {

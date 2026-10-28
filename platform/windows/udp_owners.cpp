@@ -36,6 +36,7 @@ UdpOwnerCandidates udpOwnerCandidates(std::span<const UdpOwnerRow> rows,
         if (row.local_port != outbound.source_port || !matchesAddress(row, outbound)) {
             continue;
         }
+        ++result.matching_rows;
         if (row.pid == 0) {
             result.unknown_owner = true;
         } else {
