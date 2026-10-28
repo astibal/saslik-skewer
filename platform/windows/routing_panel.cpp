@@ -110,6 +110,9 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
+                if (!state_.detail.empty()) {
+                    status_->setText(status_->text() + tr(": %1").arg(QString::fromUtf8(state_.detail)));
+                }
                 if (state_.phase == RoutingPhase::Active &&
                     state_.scope == RoutingScope::SelectedProcess && state_.selected) {
                     status_->setText(tr("Active — selected PID %1 (generation %2)")

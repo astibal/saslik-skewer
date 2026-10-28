@@ -2,6 +2,8 @@
 #include "routed_launch.hpp"
 #include "stored_pairing_handoff.hpp"
 #include <QCoreApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTextStream>
 
 using namespace skewer::windows;
@@ -82,14 +84,16 @@ int main(int argc, char** argv) {
         } else {
             response = exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
         }
-        QTextStream(stdout) << "{\"result\":" << unsigned(response.result)
-                            << ",\"phase\":" << unsigned(response.phase) << ",\"generation\":\""
-                            << response.generation << "\",\"scope\":" << unsigned(response.scope);
+        QJsonObject output{{"result", static_cast<int>(response.result)},
+                           {"phase", static_cast<int>(response.phase)},
+                           {"generation", QString::number(response.generation)},
+                           {"scope", static_cast<int>(response.scope)}};
         if (response.selected) {
-            QTextStream(stdout) << ",\"selected\":{\"pid\":" << response.selected->pid
-                                << ",\"birth\":\"" << response.selected->created << "\"}";
+            output["selected"] = QJsonObject{{"pid", static_cast<qint64>(response.selected->pid)},
+                                               {"birth", QString::number(response.selected->created)}};
         }
-        QTextStream(stdout) << "}\n";
+        if (!response.detail.empty()) output["detail"] = QString::fromUtf8(response.detail);
+        QTextStream(stdout) << QJsonDocument(output).toJson(QJsonDocument::Compact) << '\n';
         return response.result == RoutingResult::Ok ? 0 : 1;
     } catch (const std::exception& error) {
         QTextStream(stderr) << error.what() << '\n';

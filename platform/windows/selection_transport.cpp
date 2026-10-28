@@ -471,11 +471,12 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         (result.scope == RoutingScope::SelectedProcess) != result.selected.has_value()) {
         throw std::logic_error("Invalid routing backend response");
     }
-    std::array<std::uint8_t, 36> response{'S',
+    if (result.detail.size() > 255) result.detail.resize(255);
+    std::array<std::uint8_t, 294> response{'S',
                                           'K',
                                           'R',
                                           'C',
-                                          2,
+                                          3,
                                           static_cast<std::uint8_t>(result.result),
                                           static_cast<std::uint8_t>(result.phase),
                                           static_cast<std::uint8_t>(result.scope)};
@@ -484,6 +485,8 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         const auto selection = encodeSelectionRequest(*result.selected);
         std::copy(selection.begin(), selection.end(), response.begin() + 16);
     }
+    response[36] = static_cast<std::uint8_t>(result.detail.size());
+    std::copy(result.detail.begin(), result.detail.end(), response.begin() + 38);
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
 namespace {
@@ -504,10 +507,10 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         auto bytes = *selection;
         handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
     }
-    std::array<std::uint8_t, 36> response{};
+    std::array<std::uint8_t, 294> response{};
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != 2 || response[5] > 2 || response[6] > 5 || response[7] > 2 ||
+        response[4] != 3 || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
         throw std::runtime_error("Invalid routing response or exited service");
     }
@@ -521,8 +524,14 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
     if (!empty) {
         selected = decodeSelectionRequest(encoded);
     }
+    const auto detail_size = response[36];
+    if (std::ranges::any_of(std::span(response).subspan(38 + detail_size),
+                           [](std::uint8_t value) { return value != 0; })) {
+        throw std::runtime_error("Invalid routing response padding");
+    }
+    std::string detail(reinterpret_cast<const char*>(response.data() + 38), detail_size);
     return {static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
-            getGeneration(response.data() + 8), scope, selected};
+            getGeneration(response.data() + 8), scope, selected, std::move(detail)};
 }
 } // namespace
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,

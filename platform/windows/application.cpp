@@ -417,6 +417,9 @@ private:
         updateApplicationActions();
         if (!known) {
             page_->action_status->setText(tr("Routing service unavailable; process state is unknown."));
+        } else if (state.phase == skewer::windows::RoutingPhase::Failed && !state.detail.empty()) {
+            page_->action_status->setText(
+                tr("Routing failed: %1").arg(QString::fromUtf8(state.detail)));
         } else if (selected && retained) {
             page_->action_status->setText(
                 tr("PID %1 is selected for routing (generation %2, %3).")

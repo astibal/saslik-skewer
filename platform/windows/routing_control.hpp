@@ -4,6 +4,7 @@
 #include <functional>
 #include <future>
 #include <optional>
+#include <string>
 
 namespace skewer::windows {
 enum class RoutingCommand : std::uint8_t { Status, Start, Stop };
@@ -16,6 +17,7 @@ struct RoutingReply {
     std::uint64_t generation{};
     RoutingScope scope{};
     std::optional<ProcessKey> selected;
+    std::string detail;
 };
 struct RoutingSignals {
     std::atomic_bool ready{};
@@ -37,10 +39,11 @@ private:
     Runner runner_;
     Handle stop_;
     RoutingSignals signals_;
-    std::future<void> work_;
+    std::future<std::string> work_;
     std::uint64_t generation_{};
     bool stopping_{};
     RoutingPhase terminal_{RoutingPhase::Idle};
+    std::string detail_;
 };
 
 using RoutingHandler = std::function<RoutingReply(RoutingCommand, std::uint64_t)>;

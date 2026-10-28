@@ -28,10 +28,12 @@ void RoutingController::reap() {
     }
     terminal_ = stopping_ ? RoutingPhase::Idle : RoutingPhase::Failed;
     try {
-        work_.get();
+        detail_ = work_.get();
     } catch (...) {
+        detail_ = "Routing worker failed with an unknown exception";
         terminal_ = RoutingPhase::Failed;
     }
+    if (terminal_ == RoutingPhase::Idle) detail_.clear();
     signals_.ready = false;
     signals_.blocked = false;
     stopping_ = false;
@@ -53,7 +55,17 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             }
             signals_.ready = false;
             signals_.blocked = false;
-            work_ = std::async(std::launch::async, [this] { runner_(stop_.get(), signals_); });
+            detail_.clear();
+            work_ = std::async(std::launch::async, [this] {
+                try {
+                    runner_(stop_.get(), signals_);
+                    return std::string{};
+                } catch (const std::exception& error) {
+                    return std::string(error.what());
+                } catch (...) {
+                    return std::string("Routing worker failed with an unknown exception");
+                }
+            });
             ++generation_;
         }
     } else if (command == RoutingCommand::Stop && work_.valid()) {
@@ -67,6 +79,6 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
                        : signals_.blocked.load() ? RoutingPhase::Blocked
                        : signals_.ready.load()   ? RoutingPhase::Active
                                                  : RoutingPhase::Starting;
-    return {result, phase, generation_, RoutingScope::None, std::nullopt};
+    return {result, phase, generation_, RoutingScope::None, std::nullopt, detail_};
 }
 } // namespace skewer::windows

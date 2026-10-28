@@ -64,7 +64,8 @@ int main() {
         const auto fresh = failed.command(RoutingCommand::Status, 0);
         require(fresh.generation != second.generation, "New service incarnation reused generation");
         failed.command(RoutingCommand::Start, fresh.generation);
-        awaitPhase(failed, RoutingPhase::Failed);
+        const auto failure = awaitPhase(failed, RoutingPhase::Failed);
+        require(failure.detail == "Fixture failure", "Fatal worker detail was lost");
         std::cout
             << "PASS: controller generations, duplicate start, stale stop, cleanup wait and fatal failure\n";
         return 0;
