@@ -90,10 +90,10 @@ try {
     'PASS: protected in-GUI pairing with generic failure feedback' | Out-File $log -Append
     SelectTab $window 'Connections'
     Start-Sleep -Seconds 4
-    if ((WindowText $window) -notmatch '[0-9]+ TCP sockets from the Windows owner table') {
+    if ((WindowText $window) -notmatch '[0-9]+ TCP sockets and [0-9]+ UDP binds from the Windows owner tables') {
         throw 'Native Windows connection inventory did not populate'
     }
-    'PASS: native Windows TCP connection inventory' | Out-File $log -Append
+    'PASS: native Windows TCP/UDP connection inventory' | Out-File $log -Append
     SelectTab $window 'Routing'
     Start-Sleep -Milliseconds 500
     $package = Split-Path $exe

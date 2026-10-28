@@ -34,6 +34,15 @@ QString stateName(std::uint32_t state) {
                                    QStringLiteral("DELETE-TCB")};
     return names.value(static_cast<int>(state), QString::number(state));
 }
+
+QString udpAddress(const traffic::UdpOwnerRow& row) {
+    char text[INET6_ADDRSTRLEN]{};
+    if (!InetNtopA(row.ipv6 ? AF_INET6 : AF_INET, row.local_address.data(), text, sizeof(text))) {
+        return QStringLiteral("?");
+    }
+    return row.ipv6 ? QStringLiteral("[%1]:%2").arg(text).arg(row.local_port)
+                    : QStringLiteral("%1:%2").arg(text).arg(row.local_port);
+}
 } // namespace
 
 ConnectionsPanel::ConnectionsPanel(skewer::ui::ProcessBrowser* processes, QWidget* parent)
@@ -41,7 +50,7 @@ ConnectionsPanel::ConnectionsPanel(skewer::ui::ProcessBrowser* processes, QWidge
     auto* layout = new QVBoxLayout(this);
     filter_ = new QLineEdit(this);
     filter_->setPlaceholderText(tr("Filter application, PID, address or state…"));
-    status_ = new QLabel(tr("Reading the Windows TCP owner table…"), this);
+    status_ = new QLabel(tr("Reading the Windows TCP and UDP owner tables…"), this);
     status_->setWordWrap(true);
     table_ = new QTableWidget(0, 7, this);
     table_->setObjectName("connectionsTable");
@@ -66,7 +75,7 @@ ConnectionsPanel::ConnectionsPanel(skewer::ui::ProcessBrowser* processes, QWidge
             table_->setRowHidden(row, !joined.contains(text, Qt::CaseInsensitive));
         }
     });
-    connect(&watcher_, &QFutureWatcher<traffic::TcpOwnerSnapshot>::finished, this,
+    connect(&watcher_, &QFutureWatcher<ConnectionSnapshot>::finished, this,
             [this] { render(watcher_.result()); });
     connect(&timer_, &QTimer::timeout, this, &ConnectionsPanel::refresh);
     timer_.start(3000);
@@ -87,20 +96,22 @@ void ConnectionsPanel::setRoutingState(bool known, const RoutingReply& state) {
 void ConnectionsPanel::refresh() {
     if (watcher_.isRunning()) return;
     watcher_.setFuture(QtConcurrent::run([] {
+        ConnectionSnapshot result;
         try {
-            return traffic::captureTcpOwners();
+            result.tcp = traffic::captureTcpOwners();
+            result.udp = traffic::captureUdpOwners();
         } catch (const std::exception& error) {
-            traffic::TcpOwnerSnapshot result;
-            result.error = error.what();
-            return result;
+            result.error = QString::fromUtf8(error.what());
         }
+        return result;
     }));
 }
 
-void ConnectionsPanel::render(const traffic::TcpOwnerSnapshot& snapshot) {
-    if (!snapshot.error.empty()) {
-        status_->setText(tr("TCP connection inventory unavailable: %1")
-                             .arg(QString::fromUtf8(snapshot.error)));
+void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
+    if (!snapshot.error.isEmpty() || !snapshot.tcp.error.empty()) {
+        const auto error = !snapshot.error.isEmpty() ? snapshot.error
+                                                     : QString::fromUtf8(snapshot.tcp.error);
+        status_->setText(tr("Connection inventory unavailable: %1").arg(error));
         return;
     }
     QHash<quint64, skewer::ui::ProcessRecord> owners;
@@ -111,7 +122,7 @@ void ConnectionsPanel::render(const traffic::TcpOwnerSnapshot& snapshot) {
     // scoped to the same current-user process inventory as the Applications tab.
     table_->setRowCount(0);
     int row_index{};
-    for (const auto& row : snapshot.rows) {
+    for (const auto& row : snapshot.tcp.rows) {
         if (!owners.contains(row.pid)) continue;
         const auto owner = owners.value(row.pid);
         QString route = tr("Outside Skewer");
@@ -134,11 +145,36 @@ void ConnectionsPanel::render(const traffic::TcpOwnerSnapshot& snapshot) {
             table_->setItem(row_index, column, new QTableWidgetItem(cells[column]));
         ++row_index;
     }
+    const int tcp_count = row_index;
+    for (const auto& row : snapshot.udp.rows) {
+        if (!owners.contains(row.pid)) continue;
+        const auto owner = owners.value(row.pid);
+        QString route = tr("Outside Skewer");
+        if (!routing_known_) {
+            route = tr("Unknown");
+        } else if (routing_.scope == RoutingScope::WholeHost &&
+                   routing_.phase == RoutingPhase::Active) {
+            route = tr("Skewer (whole host)");
+        } else if (routing_.scope == RoutingScope::SelectedProcess && routing_.selected &&
+                   routing_.selected->pid == row.pid && owner.created == routing_.selected->created) {
+            route = tr("Not routed (selected TCP only)");
+        }
+        const QStringList cells{owner.name.isEmpty() ? tr("Unknown process") : owner.name,
+                                QString::number(row.pid), tr("BOUND"), udpAddress(row),
+                                QStringLiteral("—"), row.ipv6 ? QStringLiteral("IPv6 / UDP")
+                                                              : QStringLiteral("IPv4 / UDP"),
+                                route};
+        table_->insertRow(row_index);
+        for (int column = 0; column < cells.size(); ++column)
+            table_->setItem(row_index, column, new QTableWidgetItem(cells[column]));
+        ++row_index;
+    }
     table_->setSortingEnabled(true);
     table_->verticalScrollBar()->setValue(scroll);
-    status_->setText(tr("%1 TCP sockets from the Windows owner table. Route is policy state, not "
-                        "packet-level proof; UDP is not shown.")
-                         .arg(row_index));
+    status_->setText(tr("%1 TCP sockets and %2 UDP binds from the Windows owner tables. Route is "
+                        "policy state, not packet-level proof.")
+                         .arg(tcp_count)
+                         .arg(row_index - tcp_count));
     emit filter_->textChanged(filter_->text());
 }
 } // namespace skewer::windows
