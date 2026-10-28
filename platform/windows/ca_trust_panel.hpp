@@ -2,6 +2,7 @@
 
 #include <QFutureWatcher>
 #include <QWidget>
+#include <functional>
 
 class QLabel;
 class QLineEdit;
@@ -15,7 +16,9 @@ public:
         QString message;
         bool present{};
     };
+    using CertificateCallback = std::function<void(const QByteArray&)>;
     explicit CaTrustPanel(QWidget* parent = nullptr);
+    void setCertificateCallback(CertificateCallback callback);
 
 private:
     void download();
@@ -31,5 +34,6 @@ private:
     QPushButton* remove_{};
     QByteArray certificate_;
     QFutureWatcher<Result> watcher_;
+    CertificateCallback certificate_callback_;
 };
 } // namespace skewer::windows

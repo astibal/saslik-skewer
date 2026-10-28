@@ -31,6 +31,7 @@
 #include "connections_panel.hpp"
 #include "routing_panel.hpp"
 #include "routed_launch.hpp"
+#include "runtime_trust_panel.hpp"
 #include <QSettings>
 #include <QDateTime>
 #endif
@@ -76,7 +77,8 @@ struct LaunchResult {
     QString error;
 };
 LaunchResult launch(const QString& executable, const QStringList& arguments, const QString& service, bool routed,
-                    const std::shared_ptr<skewer::windows::Handle>& cancel) {
+                    const std::shared_ptr<skewer::windows::Handle>& cancel,
+                    const skewer::windows::EnvironmentOverrides& environment) {
     try {
         std::vector<std::wstring> native_arguments;
         native_arguments.reserve(arguments.size());
@@ -86,11 +88,12 @@ LaunchResult launch(const QString& executable, const QStringList& arguments, con
         if (routed) {
             const auto result = skewer::windows::launchRouted(service.toStdWString(),
                                                               executable.toStdWString(), native_arguments,
-                                                              cancel->get());
+                                                              cancel->get(), environment);
             skewer::windows::Handle thread(result.process.hThread), handle(result.process.hProcess);
             return {result.identity.pid, result.generation, true, {}};
         }
-        const auto process = skewer::windows::launch(executable.toStdWString(), native_arguments);
+        const auto process = skewer::windows::launch(executable.toStdWString(), native_arguments,
+                                                     skewer::windows::LaunchMode::Running, environment);
         skewer::windows::Handle thread(process.hThread), handle(process.hProcess);
         return {process.dwProcessId, 0, false, {}};
     } catch (const std::exception& error) {
@@ -233,12 +236,16 @@ private:
         page_ = new skewer::ui::ApplicationPage(this);
         pages()->addTab(page_, tr("Applications"));
 #ifdef SKEWER_WINDOWS_PAIRING
-        pages()->addTab(new skewer::windows::CaTrustPanel(this), tr("CA Trust"));
+        auto* ca_trust = new skewer::windows::CaTrustPanel(this);
+        auto* runtime_trust = new skewer::windows::RuntimeTrustPanel(this);
+        ca_trust->setCertificateCallback(
+            [runtime_trust](const QByteArray& pem) { runtime_trust->setCertificate(pem); });
+        pages()->addTab(ca_trust, tr("CA Trust"));
+        pages()->addTab(runtime_trust, tr("Runtime Trust"));
 #else
         addUnavailablePage(tr("CA Trust"), tr("This build has no paired CA support."));
+        addUnavailablePage(tr("Runtime Trust"), tr("This build has no paired CA support."));
 #endif
-        addUnavailablePage(tr("Runtime Trust"),
-                           tr("Application-specific trust integration is not available on Windows yet."));
         auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
                                          "releases it only after routing is ready. "
                                          "Attach can move a running process, but its existing sockets keep "
@@ -490,6 +497,7 @@ private:
         }
         const auto service = QSettings().value("windows/routingService", "SkewerRouting").toString();
         const auto arguments = QProcess::splitCommand(arguments_->text());
+        const auto environment = skewer::windows::managedRuntimeEnvironment();
 #ifdef SKEWER_WINDOWS_PAIRING
         if (routed) {
             // Launch and status must address the same installed service even
@@ -500,7 +508,7 @@ private:
         launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
                                        : tr("Starting %1 without routing…").arg(executable));
         launch_watcher_.setFuture(
-            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_));
+            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_, environment));
     }
 
     skewer::ui::ApplicationPage* page_{};

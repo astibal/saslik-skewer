@@ -13,6 +13,7 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <utility>
 
 namespace skewer::windows {
 namespace {
@@ -188,6 +189,11 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent) {
     updateControls();
 }
 
+void CaTrustPanel::setCertificateCallback(CertificateCallback callback) {
+    certificate_callback_ = std::move(callback);
+    if (certificate_callback_ && !certificate_.isEmpty()) certificate_callback_(certificate_);
+}
+
 void CaTrustPanel::download() {
     const QUrl endpoint(endpoint_->text().trimmed());
     download_->setEnabled(false);
@@ -238,6 +244,7 @@ void CaTrustPanel::applyCertificate(const QByteArray& pem) {
     const auto fingerprint = QByteArray(reinterpret_cast<const char*>(digest), sizeof(digest)).toHex();
     details_->setText(tr("CA: %1\nSHA-256: %2\nValidated by Windows CryptoAPI")
                           .arg(QString::fromWCharArray(name), QString::fromLatin1(fingerprint)));
+    if (certificate_callback_) certificate_callback_(certificate_);
 }
 
 void CaTrustPanel::updateControls() {

@@ -53,6 +53,15 @@ try {
         if (!(FindNamed $window $tab)) { throw "Missing tab: $tab" }
     }
     'PASS: shared application tabs' | Out-File $log -Append
+    SelectTab $window 'Runtime Trust'
+    Start-Sleep -Milliseconds 300
+    foreach ($control in @('Prepare managed bundle', 'Remove managed bundle', 'Copy PowerShell setup')) {
+        if (!(FindNamed $window $control)) { throw "Missing native Runtime Trust control: $control" }
+    }
+    if ((WindowText $window) -notmatch 'Only new programs launched by Skewer') {
+        throw 'Runtime Trust scope is not explained in the native panel'
+    }
+    'PASS: native managed runtime-trust controls' | Out-File $log -Append
     SelectTab $window 'Connections'
     Start-Sleep -Seconds 4
     if ((WindowText $window) -notmatch '[0-9]+ TCP sockets from the Windows owner table') {
