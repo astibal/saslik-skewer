@@ -1,5 +1,8 @@
 #include "process_group.hpp"
+#include <tlhelp32.h>
+#include <algorithm>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace skewer::windows {
 namespace {
@@ -37,6 +40,87 @@ ProcessGroup::ProcessGroup(const ProcessTarget& root, const ServiceOwner& owner)
         fail("Assign selected process to routing job");
     }
     if (!root.running()) throw std::runtime_error("Selected process exited during job assignment");
+    // Existing children do not retroactively inherit a newly assigned Job.
+    // Repeat until one complete snapshot adds nothing. New children of already
+    // adopted members inherit automatically; unbounded churn fails closed.
+    for (unsigned pass = 0; pass < 8; ++pass) {
+        if (!adoptExistingDescendants()) return;
+    }
+    throw std::runtime_error("Selected process tree kept changing during routing setup");
+}
+
+std::size_t ProcessGroup::adoptExistingDescendants() {
+    struct Node {
+        ProcessKey key;
+        DWORD parent{};
+    };
+    Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
+    if (!snapshot) fail("Snapshot selected process tree");
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (!Process32FirstW(snapshot.get(), &entry)) fail("Read selected process tree");
+
+    std::unordered_map<DWORD, Node> nodes;
+    do {
+        Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE,
+                                   entry.th32ProcessID));
+        if (!process) continue;
+        try {
+            const auto key = processKey(process.get(), entry.th32ProcessID);
+            [[maybe_unused]] ProcessTarget authorized(key, owner_);
+            nodes.emplace(key.pid, Node{key, entry.th32ParentProcessID});
+        } catch (const std::runtime_error&) {
+            // Exited, inaccessible and foreign-owner entries cannot be adopted.
+        }
+    } while (Process32NextW(snapshot.get(), &entry));
+    if (GetLastError() != ERROR_NO_MORE_FILES) fail("Finish selected process tree snapshot");
+    nodes.insert_or_assign(root_.pid, Node{root_, 0});
+
+    std::vector<Node> descendants;
+    for (const auto& [pid, candidate] : nodes) {
+        if (pid == root_.pid || contains(pid)) continue;
+        auto current = candidate;
+        std::size_t depth{};
+        while (current.parent && depth++ <= nodes.size()) {
+            if (current.parent == root_.pid) {
+                if (root_.created <= current.key.created) descendants.push_back(candidate);
+                break;
+            }
+            const auto parent = nodes.find(current.parent);
+            if (parent == nodes.end() || parent->second.key.created > current.key.created ||
+                parent->second.key.pid == current.key.pid) {
+                break;
+            }
+            current = parent->second;
+        }
+    }
+    std::ranges::sort(descendants, {}, [](const Node& node) {
+        return std::pair{node.key.created, node.key.pid};
+    });
+
+    std::size_t adopted{};
+    for (const auto& descendant : descendants) {
+        if (contains(descendant.key.pid)) continue;
+        try {
+            [[maybe_unused]] ProcessTarget authorized(descendant.key, owner_);
+            Handle process(openAssignable(descendant.key));
+            if (!AssignProcessToJobObject(job_.get(), process.get())) {
+                fail("Assign existing descendant to routing job");
+            }
+            ++adopted;
+        } catch (const std::runtime_error&) {
+            // Exit between snapshot and assignment is harmless. A still-live
+            // descendant that cannot be assigned makes partial routing unsafe.
+            bool live{};
+            try {
+                ProcessTarget still_live(descendant.key, owner_);
+                live = still_live.running();
+            } catch (const std::runtime_error&) {
+            }
+            if (live) throw;
+        }
+    }
+    return adopted;
 }
 
 bool ProcessGroup::contains(DWORD pid) const {

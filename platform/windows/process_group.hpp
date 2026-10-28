@@ -24,6 +24,7 @@ public:
     std::unique_ptr<ProcessTarget> next(DWORD timeout_ms = 0);
 
 private:
+    std::size_t adoptExistingDescendants();
     ServiceOwner owner_;
     ProcessKey root_;
     Handle job_;

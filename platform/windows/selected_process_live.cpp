@@ -123,6 +123,27 @@ struct Child {
         }
     }
 };
+int runGatedHttpsChild(const QString& ready_name, const QString& go_name,
+                       const QString& host, const QString& destination) {
+    Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, ready_name.toStdWString().c_str()));
+    Handle go(OpenEventW(SYNCHRONIZE, FALSE, go_name.toStdWString().c_str()));
+    require(bool(ready) && bool(go) && SetEvent(ready.get()), "Open existing-tree fixture events");
+    require(WaitForSingleObject(go.get(), 30000) == WAIT_OBJECT_0,
+            "Existing descendant was not released after routing activation");
+    return runHttpsDescendant(host, destination);
+}
+int runExistingParent(const QString& ready_name, const QString& go_name,
+                      const QString& host, const QString& destination) {
+    const auto child = launch(QCoreApplication::applicationFilePath().toStdWString(),
+                              {L"--gated-https-child", ready_name.toStdWString(),
+                               go_name.toStdWString(), host.toStdWString(), destination.toStdWString()});
+    Handle process(child.hProcess), thread(child.hThread);
+    require(WaitForSingleObject(process.get(), 35000) == WAIT_OBJECT_0,
+            "Existing descendant fixture timed out");
+    DWORD exit{};
+    require(GetExitCodeProcess(process.get(), &exit), "Read existing descendant exit code");
+    return static_cast<int>(exit);
+}
 class Worker final : public TunnelPacketWorker {
 public:
     Worker(SelectedSessionPackets& packets, Child& child, HANDLE stop)
@@ -174,6 +195,78 @@ void throughService(const std::wstring& executable, const std::vector<std::wstri
     require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0, description);
     QTextStream(stdout) << "PASS: " << description << " through SCM service\n";
 }
+void throughExistingService(const std::wstring& executable, const QString& host,
+                            const QString& destination, const std::wstring& name) {
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(bool(cancel), "Create existing-tree cancellation event");
+    const auto suffix = std::to_wstring(GetCurrentProcessId()) + L"-" +
+                        std::to_wstring(GetTickCount64());
+    const auto ready_name = L"Local\\SkewerExistingReady-" + suffix;
+    const auto go_name = L"Local\\SkewerExistingGo-" + suffix;
+    Handle ready(CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str()));
+    Handle go(CreateEventW(nullptr, TRUE, FALSE, go_name.c_str()));
+    require(bool(ready) && bool(go), "Create existing-tree fixture events");
+    const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
+        auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+        return exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
+    };
+    const auto initial = command(RoutingCommand::Status, 0);
+    require(initial.result == RoutingResult::Ok &&
+                (initial.phase == RoutingPhase::Idle || initial.phase == RoutingPhase::Failed),
+            "Routing service is busy before existing-tree fixture");
+    std::uint64_t generation{};
+    Child parent{launch(executable,
+                        {L"--existing-parent", ready_name, go_name,
+                         host.toStdWString(), destination.toStdWString()})};
+    struct Release {
+        Child& child;
+        std::function<void()> stop;
+        ~Release() {
+            child.stop();
+            try { stop(); } catch (...) {}
+        }
+    } release{parent, [&] {
+        if (generation) command(RoutingCommand::Stop, generation);
+    }};
+    require(WaitForSingleObject(ready.get(), 5000) == WAIT_OBJECT_0,
+            "Pre-existing descendant was not ready before Attach");
+    const auto identity = processKey(parent.process.hProcess, parent.process.dwProcessId);
+    auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+    const auto started = exchangeSelectedRouting(pipe->get(), name, identity,
+                                                 initial.generation, cancel.get(), 3000);
+    require(started.result == RoutingResult::Ok, "Existing process tree selection failed");
+    generation = started.generation;
+    const auto deadline = GetTickCount64() + 30000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == started.generation &&
+                    (state.phase == RoutingPhase::Starting || state.phase == RoutingPhase::Blocked ||
+                     state.phase == RoutingPhase::Active),
+                "Existing process tree stopped before readiness");
+        if (state.phase == RoutingPhase::Active) break;
+        require(GetTickCount64() < deadline, "Existing process tree did not become Active");
+        Sleep(50);
+    }
+    require(SetEvent(go.get()), "Release pre-existing descendant fixture");
+    require(WaitForSingleObject(parent.process.hProcess, 30000) == WAIT_OBJECT_0,
+            "Pre-existing descendant HTTPS timed out");
+    DWORD exit{};
+    require(GetExitCodeProcess(parent.process.hProcess, &exit) && exit == 0,
+            "Pre-existing descendant HTTPS failed");
+    const auto stopped = command(RoutingCommand::Stop, started.generation);
+    require(stopped.result == RoutingResult::Ok, "Stop existing-tree routing");
+    const auto stop_deadline = GetTickCount64() + 5000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == started.generation,
+                "Existing-tree stop generation changed");
+        if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) break;
+        require(GetTickCount64() < stop_deadline, "Existing-tree routing did not stop");
+        Sleep(25);
+    }
+    generation = 0;
+    QTextStream(stdout) << "PASS: pre-existing descendant adopted through SCM service\n";
+}
 } // namespace
 
 // Elevated, bounded development fixture: real independent curl process, pinned
@@ -207,12 +300,28 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (args.size() == 6 && args[1] == "--gated-https-child") {
+        try {
+            return runGatedHttpsChild(args[2], args[3], args[4], args[5]);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
+    if (args.size() == 6 && args[1] == "--existing-parent") {
+        try {
+            return runExistingParent(args[2], args[3], args[4], args[5]);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
         (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant" &&
-         args[6] != "--descendant-udp")) {
+         args[6] != "--descendant-udp" && args[6] != "--existing-descendant")) {
         QTextStream(stderr)
             << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
-               "[SERVICE [--udp|--descendant|--descendant-udp]|--udp]\n";
+               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant]|--udp]\n";
         return 2;
     }
     try {
@@ -240,6 +349,12 @@ int main(int argc, char** argv) {
         const auto executable = udp_probe ? app.applicationFilePath().toStdWString()
                                           : std::wstring(system) + L"\\curl.exe";
         if ((args.size() == 6 && !udp_probe) || args.size() == 7) {
+            const bool existing_probe = args.size() == 7 && args[6] == "--existing-descendant";
+            if (existing_probe) {
+                throughExistingService(app.applicationFilePath().toStdWString(), args[4], args[3],
+                                       args[5].toStdWString());
+                return 0;
+            }
             const bool descendant_probe = args.size() == 7 && args[6] == "--descendant";
             const bool descendant_udp_probe = args.size() == 7 && args[6] == "--descendant-udp";
             const auto service_executable = descendant_probe || descendant_udp_probe

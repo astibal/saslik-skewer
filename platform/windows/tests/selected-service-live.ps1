@@ -50,6 +50,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--descendant'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant test failed' }
+    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--existing-descendant'
+    if ($LASTEXITCODE -ne 0) { throw 'SCM pre-existing descendant test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected UDP process test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--descendant-udp'

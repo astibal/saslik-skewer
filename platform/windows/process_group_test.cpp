@@ -29,11 +29,15 @@ std::wstring executable() {
 int wmain(int argc, wchar_t** argv) {
     try {
         if (argc == 2 && std::wstring(argv[1]) == L"--leaf") {
-            Sleep(2000);
+            Sleep(5000);
             return 0;
         }
-        if (argc == 2 && std::wstring(argv[1]) == L"--parent") {
+        if ((argc == 2 || argc == 3) && std::wstring(argv[1]) == L"--parent") {
             Child leaf{launch(executable(), {L"--leaf"})};
+            if (argc == 3) {
+                Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[2]));
+                require(bool(ready) && SetEvent(ready.get()), "Cannot signal existing child readiness");
+            }
             Sleep(20000);
             return 0;
         }
@@ -64,8 +68,32 @@ int wmain(int argc, wchar_t** argv) {
         }
         require(WaitForSingleObject(parent.process.hProcess, 0) == WAIT_TIMEOUT,
                 "Closing the routing job terminated its application");
-        Sleep(2200); // Let the intentionally unowned leaf finish before the fixture exits.
-        std::cout << "PASS: process job pins root and observes inherited descendant without kill-on-close\n";
+
+        const auto event_name = L"Local\\SkewerExistingTree-" +
+                                std::to_wstring(GetCurrentProcessId()) + L"-" +
+                                std::to_wstring(GetTickCount64());
+        Handle ready(CreateEventW(nullptr, TRUE, FALSE, event_name.c_str()));
+        require(bool(ready), "Cannot create existing-child readiness event");
+        Child existing{launch(executable(), {L"--parent", event_name})};
+        require(WaitForSingleObject(ready.get(), 3000) == WAIT_OBJECT_0,
+                "Existing child was not created");
+        const auto existing_identity = processKey(existing.process.hProcess, existing.process.dwProcessId);
+        {
+            ProcessTarget root(existing_identity);
+            ProcessGroup group(root, ServiceOwner::fromToken(token.get()));
+            bool saw_existing_child{};
+            const auto deadline = GetTickCount64() + 3000;
+            while (GetTickCount64() < deadline && !saw_existing_child) {
+                if (auto process = group.next(250)) {
+                    saw_existing_child = process->key() != existing_identity;
+                }
+            }
+            require(saw_existing_child, "Pre-existing descendant was not adopted into routing job");
+        }
+        require(WaitForSingleObject(existing.process.hProcess, 0) == WAIT_TIMEOUT,
+                "Closing adopted routing job terminated its application");
+        Sleep(5200); // Let both intentionally unowned leaf fixtures finish.
+        std::cout << "PASS: process job inherits new and adopts existing descendants without kill-on-close\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
