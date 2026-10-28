@@ -1,6 +1,13 @@
+param(
+    [string]$Directory = 'C:\SkewerDev\skewer-windows-app'
+)
+
 $ErrorActionPreference='Stop'
 $name='SkewerApplicationSmoke'
-$script='C:\SkewerDev\skewer-windows-app\application_smoke.ps1'
+$script=Join-Path $Directory 'application_smoke.ps1'
+if (!(Test-Path -LiteralPath $script -PathType Leaf)) {
+    throw "Application smoke script is missing: $script"
+}
 $log=Join-Path $env:USERPROFILE 'skewer-application-smoke.log'
 Remove-Item $log -ErrorAction SilentlyContinue
 $action=New-ScheduledTaskAction -Execute 'powershell.exe' `

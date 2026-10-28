@@ -33,11 +33,13 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     endpoint_ = new QLineEdit(QSettings().value("windows/routingEndpoint", QSettings().value("windows/saslikEndpoint")).toString(), this);
     transport_ = new QComboBox(this);
     transport_->setObjectName("routingTransport");
+    transport_->setAccessibleName(tr("Whole-host transport"));
     transport_->addItem(tr("Encrypted tunnel (Tuntom)"), static_cast<int>(RoutingTransport::Tunnel));
     transport_->addItem(tr("Directly reachable Saslik gateway"), static_cast<int>(RoutingTransport::Direct));
     transport_->setCurrentIndex(qBound(0, QSettings().value("windows/routingTransport", 0).toInt(), 1));
     gateway_ = new QLineEdit(QSettings().value("windows/directGateway").toString(), this);
     gateway_->setObjectName("routingGateway");
+    gateway_->setAccessibleName(tr("Direct gateway"));
     gateway_->setPlaceholderText(tr("On-link Saslik IPv4 gateway"));
     service_->setObjectName("routingService");
     endpoint_->setObjectName("routingEndpoint");

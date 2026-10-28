@@ -11,6 +11,11 @@ function FindNamed($window, $name) {
     $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $name)
     return $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
+function FindAutomationId($window, $id) {
+    $condition = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+    return $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+}
 function WindowText($window) {
     $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     return ($elements | ForEach-Object { $_.Current.Name }) -join "`n"
@@ -96,6 +101,18 @@ try {
     'PASS: native Windows TCP/UDP connection inventory' | Out-File $log -Append
     SelectTab $window 'Routing'
     Start-Sleep -Milliseconds 500
+    $transport = FindAutomationId $window 'routingTransport'
+    if (!$transport) { $transport = FindNamed $window 'Whole-host transport' }
+    $gateway = FindAutomationId $window 'routingGateway'
+    if (!$gateway) { $gateway = FindNamed $window 'Direct gateway' }
+    if (!$transport -or !$gateway) {
+        throw 'Missing whole-host transport or direct-gateway control'
+    }
+    if ($transport.Current.ControlType -ne [System.Windows.Automation.ControlType]::ComboBox -or
+        $gateway.Current.ControlType -ne [System.Windows.Automation.ControlType]::Edit) {
+        throw 'Whole-host transport controls expose unexpected accessibility roles'
+    }
+    'PASS: whole-host tunnel/direct transport controls' | Out-File $log -Append
     $package = Split-Path $exe
     $completeRuntime = @('install-routing-service.ps1','remove-routing-service.ps1',
                          'wintun.dll','WinDivert.dll','WinDivert64.sys') |
