@@ -56,6 +56,13 @@ HTTP/HTTPS through the SCM service. This passed with `-TestTunnelLoss` on the
 Windows VM on 2026-10-28, including fail-closed behavior and cleanup. It tests
 widget behavior, not final visual parity or a finished installer.
 
+`routed-application-smoke.ps1` goes further for selected mode: it forcibly
+terminates the GUI after routed launch, waits for a fresh descendant HTTPS
+request, confirms the service generation remains Active, restarts the GUI,
+recovers the selection and performs explicit Release. The complete SCM fixture
+then covers root, new and pre-existing descendant HTTPS plus root/descendant
+DNS/UDP. This passed on the Windows VM on 2026-10-28 with routes and DNS unchanged.
+
 `skewer-routing-service.exe --service NAME OWNER_SID ENDPOINT IPV4_PEER DNS_SERVER
 [SSH_MANAGEMENT_IP]` now hosts the real paired runtime under SCM. These arguments
 must be administrator-owned service configuration; DLLs are loaded only from

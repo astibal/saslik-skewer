@@ -294,8 +294,9 @@ private:
         auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
                                          "releases it only after routing is ready. "
                                          "Attach can move a running process, but its existing sockets keep "
-                                         "their old route. Fresh corroborated IPv4 TCP and UDP are routed; "
-                                         "descendants and IPv6 are not routed yet. "
+                                         "their old route. Fresh corroborated IPv4 TCP and UDP are routed, "
+                                         "including new descendants and intact live trees. Existing sockets, "
+                                         "orphaned handoffs and IPv6 are not covered. "
                                          "Whole-host routing is controlled on the Routing tab."),
                                       page_);
         disclaimer->setWordWrap(true);

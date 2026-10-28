@@ -15,6 +15,7 @@ $settings='HKCU:\Software\Saslik\Skewer\windows'
 $old=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
 $launchedPid=0
 $manualPid=0
+$postCrashMarker='C:\SkewerDev\skewer-gui-crash-routing.pass'
 function FindWindow {
     $condition=[System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::NameProperty, 'Skewer')
@@ -37,25 +38,38 @@ function WindowText($window) {
 }
 try {
     "Starting routed GUI smoke against $service" | Out-File $log
+    Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
     New-Item $settings -Force | Out-Null
     Set-ItemProperty $settings -Name routingService -Value $service
     $window=FindWindow
-    if (!$window) {
-        Start-Process (Join-Path $directory 'skewer.exe')
-        $deadline=(Get-Date).AddSeconds(10)
-        do { Start-Sleep -Milliseconds 200; $window=FindWindow } while (!$window -and (Get-Date) -lt $deadline)
+    if ($window) {
+        Stop-Process -Id $window.Current.ProcessId -Force
+        $deadline=(Get-Date).AddSeconds(8)
+        do { Start-Sleep -Milliseconds 100; $window=FindWindow } while ($window -and (Get-Date) -lt $deadline)
+        if ($window) { throw 'Previous Skewer GUI did not terminate before the routed test' }
     }
+    Start-Process (Join-Path $directory 'skewer.exe')
+    $deadline=(Get-Date).AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 200
+        $window=FindWindow
+        if ($window) {
+            $button=FindNamed $window 'Launch through Skewer'
+            $status=FindNamed $window 'Windows routing status'
+        }
+    } while ((!$window -or !$button -or !$button.Current.IsEnabled -or
+              !$status -or $status.Current.Name -ne 'Routing idle') -and (Get-Date) -lt $deadline)
     if (!$window) { throw 'Skewer window missing' }
     $edit=FindNamed $window 'Application executable'
     $arguments=FindNamed $window 'Application arguments'
-    $button=FindNamed $window 'Launch through Skewer'
     if (!$edit -or !$arguments -or !$button -or !$button.Current.IsEnabled) {
-        throw 'Routed launcher controls unavailable'
+        $statusText=if ($status) { $status.Current.Name } else { '<missing>' }
+        throw "Routed launcher controls unavailable (status: $statusText)"
     }
     $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
         'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
     $arguments.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
-        '-NoProfile -NoExit')
+        '-NoProfile -Command "Start-Sleep -Seconds 6; & curl.exe --noproxy * -4 -k --fail --silent --show-error --max-time 15 https://example.com/ --output NUL; if ($LASTEXITCODE -eq 0) { Set-Content -LiteralPath C:\SkewerDev\skewer-gui-crash-routing.pass -Value PASS }; while ($true) { Start-Sleep -Seconds 60 }"')
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $deadline=(Get-Date).AddSeconds(35)
     do {
@@ -67,20 +81,27 @@ try {
     $launchedPid=[int]$match.Groups[1].Value
     $generation=[UInt64]$match.Groups[2].Value
     if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) { throw 'Routed child already exited' }
-    $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+    $guiPid=$window.Current.ProcessId
+    Stop-Process -Id $guiPid -Force
     $deadline=(Get-Date).AddSeconds(8)
     do {
         Start-Sleep -Milliseconds 100
         $window=FindWindow
     } while ($window -and (Get-Date) -lt $deadline)
-    if ($window) { throw 'Skewer window did not hide before activation test' }
+    if ($window) { throw 'Skewer window survived forced process termination' }
     if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) {
-        throw 'Closing Skewer terminated the routed child'
+        throw 'Crashing Skewer terminated the routed child'
     }
     $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $reply.phase -ne 2 -or $reply.scope -ne 2 -or
         [UInt64]$reply.generation -ne $generation -or [int]$reply.selected.pid -ne $launchedPid) {
-        throw 'Closing Skewer stopped or replaced the selected routing generation'
+        throw 'Crashing Skewer stopped or replaced the selected routing generation'
+    }
+    $deadline=(Get-Date).AddSeconds(25)
+    do { Start-Sleep -Milliseconds 100 } while (!(Test-Path -LiteralPath $postCrashMarker) -and
+                                                 (Get-Date) -lt $deadline)
+    if (!(Test-Path -LiteralPath $postCrashMarker)) {
+        throw 'Routed descendant HTTPS did not complete after GUI process termination'
     }
     Start-Process (Join-Path $directory 'skewer.exe')
     $deadline=(Get-Date).AddSeconds(12)
@@ -167,7 +188,7 @@ try {
     if ($reply.scope -ne 0 -or !(Get-Process -Id $manualPid -ErrorAction SilentlyContinue)) {
         throw 'Release after manual Attach did not preserve the application'
     }
-    "PASS: routed launch, activation recovery, Release and manual Attach all retained the selected application" |
+    "PASS: routing survived GUI crash and HTTPS, activation recovery, Release and manual Attach retained the selected application" |
         Out-File $log -Append
     'Exit: 0' | Out-File $log -Append
 } catch {
@@ -175,6 +196,7 @@ try {
     'Exit: 1' | Out-File $log -Append
 } finally {
     if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
     if ($null -eq $old) { Remove-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue }
     else { Set-ItemProperty $settings -Name routingService -Value $old }
     if (!(FindWindow)) { Start-Process (Join-Path $directory 'skewer.exe') }

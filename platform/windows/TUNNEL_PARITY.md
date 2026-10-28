@@ -15,9 +15,10 @@ host routes. Automatic service restart does not eliminate this exposure window.
 This limitation is accepted for laboratory/testing use, not as a security boundary.
 The service implements whole-host IPv4 routing and a selected process's fresh
 corroborated IPv4 TCP and UDP traffic. New TCP and uniquely bound UDP descendants
-of a routed launch inherit a service-owned Job Object and are independently owner-checked. The
-remaining protocol and coverage limits below are release gaps, not a claim that
-routing is unavailable.
+of a routed launch inherit a service-owned Job Object and are independently
+owner-checked. Manual Attach also adopts a complete live same-owner descendant
+tree. The remaining protocol and coverage limits below are release gaps, not a
+claim that routing is unavailable.
 
 Selected-process transport loss retains the same NETWORK capture handle and
 whole-host loss retains its independent physical-egress guard. Both retire owned
@@ -147,6 +148,12 @@ the system resolver; shared resolver traffic must not become an unnoticed bypass
 Also verify another unselected application retains normal connectivity and an
 explicit Release affects only the intended instance. Reboot persistence requires
 its own test if protection is advertised across reboot.
+
+The VM routed-application smoke forcibly terminates the GUI after a selected
+launch, then performs a new HTTPS request from its routed descendant. It verifies
+the same service generation remains Active, restarts the GUI, recovers the
+authoritative selection and releases it explicitly. This covers GUI crash and
+restart without treating GUI lifetime as routing ownership.
 
 ## References
 
