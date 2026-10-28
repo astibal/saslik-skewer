@@ -39,3 +39,7 @@ int pairingCommand(const QStringList& arguments);
 int tuntomClientCommand(const QStringList& arguments);
 QJsonObject pairedStatus(const QUrl& endpoint);
 QJsonObject pairedRequest(const QUrl& endpoint, const QJsonObject& request);
+// Consume an invitation in memory and return its credential-free endpoint.
+// The fragment is never persisted; retry state and enrolled credentials use
+// the platform-protected pairing store.
+QUrl pairInvitation(const QString& invitation);

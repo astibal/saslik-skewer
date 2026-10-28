@@ -207,6 +207,41 @@ QJsonObject pairedStatus(const QUrl& endpoint)
     return pairedRequest(endpoint, {{"action", "status"}});
 }
 
+QUrl pairInvitation(const QString& input)
+{
+    QUrl url(input, QUrl::StrictMode);
+    if (!url.isValid() || url.scheme()!="skewer" || url.host().isEmpty() || url.port()<1
+        || !url.userInfo().isEmpty() || url.hasQuery() || url.path()!="/pair")
+        throw std::runtime_error("Invalid pairing address");
+    QUrlQuery fragment(url.fragment());
+    url.setFragment({});
+    const QString path = statePath(url);
+    QJsonObject saved;
+    QFile existing(path);
+    if (existing.open(QIODevice::ReadOnly)) {
+        if (existing.size() > 65536) throw std::runtime_error("Pairing file exceeds bounds");
+        saved=QJsonDocument::fromJson(PairingPlatform::decode(existing.readAll())).object();
+    }
+    if (saved["identity"].toString().isEmpty()) {
+        if (fragment.queryItemValue("v")!="1") throw std::runtime_error("Unsupported pairing version");
+        Credentials invitation{fragment.queryItemValue("id").toUtf8(),
+            QByteArray::fromBase64(fragment.queryItemValue("psk").toLatin1(),QByteArray::Base64UrlEncoding|QByteArray::AbortOnBase64DecodingErrors)};
+        QSettings settings;
+        QString instance=settings.value("pairing/instance").toString();
+        if (instance.isEmpty()) { instance=QUuid::createUuid().toString(QUuid::WithoutBraces);settings.setValue("pairing/instance",instance);settings.sync(); }
+        if (saved["invitation"].toString()!=QString::fromUtf8(invitation.identity))
+            saved={{"request",QUuid::createUuid().toString(QUuid::WithoutBraces)},{"invitation",QString::fromUtf8(invitation.identity)}};
+        save(path,saved);
+        const auto enrolled=exchange(url,invitation,{{"action","enroll"},{"instance",instance},{"request",saved["request"]}});
+        saved={{"identity",enrolled["identity"]},{"psk",enrolled["psk"]},{"endpoint",url.toString()}};
+        // Persist before commit: retry can complete after either process restarts.
+        save(path,saved);
+    }
+    Credentials client{saved["identity"].toString().toUtf8(),QByteArray::fromBase64(saved["psk"].toString().toLatin1(),QByteArray::Base64UrlEncoding)};
+    exchange(url,client,{{"action","commit"}});
+    return url;
+}
+
 int pairingCommand(const QStringList& arguments)
 {
     try {
@@ -217,7 +252,11 @@ int pairingCommand(const QStringList& arguments)
         if (!url.isValid() || url.scheme()!="skewer" || url.host().isEmpty() || url.port()<1
             || !url.userInfo().isEmpty() || url.hasQuery() || url.path()!="/pair")
             throw std::runtime_error("Invalid pairing address");
-        QUrlQuery fragment(url.fragment());
+        if (arguments[1]=="pair") {
+            url = pairInvitation(input);
+            QTextStream(stdout)<<"Paired: "<<url.toString()<<'\n';
+            return 0;
+        }
         url.setFragment({});
         const QString path = statePath(url);
         QJsonObject saved;
@@ -226,29 +265,9 @@ int pairingCommand(const QStringList& arguments)
             if (existing.size() > 65536) throw std::runtime_error("Pairing file exceeds bounds");
             saved=QJsonDocument::fromJson(PairingPlatform::decode(existing.readAll())).object();
         }
-        if (arguments[1]=="pair" && saved["identity"].toString().isEmpty()) {
-            if (fragment.queryItemValue("v")!="1") throw std::runtime_error("Unsupported pairing version");
-            Credentials invitation{fragment.queryItemValue("id").toUtf8(),
-                QByteArray::fromBase64(fragment.queryItemValue("psk").toLatin1(),QByteArray::Base64UrlEncoding|QByteArray::AbortOnBase64DecodingErrors)};
-            QSettings settings;
-            QString instance=settings.value("pairing/instance").toString();
-            if (instance.isEmpty()) { instance=QUuid::createUuid().toString(QUuid::WithoutBraces);settings.setValue("pairing/instance",instance);settings.sync(); }
-            if (saved["invitation"].toString()!=QString::fromUtf8(invitation.identity))
-                saved={{"request",QUuid::createUuid().toString(QUuid::WithoutBraces)},{"invitation",QString::fromUtf8(invitation.identity)}};
-            save(path,saved);
-            const auto enrolled=exchange(url,invitation,{{"action","enroll"},{"instance",instance},{"request",saved["request"]}});
-            saved={{"identity",enrolled["identity"]},{"psk",enrolled["psk"]},{"endpoint",url.toString()}};
-            // Persist before commit: retry can complete after either process restarts.
-            save(path,saved);
-        }
         Credentials client{saved["identity"].toString().toUtf8(),QByteArray::fromBase64(saved["psk"].toString().toLatin1(),QByteArray::Base64UrlEncoding)};
-        if (arguments[1]=="pair") {
-            exchange(url,client,{{"action","commit"}});
-            QTextStream(stdout)<<"Paired: "<<url.toString()<<'\n';
-        } else {
-            const auto status=exchange(url,client,{{"action","status"}});
-            QTextStream(stdout)<<QJsonDocument(status).toJson(QJsonDocument::Compact)<<'\n';
-        }
+        const auto status=exchange(url,client,{{"action","status"}});
+        QTextStream(stdout)<<QJsonDocument(status).toJson(QJsonDocument::Compact)<<'\n';
         return 0;
     } catch (const std::exception& error) {
         QTextStream(stderr)<<error.what()<<'\n'; return 1;

@@ -49,7 +49,7 @@ try {
         throw "Routing actions do not reflect one authoritative service state (Attach=$($attach.Current.IsEnabled), Release=$($release.Current.IsEnabled))"
     }
     'PASS: authoritative Attach/Release controls' | Out-File $log -Append
-    foreach ($tab in @('Applications', 'CA Trust', 'Runtime Trust', 'Connections', 'Routing')) {
+    foreach ($tab in @('Applications', 'CA Trust', 'Runtime Trust', 'Connections', 'Saslik', 'Routing')) {
         if (!(FindNamed $window $tab)) { throw "Missing tab: $tab" }
     }
     'PASS: shared application tabs' | Out-File $log -Append
@@ -62,6 +62,27 @@ try {
         throw 'Runtime Trust scope is not explained in the native panel'
     }
     'PASS: native managed runtime-trust controls' | Out-File $log -Append
+    SelectTab $window 'Saslik'
+    Start-Sleep -Milliseconds 300
+    $invitation = FindNamed $window 'Saslik pairing invitation'
+    $pair = FindNamed $window 'Pair with Saslik'
+    if (!$invitation -or !$invitation.Current.IsPassword -or !$pair -or !$pair.Current.IsEnabled) {
+        throw 'Native protected pairing controls are unavailable'
+    }
+    $invitation.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        'not-a-pairing-invitation')
+    $pair.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline = (Get-Date).AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 100
+        $text = WindowText $window
+    } while ($text -notmatch 'Pairing failed' -and (Get-Date) -lt $deadline)
+    $genericFailure = $text -match 'Pairing failed'
+    $inputExposed = $text -match 'not-a-pairing-invitation'
+    if (!$genericFailure -or $inputExposed) {
+        throw "Pairing failure feedback invalid (generic=$genericFailure, inputExposed=$inputExposed, buttonEnabled=$($pair.Current.IsEnabled))"
+    }
+    'PASS: protected in-GUI pairing with generic failure feedback' | Out-File $log -Append
     SelectTab $window 'Connections'
     Start-Sleep -Seconds 4
     if ((WindowText $window) -notmatch '[0-9]+ TCP sockets from the Windows owner table') {

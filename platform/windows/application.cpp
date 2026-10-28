@@ -29,6 +29,7 @@
 #include "client_report.hpp"
 #include "ca_trust_panel.hpp"
 #include "connections_panel.hpp"
+#include "pairing.hpp"
 #include "routing_panel.hpp"
 #include "routed_launch.hpp"
 #include "runtime_trust_panel.hpp"
@@ -135,6 +136,7 @@ public:
         timer_.stop();
 #ifdef SKEWER_WINDOWS_PAIRING
         report_timer_.stop();
+        pairing_watcher_.waitForFinished();
         report_watcher_.waitForFinished();
 #endif
         scan_watcher_.waitForFinished();
@@ -161,6 +163,13 @@ private:
                        page);
         explanation->setWordWrap(true);
         layout->addWidget(explanation);
+        invitation_ = new QLineEdit(page);
+        invitation_->setAccessibleName(tr("Saslik pairing invitation"));
+        invitation_->setEchoMode(QLineEdit::Password);
+        invitation_->setPlaceholderText(tr("Paste one-time skewer:// pairing invitation…"));
+        layout->addWidget(invitation_);
+        pair_button_ = new QPushButton(tr("Pair with Saslik"), page);
+        layout->addWidget(pair_button_);
         endpoint_ = new QLineEdit(QSettings().value("windows/saslikEndpoint").toString(), page);
         endpoint_->setPlaceholderText("skewer://HOST:8766/pair (already paired endpoint)");
         layout->addWidget(endpoint_);
@@ -173,6 +182,39 @@ private:
         pages()->addTab(page, tr("Saslik"));
         report_timer_.setInterval(10000);
         connect(&report_timer_, &QTimer::timeout, this, &WindowsWindow::sendReport);
+        connect(pair_button_, &QPushButton::clicked, this, [this] {
+            const auto invitation = invitation_->text().trimmed();
+            if (invitation.isEmpty() || invitation.size() > 8192 || pairing_watcher_.isRunning()) {
+                report_status_->setText(tr("Paste one complete pairing invitation first."));
+                return;
+            }
+            invitation_->setEnabled(false);
+            pair_button_->setEnabled(false);
+            report_status_->setText(tr("Pairing with Saslik…"));
+            pairing_watcher_.setFuture(QtConcurrent::run([invitation] {
+                try {
+                    return QPair<QString, QString>{pairInvitation(invitation).toString(), {}};
+                } catch (const std::exception&) {
+                    // Never echo a malformed invitation or its PSK into the UI.
+                    return QPair<QString, QString>{{},
+                        QObject::tr("Pairing failed. Check the invitation, connectivity and Saslik state.")};
+                }
+            }));
+        });
+        connect(&pairing_watcher_, &QFutureWatcher<QPair<QString, QString>>::finished, this, [this] {
+            const auto result = pairing_watcher_.result();
+            invitation_->clear();
+            invitation_->setEnabled(true);
+            pair_button_->setEnabled(true);
+            if (!result.second.isEmpty()) {
+                report_status_->setText(result.second);
+                return;
+            }
+            endpoint_->setText(result.first);
+            QSettings().setValue("windows/saslikEndpoint", result.first);
+            report_status_->setText(tr("Paired. Starting presence reporting…"));
+            if (!report_timer_.isActive()) startReporting();
+        });
         connect(report_button_, &QPushButton::clicked, this, [this] {
             if (report_timer_.isActive()) {
                 report_timer_.stop();
@@ -535,10 +577,13 @@ private:
     QTimer timer_;
 #ifdef SKEWER_WINDOWS_PAIRING
     QLineEdit* endpoint_{};
+    QLineEdit* invitation_{};
+    QPushButton* pair_button_{};
     QPushButton* report_button_{};
     QLabel* report_status_{};
     QTimer report_timer_;
     QFutureWatcher<QString> report_watcher_;
+    QFutureWatcher<QPair<QString, QString>> pairing_watcher_;
 #endif
 };
 } // namespace
