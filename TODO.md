@@ -12,24 +12,25 @@ Transport milestones verified independently of the remaining service/UI gates:
 - [x] Lease-owned packet pump, asynchronous renewal and terminal expiry checks.
 - [x] Real paired Wintun/Tuntom path to Saslik: source-bound ICMP and HTTPS
   through Smithproxy CONNECT, preserving host default routes and cleaning up
-  both endpoints. This is not yet application-selection routing from the GUI.
+  both endpoints. The same transport is now owned by the routing service for
+  whole-host IPv4 and selected-process IPv4 TCP modes.
 
-- [ ] Run interception in a privileged service independent of the GUI, with
+- [x] Run interception in a privileged service independent of the GUI, with
   authenticated local IPC and verified current-user process identities.
-- [ ] Establish interception before admitting selected traffic; bound queues and
+- [x] Establish interception before admitting selected traffic; bound queues and
   handle unknown ownership explicitly. A late FLOW event cannot protect the
   first packet by itself.
-- [ ] Integrate diversion and return traffic with Wintun/Tuntom; exclude the
+- [x] Integrate diversion and return traffic with Wintun/Tuntom; exclude the
   service and tunnel control traffic from interception.
-- [ ] Keep selected traffic blocked during tunnel loss while the service lives;
+- [x] Keep selected traffic blocked during tunnel loss while the service lives;
   verify readiness before resuming forwarding.
 - [ ] Test physical egress for TCP/UDP and IPv4/IPv6, initial packets, existing
   sockets, descendants, shared DNS, reconnect and GUI restart. Reject unsupported
   cases visibly rather than claiming they are routed.
-- [ ] Report service failure accurately. Test and document that owner termination
+- [x] Report service failure accurately. Test and document that owner termination
   removes WinDivert filters and may restore direct connectivity. Automatic restart
   improves availability but cannot guarantee leak-free recovery.
-- [ ] Package official signed dependencies and licenses. Do not require
+- [x] Package official signed dependencies and licenses. Do not require
   test-signing or disabling Secure Boot on users' machines.
 
 Skewer is a laboratory/testing tool, not a security isolation boundary. See

@@ -5,10 +5,12 @@ applications into a stable cgroup that can be routed through a Saslik lab.
 
 The Windows port uses a separate native backend; its first-release direction is
 WinDivert with a service independent of the GUI, not a custom kernel driver.
-Windows application routing is still under development. Skewer is a lab/testing
-tool, not a security isolation boundary: termination of the WinDivert-owning
-service removes its filters and may restore direct connectivity. See the
-[Windows implementation status and limitations](platform/windows/README.md).
+It supports whole-host IPv4 and one process's fresh IPv4 TCP connections;
+selected-process descendants, UDP, IPv6 and existing sockets remain release
+gaps. Skewer is a lab/testing tool, not a security isolation boundary:
+termination of the WinDivert-owning service removes its filters and may restore
+direct connectivity. See the [Windows implementation status and
+limitations](platform/windows/README.md).
 
 ## Current capabilities
 

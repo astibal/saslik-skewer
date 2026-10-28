@@ -13,9 +13,9 @@ selected traffic blocked. If the service exits or crashes, its WinDivert handles
 close and their filters disappear: applications may communicate through normal
 host routes. Automatic service restart does not eliminate this exposure window.
 This limitation is accepted for laboratory/testing use, not as a security boundary.
-The service now implements whole-host IPv4 routing and one selected process's
-fresh IPv4 TCP connections. The remaining protocol and coverage limits below
-are release gaps, not a claim that routing is unavailable.
+The service implements whole-host IPv4 routing and one selected process's fresh
+IPv4 TCP connections. The remaining protocol and coverage limits below are
+release gaps, not a claim that routing is unavailable.
 
 A custom WFP callout driver is deferred beyond the first release. Neither its
 build nor a live kernel experiment is a gate for the WinDivert implementation.
@@ -84,8 +84,10 @@ Rollback removes only owned changes and must not overwrite newer DHCP/VPN/admin
 state. The WinDivert owner-failure limitation still applies and must be measured
 for this scope too; this feature does not promise a persistent kernel kill switch.
 
-No whole-host route changes are currently enabled. Acceptance testing must use
-an isolated VM with out-of-band console access before exposing this control.
+Whole-host IPv4 tunnel routing is enabled only by an explicit authenticated
+service command. Its real route, DNS, tunnel-loss and cleanup tests run in an
+isolated VM with a management-path exception. Direct-next-hop host mode and IPv6
+tunnelling remain unimplemented.
 
 The authenticated routing IPC reports its authoritative phase, generation,
 scope and selected PID/birth identity. The GUI restores that state after restart

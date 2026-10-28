@@ -3,8 +3,9 @@
 ## First-release direction and limitation
 
 The selected backend is WinDivert interception with Wintun/Tuntom transport,
-owned by a privileged service independent of the GUI. Integration is still in
-progress; this is not a claim that application routing is already available.
+owned by a privileged service independent of the GUI. Whole-host IPv4 and one
+selected process's fresh IPv4 TCP connections are integrated. UDP, IPv6,
+descendants and already-open sockets are not covered by selected-process mode.
 The custom kernel callout prototype is deferred and will not ship in the first
 release. No custom-driver test-signing setup is required for that release.
 
@@ -38,9 +39,10 @@ Idle/Starting/Active/Blocked/Stopping/Failed feedback. Periodic status reads do
 not toggle controls; unknown state disables mutations. A click arriving during
 a read is queued once with its original generation, never silently retried.
 The panel remembers the successful service/endpoint choice. Closing it cancels
-only local IPC, not routing. Application attachment remains unavailable and is
-labelled separately from whole-host routing. Service installation is still a
-separate task; the UI does not pretend that an absent service is ready.
+only local IPC, not routing. The Applications page can attach one running
+process or launch it suspended and resume it only after the service reports
+Active. The panel can explicitly install or upgrade the service through UAC;
+an absent, unpaired or incompatible service never enables routing controls.
 
 `routing_panel_test` checks missing-service responsiveness and bounded local
 cancellation. `native-routing-service-live.ps1 -GuiClient` uses the real Qt
@@ -553,13 +555,13 @@ TCP SYN/UDP correlation for IPv4/IPv6. It is not yet a long-running Windows
 service, application-routing controller, or tunnel forwarding loop.
 
 This directory is part of Skewer, not a separate product or GUI fork. It is a
-native backend selected by the root CMake build on Windows. Both platforms
-use `src/ui/application_shell.hpp` and `src/ui/application_page.hpp`: the same
-window lifecycle, tray/menu, geometry, version, tabs and Applications layout.
-Linux retains its existing controllers and application model; Windows supplies
-its native scanner and the portable process browser. There is no Windows
-routing implementation yet, and unsupported operations are explicitly disabled.
-The former separate preview executable has been replaced by `skewer.exe`.
+native backend selected by the root CMake build on Windows. Both platforms use
+`src/ui/application_shell.hpp` and `src/ui/application_page.hpp`: the same window
+lifecycle, tray/menu, geometry, version, tabs and Applications layout. Linux
+retains its cgroup controller; Windows supplies its native scanner, portable
+process browser and authenticated routing-service client. Unsupported routing
+coverage is explicitly described rather than silently bypassed. The former
+separate preview executable has been replaced by `skewer.exe`.
 
 Implemented:
 
@@ -601,11 +603,11 @@ It separates window-bearing processes from background roots, retains process
 ancestry, and never merges applications merely because executable names match.
 Selection/expansion survive refresh; PID reuse invalidates old selection.
 The shared page supplies search and routing action controls on both platforms.
-Linux keeps its richer model and runtime-specific trust integrations. Windows
-has native current-user CA management and a read-only Connections page backed
-by the IPv4 and IPv6 IP Helper owner tables. The connection route column is the
-service's current policy state, not packet-level proof of interception. UDP is
-not included. Runtime Trust remains an explicit capability notice.
+Linux keeps its richer cgroup model and runtime-specific trust integrations.
+Windows has native current-user CA management, managed runtime trust, and a
+read-only Connections page backed by the IPv4 and IPv6 TCP/UDP IP Helper owner
+tables. The connection route column is the service's current policy state, not
+packet-level proof of interception.
 
 The Windows application polls on a worker thread every three seconds by default, with no
 overlapping scans and no polling while minimized. It exposes launch progress,
