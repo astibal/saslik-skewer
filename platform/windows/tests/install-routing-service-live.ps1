@@ -22,10 +22,34 @@ try {
     if ($service.StartMode -ne 'Auto' -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Running') {
         throw 'Unexpected service installation state'
     }
+    $recovery = (& sc.exe qfailure $name) -join "`n"
+    $serviceKey = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$name"
+    if ($LASTEXITCODE -ne 0 -or $recovery -notmatch '5000' -or
+        $recovery -notmatch '15000' -or $recovery -notmatch '60000' -or
+        $serviceKey.FailureActionsOnNonCrashFailures -ne 1) {
+        throw 'Expected bounded SCM restart policy is not installed'
+    }
     $control = Join-Path $root 'skewer-routing-control.exe'
     $status = & $control status $name
     if ($LASTEXITCODE -ne 0 -or ($status | ConvertFrom-Json).phase -ne 0) {
         throw 'Fresh installation must be reachable and Idle'
+    }
+    $oldPid = $service.ProcessId
+    Stop-Process -Id $oldPid -Force
+    $restarted = $null
+    for ($attempt = 0; $attempt -lt 200; $attempt++) {
+        Start-Sleep -Milliseconds 100
+        $candidate = Get-CimInstance Win32_Service -Filter "Name='$name'"
+        if ($candidate.State -eq 'Running' -and $candidate.ProcessId -and
+            $candidate.ProcessId -ne $oldPid) {
+            $restarted = $candidate
+            break
+        }
+    }
+    if (!$restarted) { throw 'SCM did not restart the terminated routing service' }
+    $status = & $control status $name
+    if ($LASTEXITCODE -ne 0 -or ($status | ConvertFrom-Json).phase -ne 0) {
+        throw 'Restarted routing service was not reachable and Idle'
     }
     # Check the inherited file ACL, not just the enclosing directory.
     $users = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545')
@@ -49,7 +73,7 @@ try {
     if ((Get-Service $name -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath $root)) {
         throw 'Explicit removal left service or protected runtime'
     }
-    Write-Output 'PASS: dry-run, protected install/update, Idle startup and explicit removal'
+    Write-Output 'PASS: dry-run, protected install/update, crash recovery to Idle and explicit removal'
 } finally {
     if (Get-Service $name -ErrorAction SilentlyContinue) {
         Stop-Service $name

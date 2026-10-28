@@ -71,6 +71,13 @@ explicitly start routing. Closing the GUI does not stop the service or routing.
 Credentials are handed over through authenticated IPC and remain memory-only in
 the service. A service restart requires sending pairing again.
 
+The installer configures bounded SCM recovery: restart after 5, 15 and 60
+seconds, resetting the failure count after 24 hours. Service-specific failures
+also trigger this policy. A restarted service always returns to Idle and never
+silently resumes routing. WinDivert filters disappear with their owner, so this
+improves availability but cannot eliminate the documented direct-connectivity
+window after a service crash.
+
 The Routing tab can explicitly remove an idle service through UAC. Removal
 stops the service and deletes only `%ProgramFiles%\SkewerRouting`; pairing and
 desktop preferences remain intact. Active routing must be stopped first.

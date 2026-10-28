@@ -83,6 +83,14 @@ function CopyRuntimeFile([string]$Source, [string]$Destination) {
         }
     }
 }
+function SetRecoveryPolicy([string]$ServiceName) {
+    & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/15000/restart/60000 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot configure routing service restart actions' }
+    # Also apply the actions when the service exits with a service-specific
+    # error instead of crashing the process outright.
+    & sc.exe failureflag $ServiceName 1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot enable routing service non-crash recovery' }
+}
 VerifyDrivers '' $sources
 $exe = Join-Path $root 'skewer-routing-service.exe'
 $command = '"' + $exe + '" --service ' + $Name + ' ' + $OwnerSid
@@ -118,6 +126,7 @@ if ($Upgrade) {
                 StartMode='Automatic'
             }
             if ($changed.ReturnValue -ne 0) { throw "Service configuration update failed ($($changed.ReturnValue))" }
+            SetRecoveryPolicy $Name
             Start-Service $Name
         } catch {
             foreach ($file in $files + @('wintun.dll','WinDivert.dll','WinDivert64.sys')) {
@@ -150,5 +159,13 @@ $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Argument
 if ($result.ReturnValue -ne 0) { throw "Service creation failed ($($result.ReturnValue)); files retained at $root" }
 # SCM RUNNING is not routing Active. Explicit Start is always required; tunnel
 # routing additionally requires a tunnel-ready installation and pairing.
-Start-Service $Name
+try {
+    SetRecoveryPolicy $Name
+    Start-Service $Name
+} catch {
+    $service = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+    if ($service) { $null = Invoke-CimMethod -InputObject $service -MethodName Delete }
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    throw
+}
 [pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Automatic' }

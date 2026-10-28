@@ -20,7 +20,9 @@ boundary. The service must block selected traffic during tunnel failure while
 it remains running. If the service exits or crashes, its WinDivert filters
 disappear and applications may communicate through normal host routes. Automatic
 restart cannot remove that exposure window. Closing the GUI must not stop the
-service. These behaviors require integration tests before they are advertised
+service. Packaged installations configure bounded SCM restarts at 5, 15 and 60
+seconds, including service-specific failures, but every restart returns to Idle.
+These behaviors require integration tests before they are advertised
 as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
