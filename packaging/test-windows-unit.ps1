@@ -34,6 +34,8 @@ $tests = @(
     @{ Name = 'windows_routing_panel'; File = 'routing_panel_test.exe' },
     @{ Name = 'windows_direct_host_policy'; File = 'direct_host_policy_test.exe' },
     @{ Name = 'windows_whole_host_policy'; File = 'whole_host_policy_test.exe' },
+    @{ Name = 'windows_owned_route_live'; File = 'owned_route_test.exe'; Arguments = @('--live') },
+    @{ Name = 'windows_tunnel_routes_live'; File = 'tunnel_routes_test.exe'; Arguments = @('--live') },
     @{ Name = 'tunnel_flows'; File = 'tunnel_flows_test.exe' },
     @{ Name = 'packet_rewrite'; File = 'packet_rewrite_test.exe' },
     @{ Name = 'tunnel_lease'; File = 'tunnel_lease_test.exe' },

@@ -127,6 +127,8 @@ DHCP-backed VM because it deliberately changes live host network state.
 
 The DNS-enabled SCM integration passed on the Windows VM on 2026-10-28, including
 system resolution, ordinary HTTPS, tunnel loss blocking and owned-resource cleanup.
+The packaged elevated native suite also exercises exact route ownership, partial
+activation rollback and preservation of an administrator-modified route.
 The per-interface API contract is documented at
 https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-setinterfacednssettings.
 
