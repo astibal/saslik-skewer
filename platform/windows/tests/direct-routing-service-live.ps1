@@ -3,8 +3,7 @@ param(
     [string]$DriverDirectory = 'C:\SkewerDev\flow-test',
     [string]$WintunDll = 'C:\SkewerDev\wintun-test\wintun.dll',
     [Parameter(Mandatory=$true)][string]$Gateway,
-    [string]$Endpoint = 'skewer://172.30.1.73:8766/pair',
-    [string]$Peer = '172.30.1.73'
+    [string]$PairingFixture = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,11 +40,22 @@ $before = NetworkState
 try {
     $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     & (Join-Path $Directory 'install-routing-service.ps1') -PackageDirectory $Directory `
-        -WinDivertDirectory $DriverDirectory -WintunDll $WintunDll -OwnerSid $owner `
-        -Endpoint $Endpoint -Peer $Peer -Name $name
+        -WinDivertDirectory $DriverDirectory -WintunDll $WintunDll -OwnerSid $owner -Name $name
     $created = $true
     $initial = AwaitPhase 0
     if ($initial.paired) { throw 'Fresh direct fixture unexpectedly retained pairing' }
+    $configuration = Get-CimInstance Win32_Service -Filter "Name='$name'"
+    if ($configuration.PathName -match 'skewer://') {
+        throw 'Direct-only service unexpectedly retained tunnel configuration'
+    }
+    if ($PairingFixture) {
+        & $PairingFixture --pair $name
+        if ($LASTEXITCODE -eq 0) { throw 'Direct-only service accepted pairing' }
+        $initial = Status
+        if ($initial.phase -ne 0 -or $initial.paired) {
+            throw 'Rejected direct-only pairing changed service state'
+        }
+    }
     $started = & $client start-direct $name $initial.generation $Gateway | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $started.scope -ne 1 -or $started.transport -ne 2) {
         throw 'Direct whole-host start was rejected or misreported'

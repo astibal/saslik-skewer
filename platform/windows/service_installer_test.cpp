@@ -19,6 +19,11 @@ int main(int argc, char** argv) {
             QStringLiteral("skewer://example.invalid:8766/pair"), false);
         if (endpoint.error.isEmpty())
             throw std::runtime_error("Non-numeric installer endpoint reached UAC execution");
+        const auto direct = skewer::windows::runRoutingServiceInstaller(
+            QStringLiteral("missing.ps1"), QStringLiteral("missing"), QStringLiteral("SkewerRouting"),
+            QString{}, false);
+        if (!direct.error.contains("incomplete"))
+            throw std::runtime_error("Direct-only installation was rejected as invalid configuration");
         const auto remover = skewer::windows::runRoutingServiceRemover(
             QStringLiteral("missing.ps1"), missing);
         if (remover.error.isEmpty())

@@ -8,8 +8,8 @@ void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE st
 void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HANDLE stop,
                          PairedRoutingRunner runner, SelectedRoutingRunner selected,
                          DirectRoutingRunner direct) {
-    if (!runner) {
-        throw std::invalid_argument("Routing service requires a session runner");
+    if (!runner && !direct) {
+        throw std::invalid_argument("Routing service requires a tunnel or direct runner");
     }
     auto commands = createSelectionPipe(name, owner);
     auto pairings = createSelectionPipe(name + L"-pair", owner);
@@ -35,10 +35,16 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
     // Declared after pairing: cancel/join the runner before wiping credentials.
     RoutingController controller([&](HANDLE cancel, RoutingSignals& state) {
         if (target) {
+            if (!selected || !pairing) {
+                throw std::logic_error("Selected routing has no configured tunnel runner");
+            }
             selected(*pairing, std::move(target), cancel, state);
         } else if (direct_gateway) {
             direct(*direct_gateway, cancel, state);
         } else {
+            if (!runner || !pairing) {
+                throw std::logic_error("Tunnel routing is not configured");
+            }
             runner(*pairing, cancel, state);
         }
     });
@@ -111,8 +117,12 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             acceptSelection(commands->get(), stop, 100);
             serveRoutingCommand(commands->get(), owner, stop, 2000,
                                 [&](RoutingCommand command, std::uint64_t generation) {
+                                    if (command == RoutingCommand::Start && !runner) {
+                                        throw std::runtime_error(
+                                            "Upgrade the service with a pairing endpoint before tunnel routing");
+                                    }
                                     if (command == RoutingCommand::Start && !pairing) {
-                                        throw std::runtime_error("Pair before starting routing");
+                                        throw std::runtime_error("Pair before starting tunnel routing");
                                     }
                                     if (command == RoutingCommand::Start) {
                                         const auto current = describe(
@@ -140,6 +150,10 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         DisconnectNamedPipe(commands->get());
         try {
             acceptSelection(pairings->get(), stop, 100);
+            if (!runner) {
+                throw std::runtime_error(
+                    "Direct-only service cannot accept pairing; configure tunnel support first");
+            }
             const auto state = controller.command(RoutingCommand::Status, 0);
             if (state.phase != RoutingPhase::Idle && state.phase != RoutingPhase::Failed) {
                 throw std::runtime_error("Cannot replace pairing during a routing generation");

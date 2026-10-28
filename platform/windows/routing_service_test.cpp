@@ -25,7 +25,9 @@ int wmain(int argc, wchar_t** argv) {
             return 2;
         }
         const std::wstring mode(argv[1]), name(argv[2]);
-        if (!name.starts_with(L"SkewerRoutingTest-") || name.size() > 70 ||
+        const bool fixture_name = name.starts_with(L"SkewerRoutingTest-") ||
+                                  name.starts_with(L"SkewerRouting-Test-");
+        if (!fixture_name || name.size() > 70 ||
             name.find_first_not_of(L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-") !=
                 std::wstring::npos) {
             throw std::invalid_argument("Invalid fixture service name");

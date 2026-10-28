@@ -61,6 +61,15 @@ Automatic pairing restoration runs only when the next activation needs the
 tunnel. A stale or unavailable saved pairing endpoint therefore cannot prevent
 Direct, or Auto with a valid direct gateway, from starting.
 
+The installer accepts an empty pairing endpoint as an explicit Direct-only
+service configuration. That service rejects pairing, selected-process routing
+and tunnel Start, while retaining authenticated owner-bound status, Direct
+Start/Stop and independent GUI lifetime. An explicit Upgrade with a numeric
+paired endpoint enables the tunnel runners later; credentials remain memory-only.
+`tests/service-upgrade-live.ps1` verifies the installed SCM command, clean
+service restart, unpaired Idle state and protected-runtime removal across that
+upgrade transition.
+
 `routing_panel_test` checks missing-service responsiveness and bounded local
 cancellation. `native-routing-service-live.ps1 -GuiClient` uses the real Qt
 buttons to pair/start, closes the panel, then verifies continued system DNS and

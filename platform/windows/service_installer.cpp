@@ -80,17 +80,22 @@ InstallerResult runRoutingServiceInstaller(const QString& script, const QString&
             throw std::invalid_argument("The desktop installer manages only the production SkewerRouting service");
         if (!QFileInfo(script).isFile() || !QFileInfo(package).isDir())
             throw std::invalid_argument("The packaged routing service installer is incomplete");
-        const QUrl url(endpoint);
-        QHostAddress peer;
-        if (!url.isValid() || url.scheme() != QStringLiteral("skewer") || url.path() != QStringLiteral("/pair") ||
-            url.port() <= 0 || url.port() > 65535 || !url.userInfo().isEmpty() ||
-            url.hasQuery() || url.hasFragment() || !peer.setAddress(url.host()) ||
-            peer.protocol() != QAbstractSocket::IPv4Protocol)
-            throw std::invalid_argument("Installation requires a paired endpoint with a numeric IPv4 host");
         std::vector<std::wstring> arguments{L"-NoProfile", L"-ExecutionPolicy", L"Bypass", L"-File",
                                              script.toStdWString(), L"-PackageDirectory", package.toStdWString(),
-                                             L"-OwnerSid", currentSid(), L"-Endpoint", endpoint.toStdWString(),
-                                             L"-Peer", peer.toString().toStdWString()};
+                                             L"-OwnerSid", currentSid()};
+        if (!endpoint.trimmed().isEmpty()) {
+            const QUrl url(endpoint);
+            QHostAddress peer;
+            if (!url.isValid() || url.scheme() != QStringLiteral("skewer") ||
+                url.path() != QStringLiteral("/pair") || url.port() <= 0 || url.port() > 65535 ||
+                !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment() ||
+                !peer.setAddress(url.host()) || peer.protocol() != QAbstractSocket::IPv4Protocol) {
+                throw std::invalid_argument(
+                    "Tunnel-ready installation requires a paired endpoint with a numeric IPv4 host");
+            }
+            arguments.insert(arguments.end(), {L"-Endpoint", endpoint.toStdWString(),
+                                               L"-Peer", peer.toString().toStdWString()});
+        }
         if (upgrade) arguments.push_back(L"-Upgrade");
         return runElevated(arguments, QStringLiteral("installer"));
     } catch (const std::exception& error) {

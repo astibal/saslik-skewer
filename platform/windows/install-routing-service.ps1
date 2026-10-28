@@ -4,8 +4,8 @@ param(
     [string]$WinDivertDirectory = '',
     [string]$WintunDll = '',
     [Parameter(Mandatory=$true)][string]$OwnerSid,
-    [Parameter(Mandatory=$true)][string]$Endpoint,
-    [Parameter(Mandatory=$true)][string]$Peer,
+    [string]$Endpoint = '',
+    [string]$Peer = '',
     [string]$DnsServer = '1.1.1.1',
     [string]$Management = '',
     [switch]$Upgrade,
@@ -21,10 +21,15 @@ if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 $sid = [Security.Principal.SecurityIdentifier]::new($OwnerSid)
 if ($sid.Value -cne $OwnerSid) { throw 'OwnerSid must be canonical' }
-if ($Endpoint -notmatch '^skewer://[A-Za-z0-9.-]+:[0-9]{1,5}/pair$') { throw 'Expected paired endpoint, never an invitation or secret' }
-$uri = [Uri]$Endpoint
-if ($uri.Port -lt 1 -or $uri.Port -gt 65535) { throw 'Invalid endpoint port' }
-foreach ($address in @($Peer,$DnsServer) + @($Management | Where-Object { $_ })) {
+$tunnelConfigured = !!$Endpoint -or !!$Peer
+if (!!$Endpoint -ne !!$Peer) { throw 'Endpoint and Peer must be configured together' }
+if ($tunnelConfigured) {
+    if ($Endpoint -notmatch '^skewer://[A-Za-z0-9.-]+:[0-9]{1,5}/pair$') { throw 'Expected paired endpoint, never an invitation or secret' }
+    $uri = [Uri]$Endpoint
+    if ($uri.Port -lt 1 -or $uri.Port -gt 65535) { throw 'Invalid endpoint port' }
+}
+foreach ($address in @($Peer,$DnsServer) + @($Management | Where-Object { $_ }) |
+         Where-Object { $_ }) {
     $ip = $null
     if (![Net.IPAddress]::TryParse($address, [ref]$ip) -or $ip.AddressFamily -ne 'InterNetwork' -or $ip.ToString() -ne $address) {
         throw 'Peer, DNS and optional SSH management must be canonical IPv4 addresses'
@@ -80,8 +85,13 @@ function CopyRuntimeFile([string]$Source, [string]$Destination) {
 }
 VerifyDrivers '' $sources
 $exe = Join-Path $root 'skewer-routing-service.exe'
-$command = '"' + $exe + '" --service ' + $Name + ' ' + $OwnerSid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer
-if ($Management) { $command += ' ' + $Management }
+$command = '"' + $exe + '" --service ' + $Name + ' ' + $OwnerSid
+if ($tunnelConfigured) {
+    $command += ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer
+    if ($Management) { $command += ' ' + $Management }
+} elseif ($Management) {
+    throw 'SSH management exemption requires tunnel configuration'
+}
 $operation = if ($Upgrade) { "Stop and upgrade $Name, then restart it without routing" } else { "Install automatic idle $Name service for $OwnerSid without starting routing" }
 if (!$PSCmdlet.ShouldProcess($root, $operation)) { return }
 if ($Upgrade) {
@@ -138,6 +148,7 @@ $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Argument
     ErrorControl=[byte]1; StartMode='Automatic'; StartName='LocalSystem'
 }
 if ($result.ReturnValue -ne 0) { throw "Service creation failed ($($result.ReturnValue)); files retained at $root" }
-# SCM RUNNING is not routing Active. Pairing and explicit Start are still required.
+# SCM RUNNING is not routing Active. Explicit Start is always required; tunnel
+# routing additionally requires a tunnel-ready installation and pairing.
 Start-Service $Name
 [pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Automatic' }
