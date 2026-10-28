@@ -1,5 +1,6 @@
 #include "selection_transport.hpp"
 #include "pairing_handoff.hpp"
+#include "routing_control.hpp"
 #include <stdexcept>
 #include <type_traits>
 #include <sddl.h>
@@ -374,5 +375,81 @@ std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, HANDLE owner_
     ack = handoff_received;
     handoffTransfer(pipe, ack.data(), ack.size(), true, cancel, deadline);
     return value;
+}
+
+namespace {
+void putGeneration(std::uint8_t* bytes, std::uint64_t generation) {
+    for (unsigned i = 0; i < 8; ++i) {
+        bytes[i] = static_cast<std::uint8_t>(generation >> (8 * i));
+    }
+}
+std::uint64_t getGeneration(const std::uint8_t* bytes) {
+    std::uint64_t result{};
+    for (unsigned i = 0; i < 8; ++i) {
+        result |= std::uint64_t(bytes[i]) << (8 * i);
+    }
+    return result;
+}
+} // namespace
+void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD timeout_ms,
+                         const RoutingHandler& handler) {
+    if (!handler) {
+        throw std::invalid_argument("Missing routing handler");
+    }
+    const auto deadline = handoffDeadline(cancel, timeout_ms);
+    std::array<std::uint8_t, 32> request{};
+    handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
+    const auto key = decodeSelectionRequest(std::span(request).first(20));
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 2 || request[23]) {
+        throw std::invalid_argument("Invalid routing command");
+    }
+    ULONG actual_pid{};
+    if (!GetNamedPipeClientProcessId(pipe, &actual_pid) || actual_pid != key.pid) {
+        throw std::runtime_error("Routing caller identity mismatch");
+    }
+    auto client = authorizePipeSelection(pipe, key);
+    ProcessTarget owner_bound(key, owner_token);
+    if (!client->running() || !owner_bound.running()) {
+        throw std::runtime_error("Routing caller exited");
+    }
+    const auto result = handler(static_cast<RoutingCommand>(request[22]), getGeneration(request.data() + 24));
+    if (result.result > RoutingResult::Busy || result.phase > RoutingPhase::Failed) {
+        throw std::logic_error("Invalid routing backend response");
+    }
+    std::array<std::uint8_t, 16> response{'S',
+                                          'K',
+                                          'R',
+                                          'C',
+                                          1,
+                                          static_cast<std::uint8_t>(result.result),
+                                          static_cast<std::uint8_t>(result.phase),
+                                          0};
+    putGeneration(response.data() + 8, result.generation);
+    handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
+}
+RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
+                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+    if (command > RoutingCommand::Stop) {
+        throw std::invalid_argument("Unknown routing command");
+    }
+    const auto deadline = handoffDeadline(cancel, timeout_ms);
+    auto server = verifySelectionService(pipe, service_name);
+    std::array<std::uint8_t, 32> request{};
+    const auto identity = encodeSelectionRequest(processKey(GetCurrentProcess(), GetCurrentProcessId()));
+    std::copy(identity.begin(), identity.end(), request.begin());
+    request[20] = 'R';
+    request[21] = 1;
+    request[22] = static_cast<std::uint8_t>(command);
+    putGeneration(request.data() + 24, generation);
+    handoffTransfer(pipe, request.data(), request.size(), true, cancel, deadline);
+    std::array<std::uint8_t, 16> response{};
+    handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
+    if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
+        response[4] != 1 || response[5] > 2 || response[6] > 5 || response[7] ||
+        WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
+        throw std::runtime_error("Invalid routing response or exited service");
+    }
+    return {static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
+            getGeneration(response.data() + 8)};
 }
 } // namespace skewer::windows

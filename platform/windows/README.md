@@ -18,6 +18,32 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Generation-bound routing commands
+
+`RoutingController` owns an asynchronous runtime independently of IPC clients.
+Authenticated start/stop/status commands report Idle, Starting, Active, Blocked,
+Stopping or Failed, with a monotonically increasing runtime generation seeded
+from the system RNG for each controller lifetime, avoiding reuse after restart.
+Mutations require the current generation: delayed STOP from an older client
+cannot reach a restarted tunnel, and START while busy never launches a duplicate.
+STOP is nonblocking; Stopping persists until the runner finishes protected
+cleanup. Status polls reap completed workers without blocking the command thread.
+
+`runGuardedWorker` now publishes a blocked signal when its tunnel session exits
+unexpectedly, while retaining the guard. `runGuardedPairedTunnel` passes this
+through for the controller; routing readiness is still separate from SCM RUNNING.
+The owner-authenticated command transport uses bounded versioned messages and
+pins the SCM server before writing, as with the pairing handoff.
+
+`tests/routing-service-live.ps1` connects pairing handoff, command IPC, controller,
+and a real session-zero WinDivert handle in one temporary service. It tests
+client exit, blocked state, duplicate start, stale stop, restart, and SCM stop.
+Its false filter and deliberately failing session change no network policy;
+it does not demonstrate working service-owned tunnel traffic. Production adapter
+setup, trusted route/guard configuration and GUI integration remain pending.
+`routing_control_test` separately covers active state, cleanup wait and fatal
+runner failure without using networking.
+
 ### Authenticated credential handoff transport
 
 `sendPairingHandoff` / `receivePairingHandoff` use a dedicated, bounded,

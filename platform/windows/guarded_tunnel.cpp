@@ -3,7 +3,8 @@
 namespace skewer::windows {
 GuardedTunnelResult runGuardedPairedTunnel(traffic::PacketCapture& guard, PacketDevice& device,
                                            TunnelControl& control, const QString& numeric_peer,
-                                           TunnelRoutes& routes, HANDLE stop, std::atomic_bool& ready) {
+                                           TunnelRoutes& routes, HANDLE stop, std::atomic_bool& ready,
+                                           std::atomic_bool* blocked) {
     GuardedTunnelResult result{};
     ready.store(false);
     result.worker = runGuardedWorker(
@@ -17,7 +18,8 @@ GuardedTunnelResult runGuardedPairedTunnel(traffic::PacketCapture& guard, Packet
             ready.store(false);
             routes.withdraw();
             return routes.clean();
-        });
+        },
+        blocked);
     return result;
 }
 } // namespace skewer::windows

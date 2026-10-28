@@ -15,7 +15,7 @@ bool signalled(HANDLE event) {
 
 GuardedWorkerResult runGuardedWorker(traffic::PacketCapture& guard, HANDLE stop,
                                      const std::function<void(HANDLE)>& session,
-                                     const std::function<bool()>& cleanup) {
+                                     const std::function<bool()>& cleanup, std::atomic_bool* blocked) {
     if (!session || !cleanup) {
         throw std::invalid_argument("Guarded worker requires session and cleanup");
     }
@@ -57,6 +57,9 @@ GuardedWorkerResult runGuardedWorker(traffic::PacketCapture& guard, HANDLE stop,
             }
             joined = true;
             result.unexpected_session_exit = !stopping;
+            if (blocked && result.unexpected_session_exit) {
+                blocked->store(true);
+            }
         }
         if (joined && !clean && GetTickCount64() >= next_cleanup) {
             try {

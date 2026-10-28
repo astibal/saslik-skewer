@@ -2,6 +2,7 @@
 #include "packet_capture.hpp"
 #include <exception>
 #include <functional>
+#include <atomic>
 
 namespace skewer::windows {
 struct GuardedWorkerResult {
@@ -18,5 +19,6 @@ struct GuardedWorkerResult {
 // exception propagates. WinDivert cannot protect against owner/driver failure.
 GuardedWorkerResult runGuardedWorker(traffic::PacketCapture& guard, HANDLE stop,
                                      const std::function<void(HANDLE)>& session,
-                                     const std::function<bool()>& cleanup);
+                                     const std::function<bool()>& cleanup,
+                                     std::atomic_bool* blocked = nullptr);
 } // namespace skewer::windows

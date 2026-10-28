@@ -13,5 +13,6 @@ struct GuardedTunnelResult {
 // outlive this call. Neither tunnel failure nor GUI lifetime releases the guard.
 GuardedTunnelResult runGuardedPairedTunnel(traffic::PacketCapture& guard, PacketDevice& device,
                                            TunnelControl& control, const QString& numeric_peer,
-                                           TunnelRoutes& routes, HANDLE stop, std::atomic_bool& ready);
+                                           TunnelRoutes& routes, HANDLE stop, std::atomic_bool& ready,
+                                           std::atomic_bool* blocked = nullptr);
 } // namespace skewer::windows
