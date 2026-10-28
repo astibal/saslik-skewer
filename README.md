@@ -144,6 +144,8 @@ already-running process tree.
 
 ## Install a release
 
+### Linux
+
 Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS, amd64
 (for upcoming releases; the original 0.9.50 asset targets Ubuntu 26.04 only):
 
@@ -151,6 +153,25 @@ Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS, amd64
 curl -fLO https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-linux-amd64.deb
 sudo apt install ./skewer-linux-amd64.deb
 ```
+
+### Windows
+
+Windows 11, x64:
+
+```powershell
+Invoke-WebRequest `
+  https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-windows-amd64.zip `
+  -OutFile skewer-windows-amd64.zip
+Invoke-WebRequest `
+  https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-windows-amd64.zip.sha256 `
+  -OutFile skewer-windows-amd64.zip.sha256
+```
+
+Compare `Get-FileHash .\skewer-windows-amd64.zip` with the downloaded sidecar,
+expand the archive, then run its `verify-windows-package.ps1` and
+`install-skewer.ps1`. The per-user application installer does not install the
+privileged routing service automatically; use **Routing → Install routing
+service…** when routing is required. Driver installation prompts for elevation.
 
 Release tags use the shared ecosystem version without a prefix, e.g. `0.9.50`.
 An optional fourth number denotes a stable hotfix, e.g. `0.9.50.1` and
@@ -163,7 +184,12 @@ matrix: Debian 12/13 and Ubuntu 24.04/26.04. Every entry must pass dependency
 resolution, installed-file checks, dynamic library resolution and an offscreen
 GUI startup before publication. No forced dependencies or per-distribution
 rebuilds are used. The matrix runs on main, pull requests and release tags.
-Only tags publish releases. Published assets are not retroactively replaced.
+It also cross-builds the complete Windows ZIP from checksum-pinned inputs and
+requires a native Windows runner to verify its checksum, signed drivers, PE
+runtime, per-user install/update/uninstall and GUI startup. Releases contain the
+versioned archive plus the stable `skewer-windows-amd64.zip` alias used by the
+`latest` link. Only tags publish releases. Published assets are not
+retroactively replaced.
 
 Container checks do not cover a real desktop polkit prompt, user systemd session
 or privileged packet forwarding. The real cgroup movement test requires a local

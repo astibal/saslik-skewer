@@ -1,4 +1,5 @@
-Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
+Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
+(amd64).
 
 ### 0.9.50.6
 
@@ -56,3 +57,8 @@ routing. Use Disable and Release
 explicitly to undo them. IPv6 is not routed by this version.
 
 Verify the download with `sha256sum -c SHA256SUMS`.
+
+Windows releases provide a versioned ZIP and `skewer-windows-amd64.zip` for the
+stable `releases/latest/download/` link. Verify the adjacent `.sha256`, expand
+the archive and run `verify-windows-package.ps1` before installation. The
+per-user application and privileged routing service are installed separately.

@@ -118,6 +118,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          windows=(dist/windows/skewer-windows-amd64-[0-9]*.zip)
+          [[ ${#windows[@]} -eq 1 && -f "${windows[0]}" ]]
+          cp "${windows[0]}" dist/windows/skewer-windows-amd64.zip
+          (cd dist/windows && sha256sum skewer-windows-amd64.zip > skewer-windows-amd64.zip.sha256)
           gh release create "$RELEASE_TAG" dist/linux/*.deb dist/linux/SHA256SUMS \
             dist/windows/*.zip dist/windows/*.zip.sha256 --verify-tag \
             --title "Skewer $RELEASE_TAG" --notes-file packaging/RELEASE.md

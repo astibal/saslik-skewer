@@ -67,8 +67,9 @@ DNS/UDP. This passed on the Windows VM on 2026-10-28 with routes and DNS unchang
 [SSH_MANAGEMENT_IP]` now hosts the real paired runtime under SCM. These arguments
 must be administrator-owned service configuration; DLLs are loaded only from
 the service installation directory. Pairing is memory-only through the existing
-authenticated client. This is an integrated development build, not a finished
-desktop installer or claim of application-routing parity.
+authenticated client. The release ZIP includes the service installer, while the
+per-user desktop installer deliberately leaves privileged service installation
+as a separate explicit action.
 
 `WholeHostPolicy` snapshots the underlay, rejects existing conflicting /1 or peer
 /32 routes, arms the physical-egress guard, assigns the authenticated Wintun
@@ -1078,25 +1079,21 @@ close before disconnecting, avoiding lost buffered replies without blocking
 indefinitely in `FlushFileBuffers`. These paths are VM-tested; GUI integration
 and persistent routing selections remain pending. No routing policy is installed.
 
-### Remaining integration
+### Remaining first-release limits
 
-The independent [`platform/traffic`](../traffic/README.md) module now decodes
-bounded IPv4/IPv6 TCP/UDP packet tuples. Its flow index consumes live FLOW events,
-but packet capture and authorization are not yet wired; unrecognized packets cannot safely be
-assigned to an application merely from FLOW events.
+The native service and GUI now cover authenticated pairing, whole-host IPv4 and
+selected-process IPv4 TCP/UDP routing. Unsupported IPv6, already-open sockets,
+orphaned handoffs and ambiguous shared UDP binds remain explicit limitations;
+they are never presented as successfully routed. The first release uses the
+documented WinDivert owner-lifetime model rather than the deferred custom driver.
+Skewer application executables are not yet code-signed; the packaged Wintun and
+WinDivert drivers retain their official signatures.
 
-1. Port additional controllers behind explicit platform capability interfaces;
-   do not expose Linux-specific helpers or settings as working Windows features.
-2. Add desktop application identity/icons, launcher completion, and explicit
-   launch feedback (new process vs singleton handoff).
-3. Implement and test a separate Windows traffic-policy backend. Until then,
-   attach/routing controls must be unavailable, never report simulated success.
-4. Add a Windows CI runner and versioned ZIP/installer release artifacts.
-
-The Linux executable uses the shared shell/page with its existing controllers.
-Existing Linux release packaging is unchanged. The Windows ZIP builder and live
-package verifier are implemented; automated release publication and executable
-code signing are still pending.
+The Linux executable keeps its cgroup backend. The shared shell and portable UI
+models preserve common layout and behavior, while each platform supplies native
+process discovery, trust and routing controllers. GitHub Actions cross-builds a
+versioned Windows ZIP from pinned inputs, verifies it on a native Windows runner,
+and publishes it only after the Linux and Windows gates pass.
 
 ### Versioned Windows ZIP
 
