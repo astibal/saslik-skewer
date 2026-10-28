@@ -11,4 +11,5 @@ bool routingServiceInstalled(const QString& name);
 InstallerResult runRoutingServiceInstaller(const QString& script, const QString& package,
                                            const QString& service, const QString& endpoint,
                                            bool upgrade);
+InstallerResult runRoutingServiceRemover(const QString& script, const QString& service);
 } // namespace skewer::windows

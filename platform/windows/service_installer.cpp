@@ -41,6 +41,26 @@ std::wstring currentSid() {
     std::unique_ptr<wchar_t, decltype(&LocalFree)> text(raw_text, LocalFree);
     return text.get();
 }
+
+InstallerResult runElevated(const std::vector<std::wstring>& arguments, const QString& operation) {
+    const auto parameters = commandLine(L"", arguments).substr(3); // Drop the quoted empty executable.
+    SHELLEXECUTEINFOW info{sizeof(info)};
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    info.lpVerb = L"runas";
+    info.lpFile = L"powershell.exe";
+    info.lpParameters = parameters.c_str();
+    info.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&info)) return {0, windowsError(GetLastError())};
+    Handle process(info.hProcess);
+    if (WaitForSingleObject(process.get(), INFINITE) != WAIT_OBJECT_0)
+        return {0, QStringLiteral("Cannot wait for elevated %1").arg(operation)};
+    DWORD exit_code{};
+    if (!GetExitCodeProcess(process.get(), &exit_code))
+        return {0, windowsError(GetLastError())};
+    return {exit_code, exit_code ? QStringLiteral("Elevated %1 exited with code %2")
+                                      .arg(operation).arg(exit_code)
+                                 : QString{}};
+}
 } // namespace
 
 bool routingServiceInstalled(const QString& name) {
@@ -72,22 +92,22 @@ InstallerResult runRoutingServiceInstaller(const QString& script, const QString&
                                              L"-OwnerSid", currentSid(), L"-Endpoint", endpoint.toStdWString(),
                                              L"-Peer", peer.toString().toStdWString()};
         if (upgrade) arguments.push_back(L"-Upgrade");
-        const auto parameters = commandLine(L"", arguments).substr(3); // Drop the quoted empty executable.
-        SHELLEXECUTEINFOW info{sizeof(info)};
-        info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
-        info.lpVerb = L"runas";
-        info.lpFile = L"powershell.exe";
-        info.lpParameters = parameters.c_str();
-        info.nShow = SW_SHOWNORMAL;
-        if (!ShellExecuteExW(&info)) return {0, windowsError(GetLastError())};
-        Handle process(info.hProcess);
-        if (WaitForSingleObject(process.get(), INFINITE) != WAIT_OBJECT_0)
-            return {0, QStringLiteral("Cannot wait for elevated installer")};
-        DWORD exit_code{};
-        if (!GetExitCodeProcess(process.get(), &exit_code))
-            return {0, windowsError(GetLastError())};
-        return {exit_code, exit_code ? QStringLiteral("Elevated installer exited with code %1").arg(exit_code)
-                                     : QString{}};
+        return runElevated(arguments, QStringLiteral("installer"));
+    } catch (const std::exception& error) {
+        return {0, QString::fromUtf8(error.what())};
+    }
+}
+
+InstallerResult runRoutingServiceRemover(const QString& script, const QString& service) {
+    try {
+        if (service != QStringLiteral("SkewerRouting"))
+            throw std::invalid_argument("The desktop remover manages only the production SkewerRouting service");
+        if (!QFileInfo(script).isFile())
+            throw std::invalid_argument("The packaged routing service remover is missing");
+        const std::vector<std::wstring> arguments{L"-NoProfile", L"-ExecutionPolicy", L"Bypass", L"-File",
+                                                  script.toStdWString(), L"-Name", service.toStdWString(),
+                                                  L"-Confirm:$false"};
+        return runElevated(arguments, QStringLiteral("remover"));
     } catch (const std::exception& error) {
         return {0, QString::fromUtf8(error.what())};
     }

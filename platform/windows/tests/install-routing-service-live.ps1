@@ -45,13 +45,16 @@ try {
         (& $control status $name | ConvertFrom-Json).phase -ne 0) {
         throw 'Explicit upgrade did not restart in Idle'
     }
-    Write-Output 'PASS: dry-run, protected installation, overwrite rejection and explicit Idle upgrade'
+    & (Join-Path $Directory 'remove-routing-service.ps1') -Name $name -Confirm:$false
+    if ((Get-Service $name -ErrorAction SilentlyContinue) -or (Test-Path -LiteralPath $root)) {
+        throw 'Explicit removal left service or protected runtime'
+    }
+    Write-Output 'PASS: dry-run, protected install/update, Idle startup and explicit removal'
 } finally {
     if (Get-Service $name -ErrorAction SilentlyContinue) {
         Stop-Service $name
         & sc.exe delete $name
         if ($LASTEXITCODE -ne 0) { throw 'Test service removal failed' }
     }
-    # Retain only this test's binaries for inspection; never recursively erase Program Files.
-    Write-Output "Test artifacts retained: $root"
+    if (Test-Path -LiteralPath $root) { Write-Output "Failed-test artifacts retained: $root" }
 }

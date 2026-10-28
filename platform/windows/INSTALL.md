@@ -71,10 +71,13 @@ explicitly start routing. Closing the GUI does not stop the service or routing.
 Credentials are handed over through authenticated IPC and remain memory-only in
 the service. A service restart requires sending pairing again.
 
+The Routing tab can explicitly remove an idle service through UAC. Removal
+stops the service and deletes only `%ProgramFiles%\SkewerRouting`; pairing and
+desktop preferences remain intact. Active routing must be stopped first.
+
 Use `-WhatIf` to validate without installation. The elevated regression script
-`tests/install-routing-service-live.ps1` checks dry-run behavior, ACLs, Idle IPC
-and overwrite rejection. It removes its uniquely named service but retains that
-test's installation directory for inspection.
+`tests/install-routing-service-live.ps1` checks dry-run behavior, ACLs, Idle IPC,
+overwrite rejection, upgrade and complete removal of its unique test service.
 
 Current routing supports whole-host IPv4 or one explicitly selected process's
 fresh IPv4 TCP connections. A tunnel failure keeps the live guard blocking until explicit

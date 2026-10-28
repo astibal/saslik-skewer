@@ -43,6 +43,7 @@ install -m 0644 "$windivert/../LICENSE" "$root/licenses/WinDivert-LICENSE.txt"
 install -m 0644 platform/windows/install-skewer.ps1 "$root/install-skewer.ps1"
 install -m 0644 platform/windows/uninstall-skewer.ps1 "$root/uninstall-skewer.ps1"
 install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-routing-service.ps1"
+install -m 0644 platform/windows/remove-routing-service.ps1 "$root/remove-routing-service.ps1"
 install -m 0644 platform/windows/INSTALL.md "$root/INSTALL.md"
 
 archive="$output/skewer-windows-amd64-$version.zip"

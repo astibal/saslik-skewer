@@ -10,6 +10,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QMessageBox>
 #include <QtConcurrent>
 
 namespace skewer::windows {
@@ -46,6 +47,9 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     install_ = new QPushButton(tr("Install routing service…"), this);
     install_->setObjectName("routingInstall");
     buttons->addWidget(install_);
+    remove_ = new QPushButton(tr("Remove service…"), this);
+    remove_->setObjectName("routingRemove");
+    buttons->addWidget(remove_);
     buttons->addStretch();
     layout->addLayout(buttons);
     status_ = new QLabel(tr("Checking service…"), this);
@@ -78,6 +82,29 @@ RoutingPanel::RoutingPanel(QWidget* parent)
         else status_->setText(tr("Routing service installed and started in Idle."));
         ++epoch_;
         known_ = false;
+        updateControls();
+        submit(0);
+    });
+    connect(remove_, &QPushButton::clicked, this, [this] {
+        if (QMessageBox::warning(this, tr("Remove routing service"),
+                tr("Stop and remove the privileged routing service?\n\n"
+                   "Routing protection will end. Pairing and Skewer settings are preserved."),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) return;
+        const auto script = QDir(QCoreApplication::applicationDirPath())
+                                .filePath(QStringLiteral("remove-routing-service.ps1"));
+        status_->setText(tr("Waiting for approval to remove the routing service…"));
+        updateControls();
+        remove_watcher_.setFuture(QtConcurrent::run(runRoutingServiceRemover, script,
+                                                     service_->text().trimmed()));
+        updateControls();
+    });
+    connect(&remove_watcher_, &QFutureWatcher<InstallerResult>::finished, this, [this] {
+        const auto result = remove_watcher_.result();
+        status_->setText(result.error.isEmpty() ? tr("Routing service removed; settings preserved.")
+                                                : tr("Service removal failed: %1").arg(result.error));
+        ++epoch_;
+        known_ = false;
+        automatic_pairing_attempted_ = false;
         updateControls();
         submit(0);
     });
@@ -212,6 +239,7 @@ RoutingPanel::~RoutingPanel() {
     }
     watcher_.waitForFinished();
     install_watcher_.waitForFinished();
+    remove_watcher_.waitForFinished();
 }
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
@@ -221,13 +249,18 @@ void RoutingPanel::updateControls() {
     service_->setEnabled(!action_busy_);
     endpoint_->setEnabled(!action_busy_);
     const auto package = QCoreApplication::applicationDirPath();
-    const bool packaged = QFileInfo::exists(QDir(package).filePath("install-routing-service.ps1")) &&
-                          QFileInfo::exists(QDir(package).filePath("wintun.dll")) &&
-                          QFileInfo::exists(QDir(package).filePath("WinDivert.dll")) &&
-                          QFileInfo::exists(QDir(package).filePath("WinDivert64.sys"));
+    const bool install_packaged = QFileInfo::exists(QDir(package).filePath("install-routing-service.ps1")) &&
+                                  QFileInfo::exists(QDir(package).filePath("wintun.dll")) &&
+                                  QFileInfo::exists(QDir(package).filePath("WinDivert.dll")) &&
+                                  QFileInfo::exists(QDir(package).filePath("WinDivert64.sys"));
+    const bool remove_packaged = QFileInfo::exists(QDir(package).filePath("remove-routing-service.ps1"));
     install_->setText(routingServiceInstalled(service_->text().trimmed())
                           ? tr("Upgrade routing service…") : tr("Install routing service…"));
-    install_->setEnabled(packaged && !action_busy_ && !install_watcher_.isRunning());
+    const bool managing = install_watcher_.isRunning() || remove_watcher_.isRunning();
+    install_->setEnabled(install_packaged && !action_busy_ && !managing);
+    const bool removable = !known_ || state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed;
+    remove_->setEnabled(remove_packaged && routingServiceInstalled(service_->text().trimmed()) && removable &&
+                        !action_busy_ && !managing);
 }
 void RoutingPanel::submit(int action) {
     Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,

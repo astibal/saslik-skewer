@@ -19,6 +19,10 @@ int main(int argc, char** argv) {
             QStringLiteral("skewer://example.invalid:8766/pair"), false);
         if (endpoint.error.isEmpty())
             throw std::runtime_error("Non-numeric installer endpoint reached UAC execution");
+        const auto remover = skewer::windows::runRoutingServiceRemover(
+            QStringLiteral("missing.ps1"), missing);
+        if (remover.error.isEmpty())
+            throw std::runtime_error("Non-production service reached remover UAC execution");
         std::cout << "PASS: service detection and pre-UAC installer validation\n";
         return 0;
     } catch (const std::exception& error) {

@@ -97,7 +97,8 @@ try {
     SelectTab $window 'Routing'
     Start-Sleep -Milliseconds 500
     $package = Split-Path $exe
-    $completeRuntime = @('install-routing-service.ps1','wintun.dll','WinDivert.dll','WinDivert64.sys') |
+    $completeRuntime = @('install-routing-service.ps1','remove-routing-service.ps1',
+                         'wintun.dll','WinDivert.dll','WinDivert64.sys') |
         ForEach-Object { Test-Path (Join-Path $package $_) } | Where-Object { !$_ }
     if (!$completeRuntime) {
         $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
@@ -108,6 +109,8 @@ try {
         if (!$install -or !$install.Current.IsEnabled) {
             throw "Complete package did not enable service installation:`n$(WindowText $window)"
         }
+        $remove = $buttons | Where-Object { $_.Current.Name -like 'Remove service*' } | Select-Object -First 1
+        if (!$remove) { throw 'Missing explicit routing service removal control' }
         'PASS: complete package enables explicit UAC service management' | Out-File $log -Append
     }
     SelectTab $window 'Applications'
@@ -115,8 +118,12 @@ try {
     $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     $normal = FindNamed $window 'Launch normally'
     $routed = FindNamed $window 'Launch through Skewer'
-    if (!$normal -or !$routed -or !$normal.Current.IsEnabled -or !$routed.Current.IsEnabled) {
+    if (!$normal -or !$routed -or !$normal.Current.IsEnabled) {
         throw 'Missing launcher routing choice'
+    }
+    $routingReady = $routingStatus.Current.Name -eq 'Routing idle'
+    if ($routed.Current.IsEnabled -ne $routingReady) {
+        throw "Routed launch disagrees with authoritative routing readiness ($($routingStatus.Current.Name))"
     }
     'PASS: normal and routed launch actions are explicit' | Out-File $log -Append
     $invoke = $normal.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)

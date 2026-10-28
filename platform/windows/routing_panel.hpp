@@ -44,9 +44,11 @@ private:
     QPushButton* start_{};
     QPushButton* stop_{};
     QPushButton* install_{};
+    QPushButton* remove_{};
     QTimer timer_;
     QFutureWatcher<Result> watcher_;
     QFutureWatcher<InstallerResult> install_watcher_;
+    QFutureWatcher<InstallerResult> remove_watcher_;
     std::shared_ptr<Handle> cancel_;
     std::optional<Request> pending_;
     RoutingReply state_{};
