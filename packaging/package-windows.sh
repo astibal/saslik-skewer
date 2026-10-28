@@ -17,7 +17,8 @@ case "$version" in *[!0-9.]*|'') echo "Invalid project version: $version" >&2; e
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 root="$stage/skewer-windows-amd64-$version"
-mkdir -p "$root/platforms" "$root/styles" "$root/tls" "$root/licenses" "$output"
+mkdir -p "$root/platforms" "$root/styles" "$root/tls" "$root/networkinformation" \
+    "$root/imageformats" "$root/licenses" "$output"
 
 for file in skewer.exe skewer-routing-service.exe skewer-routing-control.exe skewer-control.exe; do
     install -m 0755 "$build/platform/windows/$file" "$root/$file"
@@ -29,6 +30,10 @@ install -m 0644 "$qt/plugins/platforms/qwindows.dll" "$root/platforms/qwindows.d
 install -m 0644 "$qt/plugins/styles/qmodernwindowsstyle.dll" "$root/styles/qmodernwindowsstyle.dll"
 install -m 0644 "$qt/plugins/tls/qschannelbackend.dll" "$root/tls/qschannelbackend.dll"
 install -m 0644 "$qt/plugins/tls/qcertonlybackend.dll" "$root/tls/qcertonlybackend.dll"
+install -m 0644 "$qt/plugins/networkinformation/qnetworklistmanager.dll" \
+    "$root/networkinformation/qnetworklistmanager.dll"
+install -m 0644 "$qt/plugins/imageformats/qsvg.dll" "$root/imageformats/qsvg.dll"
+install -m 0644 "$qt/plugins/imageformats/qico.dll" "$root/imageformats/qico.dll"
 
 for file in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll libssp-0.dll; do
     path=$($cxx -print-file-name="$file")
@@ -40,6 +45,8 @@ install -m 0644 "$windivert/WinDivert.dll" "$root/WinDivert.dll"
 install -m 0644 "$windivert/WinDivert64.sys" "$root/WinDivert64.sys"
 install -m 0644 "$(dirname "$wintun")/../../LICENSE.txt" "$root/licenses/Wintun-LICENSE.txt"
 install -m 0644 "$windivert/../LICENSE" "$root/licenses/WinDivert-LICENSE.txt"
+install -m 0644 packaging/WINDOWS-NOTICES.md "$root/licenses/README.md"
+install -m 0644 packaging/verify-windows-package.ps1 "$root/verify-windows-package.ps1"
 install -m 0644 platform/windows/install-skewer.ps1 "$root/install-skewer.ps1"
 install -m 0644 platform/windows/uninstall-skewer.ps1 "$root/uninstall-skewer.ps1"
 install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-routing-service.ps1"

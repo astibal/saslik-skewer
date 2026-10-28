@@ -16,6 +16,7 @@ try {
     Expand-Archive -LiteralPath $Archive -DestinationPath $TestRoot
     $package = Join-Path $TestRoot "skewer-windows-amd64-$ExpectedVersion"
     $executable = Join-Path $package 'skewer.exe'
+    & (Join-Path $package 'verify-windows-package.ps1') -PackageDirectory $package
     $expected = @{
         'WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'
         'WinDivert64.sys' = '8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2'
@@ -32,7 +33,7 @@ try {
             throw "Invalid packaged driver signature: $name"
         }
     }
-    foreach ($name in @('Wintun-LICENSE.txt', 'WinDivert-LICENSE.txt')) {
+    foreach ($name in @('Wintun-LICENSE.txt', 'WinDivert-LICENSE.txt', 'README.md')) {
         if (!(Test-Path -LiteralPath (Join-Path $package "licenses\$name"))) {
             throw "Missing packaged dependency license: $name"
         }

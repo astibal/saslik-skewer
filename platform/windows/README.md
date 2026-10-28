@@ -1087,7 +1087,22 @@ assigned to an application merely from FLOW events.
 4. Add a Windows CI runner and versioned ZIP/installer release artifacts.
 
 The Linux executable uses the shared shell/page with its existing controllers.
-Existing Linux release packaging is unchanged; Windows packaging is not ready.
+Existing Linux release packaging is unchanged. The Windows ZIP builder and live
+package verifier are implemented; automated release publication and executable
+code signing are still pending.
+
+### Versioned Windows ZIP
+
+`packaging/package-windows.sh` assembles the application, independent routing
+service, control client, official signed Wintun/WinDivert artifacts, Qt/MinGW
+runtime, installer scripts and dependency notices into
+`skewer-windows-amd64-VERSION.zip`. It accepts an existing cross-build and SDK
+roots; it does not download or silently substitute dependencies. The companion
+PowerShell verifier checks the complete runtime, pinned WinDivert hashes, driver
+signatures, all three production executables and executable version on Windows
+before publication. `test-windows-package.ps1` additionally exercises isolated
+per-user install, execution and uninstall without touching pairing, preferences
+or the independently installed routing service.
 
 ### Verified selection handoff
 
