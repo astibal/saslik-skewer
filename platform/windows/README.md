@@ -100,6 +100,10 @@ as a separate explicit action.
 address, waits for transport health, then installs a peer /32 and tunnel /1 routes.
 The peer stays outside its tunnel. Cleanup withdraws routes before retiring the
 adapter. Physical IPv6 egress is blocked; IPv6 tunneling remains unfinished.
+Each protected retry re-reads the gateway on the original underlay interface,
+so a DHCP gateway update cannot leave the peer pinned through a stale next hop.
+Changing the physical interface remains fail-closed until guard replacement is
+transactional.
 The configured numeric IPv4 DNS server is assigned only to the fresh Wintun
 adapter using SetInterfaceDnsSettings (Windows 10 build 19041 or newer); physical
 adapter DNS settings are never changed. Adapter destruction removes its DNS

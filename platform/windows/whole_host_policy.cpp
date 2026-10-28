@@ -89,9 +89,8 @@ std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
 std::vector<MIB_IPFORWARD_ROW2> WholeHostPolicy::routes(NET_LUID tunnel,
                                                         const Tuntom::Endpoint& endpoint) const {
     const auto current = bestRoute(peer_);
-    if (current.InterfaceLuid.Value != underlay_.InterfaceLuid.Value ||
-        current.NextHop.Ipv4.sin_addr.S_un.S_addr != underlay_.NextHop.Ipv4.sin_addr.S_un.S_addr) {
-        throw std::runtime_error("Tunnel underlay changed during startup");
+    if (current.InterfaceLuid.Value != underlay_.InterfaceLuid.Value) {
+        throw std::runtime_error("Tunnel underlay interface changed during startup");
     }
     requireNoConflicts(peer_);
     if (!endpoint.serverAddress.endsWith("/30")) {
@@ -99,7 +98,10 @@ std::vector<MIB_IPFORWARD_ROW2> WholeHostPolicy::routes(NET_LUID tunnel,
     }
     const auto gateway = endpoint.serverAddress.chopped(3).toStdString();
     (void)numeric(gateway);
-    return {ipv4Route(underlay_.InterfaceLuid, peer_, 32, text(underlay_.NextHop.Ipv4.sin_addr), 1),
+    // DHCP or an administrator may replace the gateway without replacing the
+    // interface. Pin the peer through the current gateway on every protected
+    // retry instead of preserving a stale next hop from policy construction.
+    return {ipv4Route(current.InterfaceLuid, peer_, 32, text(current.NextHop.Ipv4.sin_addr), 1),
             ipv4Route(tunnel, "0.0.0.0", 1, gateway, 1), ipv4Route(tunnel, "128.0.0.0", 1, gateway, 1)};
 }
 } // namespace skewer::windows
