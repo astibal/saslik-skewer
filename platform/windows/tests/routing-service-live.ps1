@@ -52,7 +52,8 @@ try {
     $initial = AwaitPhase 0
     & $exe --client $name 1 $initial.generation
     if ($LASTEXITCODE -eq 0) { throw 'Unpaired service accepted Start' }
-    if ((Command 0 0).phase -ne 0) { throw 'Rejected Start changed service state' }
+    $unpaired = Command 0 0
+    if ($unpaired.phase -ne 0 -or $unpaired.paired) { throw 'Rejected Start changed service state' }
     if ($StoredEndpoint) {
         if (!$ClientDirectory) { throw 'Stored pairing test requires ClientDirectory' }
         & (Join-Path $ClientDirectory 'skewer-routing-control.exe') pair $name $StoredEndpoint
@@ -69,7 +70,7 @@ try {
     }
     if (!$paired) { throw 'Fixture pairing handoff failed' }
     $initial = Command 0 0
-    if ($initial.phase -ne 0) { throw 'Not idle before start' }
+    if ($initial.phase -ne 0 -or !$initial.paired) { throw 'Not paired and idle before start' }
     $started = Command 1 $initial.generation
     if ($started.result -ne 0 -or $started.generation -eq $initial.generation) { throw 'Start rejected' }
     $blocked = AwaitPhase 3
@@ -97,7 +98,9 @@ try {
     # Persistent owner configuration has no launcher PID/birth dependency.
     Start-Service $name
     $restarted = AwaitPhase 0
-    if ($restarted.generation -eq $second.generation) { throw 'SCM restart reused routing generation' }
+    if ($restarted.generation -eq $second.generation -or $restarted.paired) {
+        throw 'SCM restart reused generation or retained memory-only pairing'
+    }
     & $exe --pair $name
     if ($LASTEXITCODE -ne 0) { throw 'Owner could not reconnect after SCM restart' }
     $self = Get-Process -Id $PID

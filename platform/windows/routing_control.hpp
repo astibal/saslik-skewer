@@ -18,6 +18,7 @@ struct RoutingReply {
     RoutingScope scope{};
     std::optional<ProcessKey> selected;
     std::string detail;
+    bool paired{};
 };
 struct RoutingSignals {
     std::atomic_bool ready{};

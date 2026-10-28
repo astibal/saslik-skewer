@@ -82,7 +82,8 @@ int wmain(int argc, wchar_t** argv) {
             std::cout << "{\"result\":" << unsigned(response.result)
                       << ",\"phase\":" << unsigned(response.phase)
                       << ",\"scope\":" << unsigned(response.scope) << ",\"generation\":\""
-                      << response.generation << "\"";
+                      << response.generation << "\",\"paired\":"
+                      << (response.paired ? "true" : "false");
             if (response.selected) {
                 std::cout << ",\"selected\":{\"pid\":" << response.selected->pid
                           << ",\"birth\":\"" << response.selected->created << "\"}";

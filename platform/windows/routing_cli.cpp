@@ -87,7 +87,8 @@ int main(int argc, char** argv) {
         QJsonObject output{{"result", static_cast<int>(response.result)},
                            {"phase", static_cast<int>(response.phase)},
                            {"generation", QString::number(response.generation)},
-                           {"scope", static_cast<int>(response.scope)}};
+                           {"scope", static_cast<int>(response.scope)},
+                           {"paired", response.paired}};
         if (response.selected) {
             output["selected"] = QJsonObject{{"pid", static_cast<qint64>(response.selected->pid)},
                                                {"birth", QString::number(response.selected->created)}};

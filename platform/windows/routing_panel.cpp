@@ -118,6 +118,10 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
+                if (state_.phase == RoutingPhase::Idle) {
+                    status_->setText(state_.paired ? tr("Idle — paired control ready")
+                                                   : tr("Idle — restoring paired control…"));
+                }
                 if (!state_.detail.empty()) {
                     status_->setText(status_->text() + tr(": %1").arg(QString::fromUtf8(state_.detail)));
                 }
@@ -153,7 +157,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
             dispatch(std::move(request));
         }
         updateControls();
-        if (known_ && !automatic_pairing_attempted_ && !action_busy_ && !pending_ &&
+        if (known_ && !state_.paired && !automatic_pairing_attempted_ && !action_busy_ && !pending_ &&
             !endpoint_->text().trimmed().isEmpty() &&
             (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed)) {
             // Pairing handoff changes only service memory. It never starts a
@@ -184,7 +188,7 @@ void RoutingPanel::setServiceName(const QString& service) {
     }
 }
 void RoutingPanel::startSelected(ProcessKey process) {
-    if (!process.pid || !process.created) {
+    if (!process.pid || !process.created || !known_ || !state_.paired) {
         return;
     }
     Request request{4, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,
@@ -212,7 +216,7 @@ RoutingPanel::~RoutingPanel() {
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
     pair_->setEnabled(idle && !action_busy_);
-    start_->setEnabled(idle && !action_busy_);
+    start_->setEnabled(idle && state_.paired && !action_busy_);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
     service_->setEnabled(!action_busy_);
     endpoint_->setEnabled(!action_busy_);

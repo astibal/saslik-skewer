@@ -476,7 +476,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
                                           'K',
                                           'R',
                                           'C',
-                                          3,
+                                          4,
                                           static_cast<std::uint8_t>(result.result),
                                           static_cast<std::uint8_t>(result.phase),
                                           static_cast<std::uint8_t>(result.scope)};
@@ -486,6 +486,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         std::copy(selection.begin(), selection.end(), response.begin() + 16);
     }
     response[36] = static_cast<std::uint8_t>(result.detail.size());
+    response[37] = result.paired ? 1 : 0;
     std::copy(result.detail.begin(), result.detail.end(), response.begin() + 38);
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
@@ -510,7 +511,7 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
     std::array<std::uint8_t, 294> response{};
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != 3 || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] ||
+        response[4] != 4 || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
         throw std::runtime_error("Invalid routing response or exited service");
     }
@@ -531,7 +532,7 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
     }
     std::string detail(reinterpret_cast<const char*>(response.data() + 38), detail_size);
     return {static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
-            getGeneration(response.data() + 8), scope, selected, std::move(detail)};
+            getGeneration(response.data() + 8), scope, selected, std::move(detail), response[37] != 0};
 }
 } // namespace
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,

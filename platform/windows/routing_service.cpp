@@ -23,6 +23,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         }
         state.scope = scope;
         state.selected = selected_identity;
+        state.paired = bool(pairing);
         return state;
     };
     // Declared after pairing: cancel/join the runner before wiping credentials.

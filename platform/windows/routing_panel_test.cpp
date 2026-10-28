@@ -34,10 +34,13 @@ int main(int argc, char** argv) {
                 }
             };
             wait("Idle");
-            if (!pair->isEnabled() || !start->isEnabled() || stop->isEnabled()) {
-                throw std::runtime_error("Incorrect Idle controls");
+            if (!pair->isEnabled() || start->isEnabled() || stop->isEnabled()) {
+                throw std::runtime_error("Unpaired Idle enabled routing");
             }
             pair->click(); wait("Pairing delivered");
+            if (!start->isEnabled()) {
+                throw std::runtime_error("Paired Idle did not enable routing");
+            }
             start->click(); wait("Active");
             if (pair->isEnabled() || start->isEnabled() || !stop->isEnabled()) {
                 throw std::runtime_error("Incorrect Active controls");
