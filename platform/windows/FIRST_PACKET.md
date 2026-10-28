@@ -434,9 +434,14 @@ Unlike the self-socket probe, this fixture uses the shared lease/renewal session
 loop. A complete curl HTTPS transfer through the real paired Saslik passed in
 the Windows VM. The fixture deliberately uses a narrow destination/port capture,
 explicit IPv4 resolution and curl's per-request insecure TLS option; it proves
-neither DNS nor certificate-store integration, UDP/IPv6 protection or general
+neither certificate-store integration, IPv6 protection or general
 application-tree selection. Its own child is terminated before capture cleanup
 on failure. No host routes, adapter configuration or DNS settings are changed.
+With `--udp`, the same harness launches system `nslookup` suspended, captures its
+DNS datagrams, and requires selected-packet, tunnel TX/RX and successful child
+exit evidence. Supplying `SERVICE --udp` exercises that UDP child through the
+installed SCM service. `tests/selected-service-live.ps1` runs both HTTPS/TCP and
+DNS/UDP while proving that host routes and DNS settings remain unchanged.
 
 The routing IPC now has a separate selected-start operation. After authenticating
 the actual pipe caller against the configured service owner, it reads a complete
@@ -453,22 +458,22 @@ is not proof of production per-application routing.
 
 `SocketConnectGuard` is the reusable form of the fresh-attempt blocker. It
 accepts only a pinned, already-authorized process and one of two fixed policies:
-all fresh CONNECT attempts, or protocols unsupported by IPv4 TCP tunnelling
-(IPv6 and non-TCP). No client-supplied filter language is accepted. The owner
+all fresh CONNECT attempts, or protocols unsupported by IPv4 TCP/UDP tunnelling
+(IPv6). No client-supplied filter language is accepted. The owner
 must retain the process and retire the guard on exit; driver/owner termination
 releases protection as documented above. Existing sockets and child processes
 are not covered by this primitive.
 
 The packet fixture checks TCP and both connected/unconnected UDP against local
 IPv4/IPv6 receivers. In particular, UDP API success is not mistaken for delivery:
-the receiving socket determines whether a datagram escaped. The IPv4 TCP-only
-policy must preserve fresh IPv4 TCP while denying the other combinations.
+the receiving socket determines whether a datagram escaped. The selected IPv4
+policy must preserve fresh IPv4 TCP/UDP while denying IPv6.
 The VM passed this matrix using a normalized remote-address range for non-IPv4
 endpoints and a separate non-TCP rule. A SOCKET `ipv6` predicate, including a
 separate handle, unexpectedly allowed IPv6 TCP in this fixture; the cause is not
 yet attributed to a specific upstream defect. Do not substitute that predicate
 without rerunning the matrix. IPv4-mapped destinations retain the IPv4 path.
-The independent curl fixture also installs this unsupported-protocol guard
+The independent process fixture also installs this unsupported-protocol guard
 before resuming its child, and terminates the child before releasing the guard.
 
 ## Experimental selected process through the installed service
