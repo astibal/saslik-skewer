@@ -16,6 +16,7 @@
 #include "packet_queue.hpp"
 #include "tunnel_pump.hpp"
 #include "selected_tunnel_device.hpp"
+#include "selected_capture_bridge.hpp"
 #endif
 #include <ws2tcpip.h>
 #include <windivert.h>
@@ -241,9 +242,19 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
     if (!physical) {
         require(!readable(destination.value, 50), "Original packet escaped capture");
     }
-    require(device.enqueue(owner, held.packet->bytes), "Captured packet not accepted by translator");
-    std::optional<SelectedTunnelDevice::Packet> response;
-    while (GetTickCount64() < deadline && !response) {
+    const auto expected = *skewer::traffic::parsePacketTuple(held.packet->bytes).tuple;
+    SelectedCaptureBridge bridge(
+        capture, device,
+        [&](const auto& tuple) -> std::optional<decltype(owner)> {
+            if (tuple == expected && pinned.running()) {
+                return owner;
+            }
+            return std::nullopt;
+        },
+        [&](auto candidate) { return candidate == owner && pinned.running(); }, [&] { return healthy; });
+    require(bridge.accept(*held.packet), "Captured packet not accepted by bridge");
+    std::size_t delivered{};
+    while (GetTickCount64() < deadline && !delivered) {
         cycle();
         if (auto wire = peerDevice.takeReceived()) {
             const auto tuple = skewer::traffic::parsePacketTuple(*wire);
@@ -257,12 +268,11 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
             std::swap((*wire)[21], (*wire)[23]);
             require(peerDevice.enqueue(*wire), "Translated reply rejected");
         }
-        response = device.takeReceived();
+        require(!readable(source.value, 0), "Reply reached socket before bridge reinjection");
+        delivered = bridge.deliver();
     }
-    require(response && response->owner == owner, "No restored translated response");
-    require(!readable(source.value, 50), "Reply reached socket before reinjection");
-    // Windows loopback packets are always injected outbound, including replies.
-    auto forged = response->bytes;
+    require(delivered == 1, "No restored translated response");
+    auto forged = held.packet->bytes;
     forged[12] ^= 1;
     bool rejected = false;
     try {
@@ -271,7 +281,6 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
         rejected = true;
     }
     require(rejected, "Wrong remote accepted for reinjection");
-    capture.reinject(traffic::restoredReply(*held.packet, std::move(response->bytes)));
     require(readable(source.value, 2000), "Restored reply did not reach original socket");
     std::array<char, 128> received{};
     sockaddr_storage sender{};
@@ -285,7 +294,7 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
         require(!readable(destination.value, 50), "Original packet was also delivered directly");
     }
     healthy = false;
-    require(!device.enqueue(owner, held.packet->bytes), "Lost health accepted captured packet");
+    require(!bridge.accept(*held.packet), "Lost health accepted captured packet");
     std::cout << "PASS: captured UDP socket -> translated encrypted tunnel -> restored socket reply ("
               << (physical ? "physical interface" : "loopback") << ")\n";
 }

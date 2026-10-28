@@ -327,3 +327,19 @@ after validating the complete reverse IPv4 tuple and outbound NETWORK capture.
 Physical replies become inbound; loopback replies remain outbound. Missing
 physical interface IDs, mismatched peers and unsupported input are rejected.
 The caller remains responsible for current process ownership and epoch health.
+
+`SelectedCaptureBridge` now composes captured packets, the selected tunnel
+device and restored replies under one worker. It retains bounded original
+metadata, rejects a changed owner for an existing tuple, and retires on interface
+change, cancellation or an exception. Unknown captures are dropped, never passed
+through. Its `step` waits for one capture and delivers at most 64 queued replies;
+the supervisor interleaves pump steps. Metadata is retained for the entire epoch
+and capacity exhaustion rejects new tuples rather than evicting live mappings.
+
+Both translated UDP socket fixtures now use this shared bridge for admission and
+delivery, including physical-interface reinjection. The resolver still uses
+fixture-owned exclusive endpoints; service integration must provide real pinned
+ownership and an appropriate capture scope. A broad capture with this bridge
+would also drop unknown/unselected traffic and must not be presented as complete
+per-application routing. Capturing remains active until the supervisor explicitly
+destroys its handle, including after the bridge has stopped.
