@@ -17,7 +17,7 @@ case "$version" in *[!0-9.]*|'') echo "Invalid project version: $version" >&2; e
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 root="$stage/skewer-windows-amd64-$version"
-mkdir -p "$root/platforms" "$root/styles" "$root/tls" "$output"
+mkdir -p "$root/platforms" "$root/styles" "$root/tls" "$root/licenses" "$output"
 
 for file in skewer.exe skewer-routing-service.exe skewer-routing-control.exe skewer-control.exe; do
     install -m 0755 "$build/platform/windows/$file" "$root/$file"
@@ -38,6 +38,8 @@ done
 install -m 0644 "$wintun" "$root/wintun.dll"
 install -m 0644 "$windivert/WinDivert.dll" "$root/WinDivert.dll"
 install -m 0644 "$windivert/WinDivert64.sys" "$root/WinDivert64.sys"
+install -m 0644 "$(dirname "$wintun")/../../LICENSE.txt" "$root/licenses/Wintun-LICENSE.txt"
+install -m 0644 "$windivert/../LICENSE" "$root/licenses/WinDivert-LICENSE.txt"
 install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-routing-service.ps1"
 install -m 0644 platform/windows/INSTALL.md "$root/INSTALL.md"
 
