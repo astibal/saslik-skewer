@@ -18,9 +18,21 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Current-user CA trust
+
+The Windows **CA Trust** page downloads the CA over the existing authenticated
+paired channel, validates PEM structure, CA Basic Constraints and time validity
+with Windows CryptoAPI, and compares exact DER bytes against
+`Current User\\ROOT`. The user can explicitly install or remove only that exact
+certificate. Windows may show its native protected-root confirmation; Skewer
+does not bypass it. System-machine and application-specific stores remain
+untouched. The interactive VM smoke test is intentionally read-only: it verifies
+download, native validation, fingerprinting and store inspection without
+changing trust.
+
 ### Native whole-host service integration
 
-The Windows desktop now has a **Routing** tab for an installed service: stored
+The Windows desktop has a **Routing** tab for an installed service: stored
 pairing handoff, asynchronous state, generation-bound Start/Stop, and explicit
 Idle/Starting/Active/Blocked/Stopping/Failed feedback. Periodic status reads do
 not toggle controls; unknown state disables mutations. A click arriving during

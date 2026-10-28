@@ -571,3 +571,10 @@ selects a running process in the real Qt tree, exercises manual Attach and
 Release, and verifies neither action terminates the selected application. The
 fixture restores the prior setting, removes its scheduled task, and the outer
 test deletes its uniquely named service.
+
+The Windows CA page independently uses the paired status channel to obtain the
+advertised CA. Windows CryptoAPI, rather than Qt's optional TLS backend, parses
+and validates it, computes its SHA-256 fingerprint and compares exact DER bytes
+with `Current User\\ROOT`. Install/remove are explicit and retain Windows native
+protected-root confirmation. The automated VM check performs download,
+validation and inspection only; it verified that the store remained unchanged.

@@ -27,6 +27,7 @@
 #include <QItemSelectionModel>
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
+#include "ca_trust_panel.hpp"
 #include "routing_panel.hpp"
 #include "routed_launch.hpp"
 #include <QSettings>
@@ -230,8 +231,11 @@ private:
     void buildPage() {
         page_ = new skewer::ui::ApplicationPage(this);
         pages()->addTab(page_, tr("Applications"));
-        addUnavailablePage(tr("CA Trust"), tr("Windows certificate-store management is not implemented yet. "
-                                              "No certificates are installed or changed by this build."));
+#ifdef SKEWER_WINDOWS_PAIRING
+        pages()->addTab(new skewer::windows::CaTrustPanel(this), tr("CA Trust"));
+#else
+        addUnavailablePage(tr("CA Trust"), tr("This build has no paired CA support."));
+#endif
         addUnavailablePage(tr("Runtime Trust"),
                            tr("Application-specific trust integration is not available on Windows yet."));
         addUnavailablePage(tr("Connections"),
