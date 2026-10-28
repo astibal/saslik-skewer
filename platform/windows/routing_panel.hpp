@@ -1,5 +1,6 @@
 #pragma once
 #include "routing_control.hpp"
+#include "service_installer.hpp"
 #include <QWidget>
 #include <QFutureWatcher>
 #include <QTimer>
@@ -42,8 +43,10 @@ private:
     QPushButton* pair_{};
     QPushButton* start_{};
     QPushButton* stop_{};
+    QPushButton* install_{};
     QTimer timer_;
     QFutureWatcher<Result> watcher_;
+    QFutureWatcher<InstallerResult> install_watcher_;
     std::shared_ptr<Handle> cancel_;
     std::optional<Request> pending_;
     RoutingReply state_{};

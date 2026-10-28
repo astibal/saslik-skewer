@@ -37,6 +37,12 @@ unless `-Upgrade` is explicit. Upgrade stops routing, backs up the exact runtime
 updates and revalidates it, updates the SCM command line and starts in Idle. A
 failed update restores both runtime files and the previous command line.
 
+For a packaged CMake install, configure both `WINTUN_RUNTIME_DLL` and
+`WINDIVERT_RUNTIME_DIR`. CMake then installs the service, control client,
+installer and the three signed driver runtime files beside the desktop client;
+the Routing tab enables its standard UAC install/upgrade action only when that
+complete set is present.
+
 The LocalSystem service uses Manual startup. Installation starts its IPC server
 in **Idle**, not routing. In the GUI Routing tab, send the stored pairing and
 explicitly start routing. Closing the GUI does not stop the service or routing.

@@ -15,6 +15,15 @@ function WindowText($window) {
     $elements = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     return ($elements | ForEach-Object { $_.Current.Name }) -join "`n"
 }
+function SelectTab($window, $name) {
+    $tab = FindNamed $window $name
+    if (!$tab) { throw "Missing tab: $name" }
+    try {
+        $tab.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    } catch {
+        $tab.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
+}
 try {
     'Starting interactive Windows smoke test' | Out-File $log
     $deadline=(Get-Date).AddSeconds(10)
@@ -23,6 +32,8 @@ try {
         if (!$window) { Start-Sleep -Milliseconds 200 }
     } while (!$window -and (Get-Date) -lt $deadline)
     if (!$window) { throw 'Shared Skewer window missing' }
+    SelectTab $window 'Applications'
+    Start-Sleep -Milliseconds 300
     $skewerId = $window.Current.ProcessId
     $exe = (Get-Process -Id $skewerId).Path
     # Window enumeration must be tested on the desktop, not only through SSH.
@@ -34,20 +45,37 @@ try {
     }
     $attach = FindNamed $window 'Attach to Skewer'
     $release = FindNamed $window 'Release'
-    if (!$attach -or !$release -or $attach.Current.IsEnabled -or $release.Current.IsEnabled) { throw 'Unsupported routing actions exposed' }
-    'PASS: unsupported routing stays disabled' | Out-File $log -Append
-    foreach ($tab in @('Applications', 'CA Trust', 'Runtime Trust', 'Connections')) {
+    if (!$attach -or !$release -or ($attach.Current.IsEnabled -and $release.Current.IsEnabled)) {
+        throw "Routing actions do not reflect one authoritative service state (Attach=$($attach.Current.IsEnabled), Release=$($release.Current.IsEnabled))"
+    }
+    'PASS: authoritative Attach/Release controls' | Out-File $log -Append
+    foreach ($tab in @('Applications', 'CA Trust', 'Runtime Trust', 'Connections', 'Routing')) {
         if (!(FindNamed $window $tab)) { throw "Missing tab: $tab" }
     }
     'PASS: shared application tabs' | Out-File $log -Append
-    $connections = FindNamed $window 'Connections'
-    $connections.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    SelectTab $window 'Connections'
     Start-Sleep -Seconds 4
     if ((WindowText $window) -notmatch '[0-9]+ TCP sockets from the Windows owner table') {
         throw 'Native Windows connection inventory did not populate'
     }
     'PASS: native Windows TCP connection inventory' | Out-File $log -Append
-    (FindNamed $window 'Applications').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    SelectTab $window 'Routing'
+    Start-Sleep -Milliseconds 500
+    $package = Split-Path $exe
+    $completeRuntime = @('install-routing-service.ps1','wintun.dll','WinDivert.dll','WinDivert64.sys') |
+        ForEach-Object { Test-Path (Join-Path $package $_) } | Where-Object { !$_ }
+    if (!$completeRuntime) {
+        $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::Button))
+        $install = $buttons | Where-Object { $_.Current.Name -like '*routing service*' } | Select-Object -First 1
+        if (!$install -or !$install.Current.IsEnabled) {
+            throw "Complete package did not enable service installation:`n$(WindowText $window)"
+        }
+        'PASS: complete package enables explicit UAC service management' | Out-File $log -Append
+    }
+    SelectTab $window 'Applications'
     $edit = FindNamed $window 'Application executable'
     $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     $normal = FindNamed $window 'Launch normally'

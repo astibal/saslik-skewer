@@ -13,7 +13,9 @@ selected traffic blocked. If the service exits or crashes, its WinDivert handles
 close and their filters disappear: applications may communicate through normal
 host routes. Automatic service restart does not eliminate this exposure window.
 This limitation is accepted for laboratory/testing use, not as a security boundary.
-These are requirements; integrated routing is not yet available.
+The service now implements whole-host IPv4 routing and one selected process's
+fresh IPv4 TCP connections. The remaining protocol and coverage limits below
+are release gaps, not a claim that routing is unavailable.
 
 A custom WFP callout driver is deferred beyond the first release. Neither its
 build nor a live kernel experiment is a gate for the WinDivert implementation.
@@ -85,17 +87,12 @@ for this scope too; this feature does not promise a persistent kernel kill switc
 No whole-host route changes are currently enabled. Acceptance testing must use
 an isolated VM with out-of-band console access before exposing this control.
 
-The selection pipe now accepts a read-only scope probe: the existing 20-byte
-version-1 envelope uses byte 6 = 2, byte 7 = scope (0 applications, 1 whole host),
-followed by the caller PID/creation time. The service authenticates that identity
-against the pipe token. It currently returns `ScopeUnsupported` for both scopes:
-integrated routing is not exposed yet. No target handle is returned to the worker
-and no policy is changed. Existing process validation messages/replies are
-unchanged; older servers reject the new operation instead of guessing. The client
-exchange helper now pins the SCM service identity, derives its own PID/birth,
-and shares the bounded, cancellable transport with selection validation. A
-`Verified` process reply is rejected for a scope query rather than interpreted
-as routing support. GUI capability display remains to be wired up.
+The authenticated routing IPC reports its authoritative phase, generation,
+scope and selected PID/birth identity. The GUI restores that state after restart
+and never stops the service merely because its window closes. Selected launch
+starts the process suspended and releases it only after the service reports
+Active. Manual Attach is available with an explicit warning that existing
+sockets retain their old path.
 
 ## Windows implementation order
 
@@ -131,7 +128,7 @@ all route-mode combinations, endpoint validation, session-key vector, stale and
 malformed telemetry, and reconnect eligibility/backoff. These are policy tests,
 not proof of kernel enforcement.
 
-Before Windows routing is enabled, packet-level integration tests must capture
+Before expanding the current release scope, packet-level integration tests must capture
 the physical egress and verify no direct leak during tunnel loss with the service
 alive, GUI restart, adapter deletion, lease expiry and reconnect. Test service
 termination separately: direct connectivity may return, and the GUI must report

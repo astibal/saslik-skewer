@@ -7,6 +7,9 @@
 #include <QVBoxLayout>
 #include <QFormLayout>
 #include <QSettings>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
 #include <QtConcurrent>
 
 namespace skewer::windows {
@@ -15,7 +18,8 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     auto* note = new QLabel(tr("Whole-host IPv4 routing through an installed Skewer service. Closing this "
                                "window does not stop routing. "
-                               "Selected-process routing is currently experimental and CLI-only. WinDivert protection does "
+                               "The Applications tab can route one process's fresh IPv4 TCP connections. "
+                               "WinDivert protection does "
                                "not survive a service crash."),
                             this);
     note->setWordWrap(true);
@@ -39,6 +43,9 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     buttons->addWidget(pair_);
     buttons->addWidget(start_);
     buttons->addWidget(stop_);
+    install_ = new QPushButton(tr("Install routing service…"), this);
+    install_->setObjectName("routingInstall");
+    buttons->addWidget(install_);
     buttons->addStretch();
     layout->addLayout(buttons);
     status_ = new QLabel(tr("Checking service…"), this);
@@ -49,6 +56,28 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     connect(pair_, &QPushButton::clicked, this, [this] { submit(3); });
     connect(start_, &QPushButton::clicked, this, [this] { submit(1); });
     connect(stop_, &QPushButton::clicked, this, [this] { submit(2); });
+    connect(install_, &QPushButton::clicked, this, [this] {
+        const auto package = QCoreApplication::applicationDirPath();
+        const auto script = QDir(package).filePath(QStringLiteral("install-routing-service.ps1"));
+        const auto service = service_->text().trimmed();
+        const auto endpoint = endpoint_->text().trimmed();
+        const bool upgrade = routingServiceInstalled(service);
+        status_->setText(upgrade ? tr("Waiting for approval to upgrade the routing service…")
+                                 : tr("Waiting for approval to install the routing service…"));
+        updateControls();
+        install_watcher_.setFuture(QtConcurrent::run(runRoutingServiceInstaller, script, package,
+                                                     service, endpoint, upgrade));
+        updateControls();
+    });
+    connect(&install_watcher_, &QFutureWatcher<InstallerResult>::finished, this, [this] {
+        const auto result = install_watcher_.result();
+        if (!result.error.isEmpty()) status_->setText(tr("Service installation failed: %1").arg(result.error));
+        else status_->setText(tr("Routing service installed and started in Idle."));
+        ++epoch_;
+        known_ = false;
+        updateControls();
+        submit(0);
+    });
     connect(service_, &QLineEdit::textChanged, this, [this] {
         ++epoch_;
         known_ = false;
@@ -154,6 +183,7 @@ RoutingPanel::~RoutingPanel() {
         SetEvent(cancel_->get());
     }
     watcher_.waitForFinished();
+    install_watcher_.waitForFinished();
 }
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
@@ -162,6 +192,14 @@ void RoutingPanel::updateControls() {
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
     service_->setEnabled(!action_busy_);
     endpoint_->setEnabled(!action_busy_);
+    const auto package = QCoreApplication::applicationDirPath();
+    const bool packaged = QFileInfo::exists(QDir(package).filePath("install-routing-service.ps1")) &&
+                          QFileInfo::exists(QDir(package).filePath("wintun.dll")) &&
+                          QFileInfo::exists(QDir(package).filePath("WinDivert.dll")) &&
+                          QFileInfo::exists(QDir(package).filePath("WinDivert64.sys"));
+    install_->setText(routingServiceInstalled(service_->text().trimmed())
+                          ? tr("Upgrade routing service…") : tr("Install routing service…"));
+    install_->setEnabled(packaged && !action_busy_ && !install_watcher_.isRunning());
 }
 void RoutingPanel::submit(int action) {
     Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,
