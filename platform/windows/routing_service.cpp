@@ -14,6 +14,17 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
     auto pairings = createSelectionPipe(name + L"-pair", owner);
     std::unique_ptr<PairingHandoff> pairing;
     std::unique_ptr<ProcessTarget> target;
+    RoutingScope scope{RoutingScope::None};
+    std::optional<ProcessKey> selected_identity;
+    const auto describe = [&](RoutingReply state) {
+        if (state.phase == RoutingPhase::Idle) {
+            scope = RoutingScope::None;
+            selected_identity.reset();
+        }
+        state.scope = scope;
+        state.selected = selected_identity;
+        return state;
+    };
     // Declared after pairing: cancel/join the runner before wiping credentials.
     RoutingController controller([&](HANDLE cancel, RoutingSignals& state) {
         if (target) {
@@ -30,18 +41,24 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             auto state = controller.command(RoutingCommand::Status, 0);
             if (generation != state.generation) {
                 state.result = RoutingResult::Stale;
-                return state;
+                return describe(state);
             }
             if (state.phase != RoutingPhase::Idle && state.phase != RoutingPhase::Failed) {
                 state.result = RoutingResult::Busy;
-                return state;
+                return describe(state);
             }
             if (!pairing || !next || !next->running()) {
                 throw std::runtime_error("Pair and select a live process before routing");
             }
+            const auto identity = next->key();
             target = std::move(next);
             try {
-                return controller.command(RoutingCommand::Start, generation);
+                auto started = controller.command(RoutingCommand::Start, generation);
+                if (started.result == RoutingResult::Ok) {
+                    scope = RoutingScope::SelectedProcess;
+                    selected_identity = identity;
+                }
+                return describe(started);
             } catch (...) {
                 target.reset();
                 throw;
@@ -63,7 +80,12 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                                     if (command == RoutingCommand::Start && !pairing) {
                                         throw std::runtime_error("Pair before starting routing");
                                     }
-                                    return controller.command(command, generation);
+                                    auto state = controller.command(command, generation);
+                                    if (command == RoutingCommand::Start && state.result == RoutingResult::Ok) {
+                                        scope = RoutingScope::WholeHost;
+                                        selected_identity.reset();
+                                    }
+                                    return describe(state);
                                 }, startSelected);
             finishSelection(commands->get(), stop, 500);
         } catch (const std::exception&) {

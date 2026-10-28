@@ -1,5 +1,6 @@
 #include "process_browser.hpp"
 #include <QHeaderView>
+#include <QColor>
 #include <QScrollBar>
 #include <QSet>
 #include <QVBoxLayout>
@@ -77,6 +78,19 @@ void ProcessBrowser::setProcesses(QVector<ProcessRecord> records) {
     rebuildModel();
     restoreViewState(state);
     initialized_ = true;
+    setFilterText(filter_);
+}
+
+void ProcessBrowser::setRoutingState(bool available, const QString& routed_identity) {
+    const auto normalized = available ? routed_identity : QString{};
+    if (routing_available_ == available && routed_identity_ == normalized) {
+        return;
+    }
+    const auto state = captureViewState();
+    routing_available_ = available;
+    routed_identity_ = normalized;
+    rebuildModel();
+    restoreViewState(state);
     setFilterText(filter_);
 }
 
@@ -164,9 +178,16 @@ void ProcessBrowser::rebuildModel() {
         }
         auto* details = new QStandardItem(record.executable);
         details->setToolTip(record.executable + QLatin1Char('\n') + record.windows.join(QLatin1Char('\n')));
-        // This browser is an inventory only: never imply successful routing.
+        auto* routing = new QStandardItem(routing_available_ ? tr("Direct") : tr("Unavailable"));
+        if (routing_available_ && record.identity() == routed_identity_) {
+            routing->setText(tr("Routed"));
+            auto font = routing->font();
+            font.setBold(true);
+            routing->setFont(font);
+            routing->setForeground(QColor(61, 194, 126));
+        }
         parent->appendRow({items.value(record.pid), new QStandardItem(QString::number(record.pid)),
-                           new QStandardItem(tr("Unavailable")), details});
+                           routing, details});
     }
 }
 

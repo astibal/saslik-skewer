@@ -80,8 +80,14 @@ int wmain(int argc, wchar_t** argv) {
                     : exchangeRoutingCommand(pipe.get(), name, static_cast<RoutingCommand>(operation),
                                              number(argv[4]), cancel.get(), 3000);
             std::cout << "{\"result\":" << unsigned(response.result)
-                      << ",\"phase\":" << unsigned(response.phase) << ",\"generation\":\""
-                      << response.generation << "\"}\n";
+                      << ",\"phase\":" << unsigned(response.phase)
+                      << ",\"scope\":" << unsigned(response.scope) << ",\"generation\":\""
+                      << response.generation << "\"";
+            if (response.selected) {
+                std::cout << ",\"selected\":{\"pid\":" << response.selected->pid
+                          << ",\"birth\":\"" << response.selected->created << "\"}";
+            }
+            std::cout << "}\n";
             return 0;
         }
         if (mode != L"--service" || argc != 4) {

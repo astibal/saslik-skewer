@@ -67,6 +67,6 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
                        : signals_.blocked.load() ? RoutingPhase::Blocked
                        : signals_.ready.load()   ? RoutingPhase::Active
                                                  : RoutingPhase::Starting;
-    return {result, phase, generation_};
+    return {result, phase, generation_, RoutingScope::None, std::nullopt};
 }
 } // namespace skewer::windows

@@ -100,7 +100,12 @@ public:
         buildLauncher();
 #ifdef SKEWER_WINDOWS_PAIRING
         buildSaslikPage();
-        pages()->addTab(new skewer::windows::RoutingPanel(this), tr("Routing"));
+        routing_panel_ = new skewer::windows::RoutingPanel(this);
+        pages()->addTab(routing_panel_, tr("Routing"));
+        routing_panel_->setStateCallback(
+            [this](bool known, const skewer::windows::RoutingReply& state) {
+                routingStateChanged(known, state);
+            });
 #endif
         applyPreferences();
         connect(preferencesAction(), &QAction::triggered, this, &WindowsWindow::editPreferences);
@@ -234,11 +239,18 @@ private:
         browser_ = new skewer::ui::ProcessBrowser(page_, page_->tree);
         page_->setProcessWidget(browser_);
         connect(page_->search, &QLineEdit::textChanged, browser_, &skewer::ui::ProcessBrowser::setFilterText);
-        page_->action_status->setText(
-            tr("Application attachment is unavailable; no applications are individually attached."));
-        for (auto* button : {page_->attach, page_->release}) {
-            button->setToolTip(tr("Not supported by the Windows backend yet."));
-        }
+        page_->action_status->setText(tr("Checking authoritative routing state…"));
+        page_->attach->setEnabled(false);
+        page_->attach->setToolTip(tr("Attaching an already running process is not implemented yet."));
+        page_->release->setEnabled(false);
+        page_->release->setToolTip(tr("Stop the currently selected-process routing session."));
+#ifdef SKEWER_WINDOWS_PAIRING
+        connect(page_->release, &QPushButton::clicked, this, [this] {
+            page_->release->setEnabled(false);
+            page_->action_status->setText(tr("Stopping selected-process routing…"));
+            routing_panel_->stopCurrent();
+        });
+#endif
         auto* routing_status = new QLabel(tr("Whole-host routing: see Routing tab"), this);
         routing_status->setObjectName("routingStatusBar");
         statusBar()->addPermanentWidget(routing_status);
@@ -356,6 +368,40 @@ private:
         refresh();
     }
 
+#ifdef SKEWER_WINDOWS_PAIRING
+    void routingStateChanged(bool known, const skewer::windows::RoutingReply& state) {
+        const bool selected = known && state.scope == skewer::windows::RoutingScope::SelectedProcess &&
+                              state.selected.has_value();
+        const bool retained = state.phase == skewer::windows::RoutingPhase::Starting ||
+                              state.phase == skewer::windows::RoutingPhase::Active ||
+                              state.phase == skewer::windows::RoutingPhase::Blocked ||
+                              state.phase == skewer::windows::RoutingPhase::Stopping;
+        const auto identity = selected
+                                  ? QString::number(state.selected->pid) + QLatin1Char(':') +
+                                        QString::number(state.selected->created)
+                                  : QString{};
+        browser_->setRoutingState(known, selected && retained ? identity : QString{});
+        page_->release->setEnabled(selected && retained &&
+                                   state.phase != skewer::windows::RoutingPhase::Stopping);
+        if (!known) {
+            page_->action_status->setText(tr("Routing service unavailable; process state is unknown."));
+        } else if (selected && retained) {
+            page_->action_status->setText(
+                tr("PID %1 is selected for routing (generation %2, %3).")
+                    .arg(state.selected->pid)
+                    .arg(state.generation)
+                    .arg(state.phase == skewer::windows::RoutingPhase::Active ? tr("active")
+                                                                              : tr("transitioning")));
+        } else if (state.scope == skewer::windows::RoutingScope::WholeHost && retained) {
+            page_->action_status->setText(
+                tr("Whole-host routing is active (generation %1); see the Routing tab.")
+                    .arg(state.generation));
+        } else {
+            page_->action_status->setText(tr("No process is individually routed."));
+        }
+    }
+#endif
+
     void browseExecutable() {
         const auto selected =
             QFileDialog::getOpenFileName(this, tr("Choose an application"), {}, tr("Programs (*.exe)"));
@@ -392,6 +438,13 @@ private:
             return;
         }
         const auto service = QSettings().value("windows/routingService", "SkewerRouting").toString();
+#ifdef SKEWER_WINDOWS_PAIRING
+        if (routed) {
+            // Launch and status must address the same installed service even
+            // when another process changed the persisted preference.
+            routing_panel_->setServiceName(service);
+        }
+#endif
         launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
                                        : tr("Starting %1 without routing…").arg(executable));
         launch_watcher_.setFuture(QtConcurrent::run(launch, executable, service, routed, launch_cancel_));
@@ -403,6 +456,7 @@ private:
     QPushButton* start_{};
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};
+    skewer::windows::RoutingPanel* routing_panel_{};
 #endif
     skewer::ui::LaunchCatalog* suggestions_{};
     QLabel* launch_status_{};

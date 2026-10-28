@@ -31,6 +31,14 @@ int main(int argc, char** argv) {
         require(apps->child(0)->rowCount() == 1, "Renderer missing from application tree");
         require(browser.model()->item(1)->rowCount() == 2, "Background roots missing");
         require(browser.launchSuggestions().count("browser.exe") == 1, "Duplicate launch suggestions");
+        require(apps->child(0, 2)->text() == "Unavailable", "Unknown routing was presented as known");
+        browser.setRoutingState(true, records[1].identity());
+        apps = browser.model()->item(0);
+        require(apps->child(0, 2)->text() == "Routed", "Exact routed identity was not marked");
+        require(apps->child(1, 2)->text() == "Direct", "Unselected process was not marked direct");
+        browser.setRoutingState(false);
+        apps = browser.model()->item(0);
+        require(apps->child(0, 2)->text() == "Unavailable", "Lost service retained routed state");
         browser.setFilterText("renderer");
         require(!browser.tree()->isRowHidden(0, apps->index()), "Filter hid matching descendant's parent");
         require(browser.tree()->isRowHidden(1, apps->index()), "Filter retained nonmatching instance");

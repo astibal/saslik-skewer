@@ -523,6 +523,13 @@ Once resumed, closing the launcher handles does not terminate the application
 or routing service. Descendants and existing-instance handoff remain outside
 this experimental single-process contract.
 
+Routing status replies identify whether the service owns no session, a
+whole-host session, or one exact PID/birth selected session. The GUI treats
+this reply as authoritative: after reopening it restores the routed badge and
+Release action for that exact process instead of relying on window-local launch
+state. An unavailable or incompatible service leaves process routing visibly
+unknown.
+
 The SCM HTTPS fixture uses this production launcher path. Before pairing, it
 also checks that a rejected child cannot signal its first-action event, with
 a suspended/resumed positive control proving the fixture can observe execution.

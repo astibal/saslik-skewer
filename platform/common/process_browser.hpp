@@ -23,6 +23,7 @@ public:
     enum Role { IdentityRole = Qt::UserRole + 1, ExecutableRole };
     explicit ProcessBrowser(QWidget* parent = nullptr, QTreeView* view = nullptr);
     void setProcesses(QVector<ProcessRecord> processes);
+    void setRoutingState(bool available, const QString& routed_identity = {});
     void setFilterText(const QString& text);
     QStringList launchSuggestions() const;
     QTreeView* tree() const { return tree_; }
@@ -44,6 +45,8 @@ private:
     QTreeView* tree_;
     QVector<ProcessRecord> records_;
     bool initialized_{};
+    bool routing_available_{};
+    QString routed_identity_;
     QString filter_;
 };
 } // namespace skewer::ui

@@ -76,11 +76,21 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                 state_ = result.reply;
                 const QStringList phases{tr("Idle"),
                                          tr("Starting"),
-                                         tr("Active — service routing"),
+                                         tr("Active"),
                                          tr("Blocked — tunnel failed, protection retained"),
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
+                if (state_.phase == RoutingPhase::Active &&
+                    state_.scope == RoutingScope::SelectedProcess && state_.selected) {
+                    status_->setText(tr("Active — selected PID %1 (generation %2)")
+                                         .arg(state_.selected->pid)
+                                         .arg(state_.generation));
+                } else if (state_.phase == RoutingPhase::Active &&
+                           state_.scope == RoutingScope::WholeHost) {
+                    status_->setText(tr("Active — whole-host routing (generation %1)")
+                                         .arg(state_.generation));
+                }
                 if (state_.result != RoutingResult::Ok) {
                     status_->setText(tr("Request rejected (stale generation or busy). ") + status_->text());
                 }
@@ -91,6 +101,9 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                 if (result.request.action == 3) {
                     QSettings().setValue("windows/routingEndpoint", result.request.endpoint);
                 }
+            }
+            if (state_callback_) {
+                state_callback_(known_, state_);
             }
         }
         if (pending_) {
@@ -105,6 +118,19 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     timer_.start(2000);
     submit(0);
 }
+void RoutingPanel::setStateCallback(StateCallback callback) {
+    state_callback_ = std::move(callback);
+    if (state_callback_) {
+        state_callback_(known_, state_);
+    }
+}
+void RoutingPanel::setServiceName(const QString& service) {
+    const auto normalized = service.trimmed();
+    if (!normalized.isEmpty() && service_->text() != normalized) {
+        service_->setText(normalized);
+    }
+}
+void RoutingPanel::stopCurrent() { submit(2); }
 RoutingPanel::~RoutingPanel() {
     timer_.stop();
     pending_.reset();

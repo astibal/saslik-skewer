@@ -3,15 +3,19 @@
 #include <atomic>
 #include <functional>
 #include <future>
+#include <optional>
 
 namespace skewer::windows {
 enum class RoutingCommand : std::uint8_t { Status, Start, Stop };
 enum class RoutingPhase : std::uint8_t { Idle, Starting, Active, Blocked, Stopping, Failed };
 enum class RoutingResult : std::uint8_t { Ok, Stale, Busy };
+enum class RoutingScope : std::uint8_t { None, WholeHost, SelectedProcess };
 struct RoutingReply {
     RoutingResult result{};
     RoutingPhase phase{};
     std::uint64_t generation{};
+    RoutingScope scope{};
+    std::optional<ProcessKey> selected;
 };
 struct RoutingSignals {
     std::atomic_bool ready{};

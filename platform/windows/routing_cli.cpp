@@ -84,7 +84,12 @@ int main(int argc, char** argv) {
         }
         QTextStream(stdout) << "{\"result\":" << unsigned(response.result)
                             << ",\"phase\":" << unsigned(response.phase) << ",\"generation\":\""
-                            << response.generation << "\"}\n";
+                            << response.generation << "\",\"scope\":" << unsigned(response.scope);
+        if (response.selected) {
+            QTextStream(stdout) << ",\"selected\":{\"pid\":" << response.selected->pid
+                                << ",\"birth\":\"" << response.selected->created << "\"}";
+        }
+        QTextStream(stdout) << "}\n";
         return response.result == RoutingResult::Ok ? 0 : 1;
     } catch (const std::exception& error) {
         QTextStream(stderr) << error.what() << '\n';

@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QFutureWatcher>
 #include <QTimer>
+#include <functional>
 #include <optional>
 class QLineEdit;
 class QLabel;
@@ -11,8 +12,12 @@ class QPushButton;
 namespace skewer::windows {
 class RoutingPanel final : public QWidget {
 public:
+    using StateCallback = std::function<void(bool, const RoutingReply&)>;
     explicit RoutingPanel(QWidget* parent = nullptr);
     ~RoutingPanel() override;
+    void setStateCallback(StateCallback callback);
+    void setServiceName(const QString& service);
+    void stopCurrent();
 
 private:
     struct Request {
@@ -43,5 +48,6 @@ private:
     unsigned epoch_{};
     bool known_{};
     bool action_busy_{};
+    StateCallback state_callback_;
 };
 } // namespace skewer::windows
