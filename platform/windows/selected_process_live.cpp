@@ -1,5 +1,6 @@
 #include "selected_session_packets.hpp"
 #include "tcp_selection_resolver.hpp"
+#include "socket_connect_guard.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QTextStream>
@@ -109,9 +110,12 @@ int main(int argc, char** argv) {
         struct StopBeforeCaptureRelease {
             Child& child;
             ~StopBeforeCaptureRelease() { child.stop(); }
-        } stopChild{child};
+        };
         traffic::TcpSelectionResolver resolver(dll, std::make_unique<ProcessTarget>(identity));
         ProcessTarget pinned(identity);
+        traffic::SocketConnectGuard unsupported(
+            dll, pinned, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp);
+        StopBeforeCaptureRelease stopChild{child};
         std::atomic_bool ready{};
         std::uint64_t selected{}, direct{};
         SelectedSessionPackets packets(

@@ -7,6 +7,7 @@
 #include "tcp_selection_resolver.hpp"
 #include "udp_owners.hpp"
 #include "packet_capture.hpp"
+#include "socket_connect_guard.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -171,6 +172,56 @@ bool readable(SOCKET socket, long milliseconds) {
 }
 
 #ifdef SKEWER_TEST_TUNNEL_PATH
+void socketProtocolGuard(const std::wstring& path) {
+    using namespace skewer::windows;
+    ProcessTarget target(processKey(GetCurrentProcess(), GetCurrentProcessId()));
+    for (int mode : {2, 1, 0}) {
+        for (int family : {AF_INET, AF_INET6}) {
+            for (bool tcp : {false, true}) {
+                Socket listener(family, tcp), source(family, tcp);
+                const auto destination = bindLoopback(listener.value, family);
+                if (tcp) { require(listen(listener.value, 1) == 0, "Listen for socket guard fixture"); }
+                std::unique_ptr<traffic::SocketConnectGuard> guard;
+                if (mode) {
+                    guard = std::make_unique<traffic::SocketConnectGuard>(
+                        path, target, mode == 1 ? traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp
+                                               : traffic::SocketConnectGuard::Mode::All);
+                }
+                const bool blocked = mode == 2 || (mode == 1 && (!tcp || family == AF_INET6));
+                const int size = family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+                const auto result = connect(source.value, reinterpret_cast<const sockaddr*>(&destination), size);
+                if (tcp && (result == SOCKET_ERROR) != blocked) {
+                    throw std::runtime_error("Incorrect protocol guard connect decision: mode=" +
+                                             std::to_string(mode) + " family=" + std::to_string(family) +
+                                             " tcp=" + std::to_string(tcp) + " result=" +
+                                             std::to_string(result) + " error=" + std::to_string(WSAGetLastError()));
+                }
+                if (!tcp) {
+                    // UDP connect/send success is not delivery evidence. Windows
+                    // may accept the API call and drop at the first datagram.
+                    const char payload = 'g';
+                    if (result != SOCKET_ERROR) {
+                        const auto sent = send(source.value, &payload, 1, 0);
+                        require(blocked || sent == 1, "Baseline connected UDP send failed");
+                    }
+                    require(readable(listener.value, blocked ? 100 : 1000) == !blocked,
+                            "Incorrect connected UDP delivery under guard");
+                    char received{};
+                    if (!blocked) { require(recv(listener.value, &received, 1, 0) == 1, "Read baseline UDP"); }
+                    // Also test implicit UDP association, not just explicit connect.
+                    Socket datagram(family);
+                    const auto sent = sendto(datagram.value, &payload, 1, 0,
+                                             reinterpret_cast<const sockaddr*>(&destination), size);
+                    require(blocked || sent == 1, "Baseline UDP sendto failed");
+                    require(readable(listener.value, blocked ? 100 : 1000) == !blocked,
+                            "Incorrect UDP sendto delivery under guard");
+                }
+            }
+        }
+    }
+    std::cout << "PASS: socket guard blocks fresh UDP/IPv6, preserves IPv4 TCP, and releases explicitly\n";
+}
+
 void translatedUdpSocket(const std::wstring& path, bool physical = false) {
     using namespace skewer::windows;
     Socket source(AF_INET), destination(AF_INET);
@@ -758,6 +809,7 @@ int wmain(int argc, wchar_t** argv) {
 #ifdef SKEWER_TEST_TUNNEL_PATH
         translatedUdpSocket(path);
         translatedUdpSocket(path, true);
+        socketProtocolGuard(path);
         directBridgePacket(path);
         tcpTunnel(path, AF_INET);
         tcpTunnel(path, AF_INET6);

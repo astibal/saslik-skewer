@@ -451,3 +451,23 @@ duplicate start, stale generation and explicit Stop. That fixture deliberately
 reports Blocked and changes no traffic policy. The installed application still
 has no selected runner wired in; this IPC test is not proof of production
 per-application routing.
+
+`SocketConnectGuard` is the reusable form of the fresh-attempt blocker. It
+accepts only a pinned, already-authorized process and one of two fixed policies:
+all fresh CONNECT attempts, or protocols unsupported by IPv4 TCP tunnelling
+(IPv6 and non-TCP). No client-supplied filter language is accepted. The owner
+must retain the process and retire the guard on exit; driver/owner termination
+releases protection as documented above. Existing sockets and child processes
+are not covered by this primitive.
+
+The packet fixture checks TCP and both connected/unconnected UDP against local
+IPv4/IPv6 receivers. In particular, UDP API success is not mistaken for delivery:
+the receiving socket determines whether a datagram escaped. The IPv4 TCP-only
+policy must preserve fresh IPv4 TCP while denying the other combinations.
+The VM passed this matrix using a normalized remote-address range for non-IPv4
+endpoints and a separate non-TCP rule. A SOCKET `ipv6` predicate, including a
+separate handle, unexpectedly allowed IPv6 TCP in this fixture; the cause is not
+yet attributed to a specific upstream defect. Do not substitute that predicate
+without rerunning the matrix. IPv4-mapped destinations retain the IPv4 path.
+The independent curl fixture also installs this unsupported-protocol guard
+before resuming its child, and terminates the child before releasing the guard.
