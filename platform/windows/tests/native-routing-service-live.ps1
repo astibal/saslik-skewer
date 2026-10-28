@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Management,
     [string]$DnsServer = '1.1.1.1',
     [switch]$TestTunnelLoss,
+    [switch]$TestDhcpRenew,
     [switch]$GuiClient
 )
 $ErrorActionPreference = 'Stop'
@@ -103,6 +104,14 @@ try {
     }
     $pin = Get-NetRoute -DestinationPrefix "$Peer/32"
     if ($pin.InterfaceIndex -eq $adapter.ifIndex) { throw 'Transport peer routed into its own tunnel' }
+    if ($TestDhcpRenew) {
+        $underlay = Get-NetIPInterface -InterfaceIndex $pin.InterfaceIndex -AddressFamily IPv4
+        if ($underlay.Dhcp -ne 'Enabled') { throw 'Tunnel underlay is not DHCP-enabled' }
+        & ipconfig.exe /renew $underlay.InterfaceAlias | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'DHCP renewal failed while whole-host routing was active' }
+        $active = Await 2
+        Write-Output 'PASS: underlay DHCP lease renewed while whole-host routing remained Active'
+    }
     foreach ($scheme in @('http','https')) {
         $port = if ($scheme -eq 'http') { 80 } else { 443 }
         $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `

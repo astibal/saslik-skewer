@@ -103,8 +103,11 @@ adapter. Physical IPv6 egress is blocked; IPv6 tunneling remains unfinished.
 The configured numeric IPv4 DNS server is assigned only to the fresh Wintun
 adapter using SetInterfaceDnsSettings (Windows 10 build 19041 or newer); physical
 adapter DNS settings are never changed. Adapter destruction removes its DNS
-settings. Registration and LLMNR are disabled only on that adapter. Tuple exceptions allow control TCP and protocol UDP ports
-40001–40255 to the configured peer. They are not process isolation. The optional
+settings. Registration and LLMNR are disabled only on that adapter. Tuple
+exceptions allow control TCP and protocol UDP ports 40001–40255 to the
+configured peer. DHCPv4 client renewal (UDP 68 to 67) is also preserved, but
+only on the original underlay adapter. There is no general LAN, private-network
+or DNS bypass. These exceptions are not process isolation. The optional
 management IP allows SSH replies only and is explicit lab administration policy.
 
 `tests/native-routing-service-live.ps1` installs a disposable real service from
@@ -118,6 +121,9 @@ HTTP fallback times out. Explicit Stop removes protection after cleanup; the
 controller retains Failed for that generation rather than concealing the earlier
 tunnel error. The script finally removes the service and checks owned routes,
 adapter and unchanged default routes. Binaries are retained for diagnostics.
+`-TestDhcpRenew` additionally renews the original underlay lease while routing
+is Active and requires the service to remain Active. Use it only in a disposable
+DHCP-backed VM because it deliberately changes live host network state.
 
 The DNS-enabled SCM integration passed on the Windows VM on 2026-10-28, including
 system resolution, ordinary HTTPS, tunnel loss blocking and owned-resource cleanup.

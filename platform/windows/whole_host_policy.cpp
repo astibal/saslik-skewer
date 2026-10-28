@@ -62,9 +62,10 @@ WholeHostPolicy::WholeHostPolicy(std::string peer, unsigned port, std::string ma
 }
 
 std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
-    NET_IFINDEX index{};
+    NET_IFINDEX index{}, underlay_index{};
     if (!tunnel.Value || tunnel.Value == underlay_.InterfaceLuid.Value ||
-        ConvertInterfaceLuidToIndex(&tunnel, &index) != NO_ERROR) {
+        ConvertInterfaceLuidToIndex(&tunnel, &index) != NO_ERROR ||
+        ConvertInterfaceLuidToIndex(&underlay_.InterfaceLuid, &underlay_index) != NO_ERROR) {
         throw std::invalid_argument("Invalid tunnel guard interface");
     }
     // UDP ports are bounded by the authenticated protocol's endpoint ID range.
@@ -74,6 +75,10 @@ std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
                    " and ((udp.DstPort >= 40001 and udp.DstPort <= 40255)"
                    " or tcp.DstPort == " +
                    std::to_string(control_port_) + "))";
+    // Preserve only the host's DHCPv4 client lease on the original underlay.
+    // This is an infrastructure tuple exemption, not a general LAN bypass.
+    allowed += " or (ifIdx == " + std::to_string(underlay_index) +
+               " and udp.SrcPort == 68 and udp.DstPort == 67)";
     if (!management_.empty()) {
         allowed += " or (ip.DstAddr == " + management_ + " and tcp.SrcPort == 22)";
     }
