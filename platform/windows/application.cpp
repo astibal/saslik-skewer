@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QProcess>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -72,16 +73,22 @@ struct LaunchResult {
     bool routed{};
     QString error;
 };
-LaunchResult launch(const QString& executable, const QString& service, bool routed,
+LaunchResult launch(const QString& executable, const QStringList& arguments, const QString& service, bool routed,
                     const std::shared_ptr<skewer::windows::Handle>& cancel) {
     try {
+        std::vector<std::wstring> native_arguments;
+        native_arguments.reserve(arguments.size());
+        for (const auto& argument : arguments) {
+            native_arguments.push_back(argument.toStdWString());
+        }
         if (routed) {
             const auto result = skewer::windows::launchRouted(service.toStdWString(),
-                                                              executable.toStdWString(), {}, cancel->get());
+                                                              executable.toStdWString(), native_arguments,
+                                                              cancel->get());
             skewer::windows::Handle thread(result.process.hThread), handle(result.process.hProcess);
             return {result.identity.pid, result.generation, true, {}};
         }
-        const auto process = skewer::windows::launch(executable.toStdWString(), {});
+        const auto process = skewer::windows::launch(executable.toStdWString(), native_arguments);
         skewer::windows::Handle thread(process.hThread), handle(process.hProcess);
         return {process.dwProcessId, 0, false, {}};
     } catch (const std::exception& error) {
@@ -269,7 +276,10 @@ private:
         path_ = new QLineEdit(this);
         path_->setAccessibleName(tr("Application executable"));
         path_->setPlaceholderText(
-            tr("Find a seen application by name, or enter an executable path (no arguments yet)…"));
+            tr("Find a seen application by name, or enter an executable path…"));
+        arguments_ = new QLineEdit(this);
+        arguments_->setAccessibleName(tr("Application arguments"));
+        arguments_->setPlaceholderText(tr("Arguments (quoted values supported; no shell)…"));
         suggestions_ = new skewer::ui::LaunchCatalog(this);
         auto* completer = new skewer::ui::ApplicationCompleter(suggestions_, this);
         path_->setCompleter(completer);
@@ -280,6 +290,7 @@ private:
         routed_start_->setObjectName("routedLaunch");
 #endif
         row->addWidget(path_, 1);
+        row->addWidget(arguments_, 1);
         row->addWidget(browse);
         row->addWidget(start_);
 #ifdef SKEWER_WINDOWS_PAIRING
@@ -473,6 +484,7 @@ private:
             return;
         }
         const auto service = QSettings().value("windows/routingService", "SkewerRouting").toString();
+        const auto arguments = QProcess::splitCommand(arguments_->text());
 #ifdef SKEWER_WINDOWS_PAIRING
         if (routed) {
             // Launch and status must address the same installed service even
@@ -482,12 +494,14 @@ private:
 #endif
         launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
                                        : tr("Starting %1 without routing…").arg(executable));
-        launch_watcher_.setFuture(QtConcurrent::run(launch, executable, service, routed, launch_cancel_));
+        launch_watcher_.setFuture(
+            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_));
     }
 
     skewer::ui::ApplicationPage* page_{};
     skewer::ui::ProcessBrowser* browser_{};
     QLineEdit* path_{};
+    QLineEdit* arguments_{};
     QPushButton* start_{};
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};

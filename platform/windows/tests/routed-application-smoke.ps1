@@ -47,10 +47,15 @@ try {
     }
     if (!$window) { throw 'Skewer window missing' }
     $edit=FindNamed $window 'Application executable'
+    $arguments=FindNamed $window 'Application arguments'
     $button=FindNamed $window 'Launch through Skewer'
-    if (!$edit -or !$button -or !$button.Current.IsEnabled) { throw 'Routed launcher controls unavailable' }
+    if (!$edit -or !$arguments -or !$button -or !$button.Current.IsEnabled) {
+        throw 'Routed launcher controls unavailable'
+    }
     $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
         'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
+    $arguments.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        '-NoProfile -NoExit')
     $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $deadline=(Get-Date).AddSeconds(35)
     do {

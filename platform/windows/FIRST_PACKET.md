@@ -544,6 +544,11 @@ cleanup; it never sends Stop for an already active generation or terminates a
 released process. The page states the current single-process/IPv4-TCP limits
 instead of presenting this milestone as application-tree parity.
 
+Executable and argument fields are separate. Arguments use Qt command splitting
+and are passed as an argv vector through the existing Win32 quoting path; no
+shell is invoked. The routed GUI smoke test launches PowerShell with explicit
+`-NoProfile -NoExit` arguments before checking the selected generation.
+
 The page can also Attach one already running process selected in the process
 tree and Release the service-owned generation without terminating that process.
 PID plus creation time remains the authorization boundary. Existing sockets
