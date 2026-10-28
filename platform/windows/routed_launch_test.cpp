@@ -29,7 +29,7 @@ int wmain(int argc, wchar_t** argv) {
         require(bool(event) && bool(cancel), "Cannot create fixture events");
         bool rejected = false;
         try {
-            const auto child = launchRouted(argv[1], executable, {L"--signal", name}, cancel.get(), 5000);
+            const auto child = launchRouted(argv[1], executable, {L"--signal", name}, cancel.get(), {}, 5000);
             Handle process(child.process.hProcess), thread(child.process.hThread);
             // Own child only, in case a regression incorrectly resumed it.
             TerminateProcess(process.get(), 1);

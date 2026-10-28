@@ -52,6 +52,8 @@ struct Window {
     }
 };
 
+std::wstring testExecutable();
+
 void testCommandLine() {
     const std::vector<std::wstring> arguments = {L"",
                                                  L"two words",
@@ -86,6 +88,22 @@ void testCommandLine() {
         rejected = true;
     }
     require(rejected, "Embedded NUL accepted");
+
+    const auto executable = testExecutable();
+    Child environment_child{launch(executable, {L"--environment-child", L"lab value"}, LaunchMode::Running,
+                                   {{L"SKEWER_TEST_ENV", L"lab value"}})};
+    require(WaitForSingleObject(environment_child.information.hProcess, 3000) == WAIT_OBJECT_0,
+            "Environment child did not exit");
+    DWORD environment_exit{};
+    require(GetExitCodeProcess(environment_child.information.hProcess, &environment_exit) && !environment_exit,
+            "Per-launch environment override missing");
+    rejected = false;
+    try {
+        launch(executable, {}, LaunchMode::Running, {{L"PATH", L"one"}, {L"Path", L"two"}});
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "Case-insensitive duplicate environment override accepted");
 }
 
 std::wstring testExecutable() {
@@ -248,6 +266,11 @@ void printSnapshot(const Snapshot& snapshot) {
 
 int wmain(int argc, wchar_t** argv) {
     try {
+        if (argc == 3 && std::wstring_view(argv[1]) == L"--environment-child") {
+            wchar_t value[128]{};
+            const auto size = GetEnvironmentVariableW(L"SKEWER_TEST_ENV", value, 128);
+            return size && size < 128 && std::wstring_view(value, size) == argv[2] ? 0 : 1;
+        }
         if (argc == 2 && std::wstring_view(argv[1]) == L"--child") {
             Sleep(30000);
             return 0;

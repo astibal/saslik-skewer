@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace skewer::windows {
@@ -101,8 +102,10 @@ std::wstring commandLine(const std::wstring& executable, const std::vector<std::
 // Suspended mode additionally requires the caller to resume or terminate its
 // child; closing handles alone deliberately does neither.
 enum class LaunchMode { Running, Suspended };
+using EnvironmentOverrides = std::vector<std::pair<std::wstring, std::wstring>>;
 PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments,
-                           LaunchMode mode = LaunchMode::Running);
+                           LaunchMode mode = LaunchMode::Running,
+                           const EnvironmentOverrides& environment = {});
 std::string utf8(std::wstring_view value);
 
 } // namespace skewer::windows

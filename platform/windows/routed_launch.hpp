@@ -15,5 +15,6 @@ struct RoutedLaunch {
 // Currently one process / fresh IPv4 TCP, not descendants or existing instances.
 RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& executable,
                           const std::vector<std::wstring>& arguments, HANDLE cancel,
+                          const EnvironmentOverrides& environment = {},
                           DWORD timeout_ms = 30000);
 } // namespace skewer::windows

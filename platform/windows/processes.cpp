@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <sddl.h>
 #include <memory>
+#include <cwchar>
 
 namespace skewer::windows {
 namespace {
@@ -345,8 +346,52 @@ std::wstring commandLine(const std::wstring& executable, const std::vector<std::
     return result;
 }
 
+namespace {
+std::wstring_view environmentName(const std::wstring& entry) {
+    const auto separator = entry.find(L'=', entry.starts_with(L'=') ? 1 : 0);
+    return separator == std::wstring::npos ? std::wstring_view{} : std::wstring_view(entry).substr(0, separator);
+}
+
+std::vector<wchar_t> environmentBlock(const EnvironmentOverrides& overrides) {
+    if (overrides.empty()) return {};
+    for (auto first = overrides.begin(); first != overrides.end(); ++first) {
+        if (first->first.empty() || first->first.starts_with(L'=') || first->first.find(L'=') != std::wstring::npos ||
+            first->first.find(L'\0') != std::wstring::npos || first->second.find(L'\0') != std::wstring::npos)
+            throw std::invalid_argument("Invalid environment override");
+        for (auto other = overrides.begin(); other != first; ++other)
+            if (_wcsicmp(first->first.c_str(), other->first.c_str()) == 0)
+                throw std::invalid_argument("Duplicate environment override");
+    }
+    const auto raw = GetEnvironmentStringsW();
+    if (!raw) fail("GetEnvironmentStringsW");
+    std::unique_ptr<wchar_t, decltype(&FreeEnvironmentStringsW)> owner(raw, FreeEnvironmentStringsW);
+    std::vector<std::wstring> entries;
+    for (const auto* cursor = raw; *cursor; cursor += std::wcslen(cursor) + 1) {
+        const std::wstring entry(cursor);
+        const auto name = environmentName(entry);
+        const bool replaced = std::any_of(overrides.begin(), overrides.end(), [&](const auto& replacement) {
+            return name.size() == replacement.first.size() &&
+                   _wcsnicmp(name.data(), replacement.first.c_str(), name.size()) == 0;
+        });
+        if (!replaced) entries.push_back(entry);
+    }
+    for (const auto& [name, value] : overrides) entries.push_back(name + L"=" + value);
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+        return _wcsicmp(left.c_str(), right.c_str()) < 0;
+    });
+    std::vector<wchar_t> block;
+    for (const auto& entry : entries) {
+        block.insert(block.end(), entry.begin(), entry.end());
+        block.push_back(L'\0');
+    }
+    block.push_back(L'\0');
+    if (block.size() >= 32767) throw std::invalid_argument("Environment block exceeds Windows limit");
+    return block;
+}
+} // namespace
+
 PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments,
-                           LaunchMode mode) {
+                           LaunchMode mode, const EnvironmentOverrides& environment) {
     if (mode != LaunchMode::Running && mode != LaunchMode::Suspended) {
         throw std::invalid_argument("Invalid process launch mode");
     }
@@ -365,9 +410,12 @@ PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION information{};
+    auto environment_block = environmentBlock(environment);
     // No inherited handles, shell expansion, admin token or hidden routing.
-    const DWORD flags = mode == LaunchMode::Suspended ? CREATE_SUSPENDED : 0;
-    if (!CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr,
+    DWORD flags = mode == LaunchMode::Suspended ? CREATE_SUSPENDED : 0;
+    if (!environment_block.empty()) flags |= CREATE_UNICODE_ENVIRONMENT;
+    if (!CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, FALSE, flags,
+                        environment_block.empty() ? nullptr : environment_block.data(), nullptr,
                         &startup, &information)) {
         fail("CreateProcessW");
     }
