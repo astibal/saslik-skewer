@@ -1,5 +1,21 @@
 # Windows routing service installation
 
+## Desktop application
+
+Extract the release ZIP and run the per-user installer without elevation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-skewer.ps1
+```
+
+It installs under `%LOCALAPPDATA%\Programs\Skewer`, creates a Start Menu
+shortcut and registers a per-user uninstall entry. Add `-DesktopShortcut` if
+wanted. Updates are transactional and require the installed GUI to be closed.
+Uninstall preserves pairing, preferences, CA decisions and the separately
+privileged routing service.
+
+## Routing service
+
 This is a development installer, not yet a signed release package.
 Use a trusted build directory: driver verification does not authenticate the
 application binaries or their Qt runtime.

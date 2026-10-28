@@ -40,6 +40,8 @@ install -m 0644 "$windivert/WinDivert.dll" "$root/WinDivert.dll"
 install -m 0644 "$windivert/WinDivert64.sys" "$root/WinDivert64.sys"
 install -m 0644 "$(dirname "$wintun")/../../LICENSE.txt" "$root/licenses/Wintun-LICENSE.txt"
 install -m 0644 "$windivert/../LICENSE" "$root/licenses/WinDivert-LICENSE.txt"
+install -m 0644 platform/windows/install-skewer.ps1 "$root/install-skewer.ps1"
+install -m 0644 platform/windows/uninstall-skewer.ps1 "$root/uninstall-skewer.ps1"
 install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-routing-service.ps1"
 install -m 0644 platform/windows/INSTALL.md "$root/INSTALL.md"
 
