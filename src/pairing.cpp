@@ -149,6 +149,13 @@ PairedControl::PairedControl(QUrl endpoint, QByteArray identity, QByteArray key,
 }
 PairedControl::~PairedControl() = default;
 
+void PairedControl::withCredentials(const CredentialConsumer& consumer) const {
+    if (!consumer) {
+        throw std::invalid_argument("Credential handoff requires a consumer");
+    }
+    consumer(impl_->endpoint, impl_->credentials.identity, impl_->credentials.key);
+}
+
 std::unique_ptr<PairedControl> PairedControl::load(const QUrl& endpoint, const QString& connect_host) {
     auto credentials = loadCredentials(endpoint);
     return std::make_unique<PairedControl>(endpoint, std::move(credentials.identity),

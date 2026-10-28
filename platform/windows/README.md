@@ -20,6 +20,30 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ### Generation-bound routing commands
 
+`skewer-routing-control` is the real headless service client (also the transport
+foundation for the desktop controller):
+
+```
+skewer-routing-control status SERVICE
+skewer-routing-control pair SERVICE skewer://HOST:8766/pair
+skewer-routing-control start SERVICE GENERATION
+skewer-routing-control stop SERVICE GENERATION
+```
+
+Status returns JSON with an opaque string generation. Start/Stop require that
+generation; Busy/Stale return a structured reply and nonzero exit status. The
+client retries connection establishment only, never a possibly committed write.
+Pair reads the existing user-owned DPAPI pairing, verifies the SCM pipe before
+decrypting it, and sends a memory-only snapshot through the authenticated handoff.
+It never accepts a secret in argv, creates a SYSTEM credential file, or starts
+routing implicitly. Use an installed trusted service name, not a remote pipe.
+
+The 2026-10-28 VM test used this client against the real temporary SCM service,
+including stored Windows pairing handoff followed by public fixture replacement
+while idle. Start/Stop, stale generation, Busy, denied active pairing replacement
+and SCM cleanup passed. The fixture did not open a real tunnel. Shared snapshot
+tests passed on Windows and the Linux regression suite passed 39/39.
+
 `serveRoutingService` is the shared service command loop, independent of the
 test executable. The installed host supplies its trusted owner token, stop event
 and paired runner. The loop owns both authenticated pipes and the memory-only

@@ -1,4 +1,5 @@
-param([string]$Directory = 'C:\SkewerDev\flow-test')
+param([string]$Directory = 'C:\SkewerDev\flow-test',
+      [string]$ClientDirectory = '', [string]$StoredEndpoint = '')
 $ErrorActionPreference = 'Stop'
 # Disposable elevated VM only. Fixed false WinDivert filter, public test key.
 $name = 'SkewerRoutingTest-' + [guid]::NewGuid().ToString('N')
@@ -16,8 +17,17 @@ foreach ($file in $hashes.Keys) {
 }
 if ((Get-AuthenticodeSignature (Join-Path $root 'WinDivert64.sys')).Status -ne 'Valid') { throw 'Invalid signature' }
 function Command([int]$op, [uint64]$generation) {
-    $text = & $exe --client $name $op $generation
-    if ($LASTEXITCODE -ne 0) { throw 'Routing command failed' }
+    if ($ClientDirectory) {
+        $client = Join-Path $ClientDirectory 'skewer-routing-control.exe'
+        $action = @('status', 'start', 'stop')[$op]
+        if ($op -eq 0) { $text = & $client $action $name }
+        else { $text = & $client $action $name $generation }
+        # Busy/Stale are valid structured rejections with exit status 1.
+        if ($LASTEXITCODE -gt 1 -or !$text) { throw 'Routing client failed' }
+    } else {
+        $text = & $exe --client $name $op $generation
+        if ($LASTEXITCODE -ne 0) { throw 'Routing command failed' }
+    }
     return ($text | ConvertFrom-Json)
 }
 function AwaitPhase([int]$phase) {
@@ -43,6 +53,14 @@ try {
     & $exe --client $name 1 $initial.generation
     if ($LASTEXITCODE -eq 0) { throw 'Unpaired service accepted Start' }
     if ((Command 0 0).phase -ne 0) { throw 'Rejected Start changed service state' }
+    if ($StoredEndpoint) {
+        if (!$ClientDirectory) { throw 'Stored pairing test requires ClientDirectory' }
+        & (Join-Path $ClientDirectory 'skewer-routing-control.exe') pair $name $StoredEndpoint
+        if ($LASTEXITCODE -ne 0) { throw 'Stored pairing handoff failed' }
+        if ((Command 0 0).phase -ne 0) { throw 'Pairing handoff started routing' }
+        # The next public fixture handoff replaces it while idle. The service
+        # never opens a real tunnel or writes the user's credentials to disk.
+    }
     $paired = $false
     for ($i = 0; $i -lt 20; ++$i) {
         & $exe --pair $name

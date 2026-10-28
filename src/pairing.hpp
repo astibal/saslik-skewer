@@ -4,6 +4,7 @@
 #include <QUrl>
 #include "tuntom_control.hpp"
 #include <memory>
+#include <functional>
 struct PairedTunnel {
     Tuntom::Endpoint endpoint;
     QByteArray key; // Derived transport key; never serialize into logs or argv.
@@ -19,6 +20,10 @@ public:
     PairedControl(const PairedControl&) = delete;
     PairedControl& operator=(const PairedControl&) = delete;
     static std::unique_ptr<PairedControl> load(const QUrl& endpoint, const QString& connect_host = {});
+    // Synchronous, borrowed snapshot for an authenticated service handoff only.
+    // The consumer must not retain references, log credentials or persist them.
+    using CredentialConsumer = std::function<void(const QUrl&, const QByteArray&, const QByteArray&)>;
+    void withCredentials(const CredentialConsumer& consumer) const;
     PairedTunnel open();
     void renew(const Tuntom::Endpoint& tunnel);
     void close(const Tuntom::Endpoint& tunnel);
