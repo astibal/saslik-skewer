@@ -61,6 +61,9 @@ int main(int argc, char** argv) try {
     QSettings settings;
     settings.setValue("windows/runtimeTrustCa", result.ca_path);
     settings.setValue("windows/runtimeTrustBundle", result.bundle_path);
+    const auto restored = skewer::windows::managedRuntimeCertificate();
+    if (restored.isEmpty())
+        throw std::runtime_error("Managed CA was not restored from the protected application directory");
     const auto environment = skewer::windows::managedRuntimeEnvironment();
     const auto ca = QDir::toNativeSeparators(result.ca_path).toStdWString();
     const auto bundle = QDir::toNativeSeparators(result.bundle_path).toStdWString();

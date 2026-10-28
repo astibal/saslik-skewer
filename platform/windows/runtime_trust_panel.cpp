@@ -132,6 +132,19 @@ RuntimeTrustResult prepareManagedRuntimeTrust(const QByteArray& pem) {
     return prepareBundleInternal(pem);
 }
 
+QByteArray managedRuntimeCertificate() {
+    const auto path = QSettings().value("windows/runtimeTrustCa").toString();
+    QFile input(path);
+    if (path.isEmpty() || !input.open(QIODevice::ReadOnly) || input.size() > 1024 * 1024) return {};
+    const auto pem = input.readAll();
+    try {
+        (void)context(pem);
+        return pem;
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
 EnvironmentOverrides managedRuntimeEnvironment() {
     const QSettings settings;
     const auto ca = QDir::toNativeSeparators(settings.value("windows/runtimeTrustCa").toString());
@@ -196,6 +209,11 @@ RuntimeTrustPanel::RuntimeTrustPanel(QWidget* parent) : QWidget(parent) {
         status_->setText(result.message);
         updateControls();
     });
+    const auto managed = managedRuntimeCertificate();
+    if (!managed.isEmpty()) {
+        setCertificate(managed);
+        status_->setText(tr("Managed runtime trust is active. The saved Saslik CA can be rebuilt without downloading it again."));
+    }
     updateControls();
 }
 
