@@ -2,7 +2,9 @@
 #include "pairing_handoff.hpp"
 #include "routing_control.hpp"
 #include <stdexcept>
+#include <system_error>
 #include <type_traits>
+#include <aclapi.h>
 #include <sddl.h>
 
 namespace skewer::windows {
@@ -183,6 +185,41 @@ std::unique_ptr<Handle> verifySelectionService(HANDLE pipe, const std::wstring& 
         throw std::runtime_error("Selection service restarted during verification");
     }
     return process;
+}
+
+void allowSelectionServiceInspection(const ServiceOwner& owner) {
+    PSID raw_sid{};
+    if (!ConvertStringSidToSidW(owner.sid().c_str(), &raw_sid)) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "Convert service owner SID");
+    }
+    std::unique_ptr<void, decltype(&LocalFree)> sid(raw_sid, LocalFree);
+    PACL current_acl{};
+    PSECURITY_DESCRIPTOR raw_descriptor{};
+    const auto query = GetSecurityInfo(GetCurrentProcess(), SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
+                                       nullptr, nullptr, &current_acl, nullptr, &raw_descriptor);
+    if (query != ERROR_SUCCESS) {
+        throw std::system_error(static_cast<int>(query), std::system_category(), "Read service process ACL");
+    }
+    std::unique_ptr<void, decltype(&LocalFree)> descriptor(raw_descriptor, LocalFree);
+    EXPLICIT_ACCESSW access{};
+    access.grfAccessPermissions = PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE;
+    access.grfAccessMode = GRANT_ACCESS;
+    access.grfInheritance = NO_INHERITANCE;
+    BuildTrusteeWithSidW(&access.Trustee, sid.get());
+    PACL raw_acl{};
+    const auto merged = SetEntriesInAclW(1, &access, current_acl, &raw_acl);
+    if (merged != ERROR_SUCCESS) {
+        throw std::system_error(static_cast<int>(merged), std::system_category(),
+                                "Build service process ACL");
+    }
+    std::unique_ptr<void, decltype(&LocalFree)> acl(raw_acl, LocalFree);
+    const auto applied = SetSecurityInfo(GetCurrentProcess(), SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
+                                         nullptr, nullptr, raw_acl, nullptr);
+    if (applied != ERROR_SUCCESS) {
+        throw std::system_error(static_cast<int>(applied), std::system_category(),
+                                "Apply service process ACL");
+    }
 }
 
 SelectionResult serveSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {
@@ -476,11 +513,11 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
     if (command > RoutingCommand::Stop) {
         throw std::invalid_argument("Unknown routing command");
     }
-    return exchangeRouting(pipe, service_name, static_cast<std::uint8_t>(command), generation,
-                           cancel, timeout_ms, nullptr);
+    return exchangeRouting(pipe, service_name, static_cast<std::uint8_t>(command), generation, cancel,
+                           timeout_ms, nullptr);
 }
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
-                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+                                     std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
     const auto selection = encodeSelectionRequest(target);
     return exchangeRouting(pipe, service_name, 3, generation, cancel, timeout_ms, &selection);
 }

@@ -34,8 +34,12 @@ int main(int argc, char** argv) {
         const auto wintun = QDir::toNativeSeparators(directory + "/wintun.dll").toStdWString();
         const auto divert = QDir::toNativeSeparators(directory + "/WinDivert.dll").toStdWString();
         return runService(name, [&](HANDLE stop) -> DWORD {
+            // The service remains LocalSystem. Expose only the process identity
+            // rights needed by its configured unelevated owner to authenticate IPC.
+            allowSelectionServiceInspection(owner);
             serveRoutingService(
-                name, owner, stop, [&](const PairingHandoff& pairing, HANDLE cancel, RoutingSignals& state) {
+                name, owner, stop,
+                [&](const PairingHandoff& pairing, HANDLE cancel, RoutingSignals& state) {
                     if (QUrl(QString::fromStdString(pairing.endpoint)) != endpoint) {
                         throw std::invalid_argument("Pairing does not match the configured service endpoint");
                     }
@@ -59,16 +63,16 @@ int main(int argc, char** argv) {
                         throw std::runtime_error("Tunnel exited without Stop");
                     }
                 },
-                [&](const PairingHandoff& pairing, std::unique_ptr<ProcessTarget> target,
-                    HANDLE cancel, RoutingSignals& state) {
+                [&](const PairingHandoff& pairing, std::unique_ptr<ProcessTarget> target, HANDLE cancel,
+                    RoutingSignals& state) {
                     if (QUrl(QString::fromStdString(pairing.endpoint)) != endpoint) {
                         throw std::invalid_argument("Pairing does not match the configured service endpoint");
                     }
                     PskTunnelControl control(
                         endpoint, peer, QByteArray::fromStdString(pairing.identity),
                         QByteArray(reinterpret_cast<const char*>(pairing.key.data()), pairing.key.size()));
-                    runSelectedServiceTunnel(divert, std::move(target), control, peer,
-                                             endpoint.port(), cancel, state);
+                    runSelectedServiceTunnel(divert, std::move(target), control, peer, endpoint.port(),
+                                             cancel, state);
                 });
             return 0;
         });

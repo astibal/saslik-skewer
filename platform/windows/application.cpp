@@ -26,6 +26,7 @@
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
 #include "routing_panel.hpp"
+#include "routed_launch.hpp"
 #include <QSettings>
 #include <QDateTime>
 #endif
@@ -66,20 +67,35 @@ ScanResult scan() {
 }
 struct LaunchResult {
     DWORD pid{};
+    std::uint64_t generation{};
+    bool routed{};
     QString error;
 };
-LaunchResult launch(const QString& executable) {
+LaunchResult launch(const QString& executable, const QString& service, bool routed,
+                    const std::shared_ptr<skewer::windows::Handle>& cancel) {
     try {
+        if (routed) {
+            const auto result = skewer::windows::launchRouted(service.toStdWString(),
+                                                              executable.toStdWString(), {}, cancel->get());
+            skewer::windows::Handle thread(result.process.hThread), handle(result.process.hProcess);
+            return {result.identity.pid, result.generation, true, {}};
+        }
         const auto process = skewer::windows::launch(executable.toStdWString(), {});
         skewer::windows::Handle thread(process.hThread), handle(process.hProcess);
-        return {process.dwProcessId, {}};
+        return {process.dwProcessId, 0, false, {}};
     } catch (const std::exception& error) {
-        return {0, QString::fromUtf8(error.what())};
+        return {0, 0, routed, QString::fromUtf8(error.what())};
     }
 }
 class WindowsWindow final : public skewer::ui::ApplicationShell {
 public:
-    WindowsWindow() : ApplicationShell(QStringLiteral(SKEWER_VERSION)) {
+    WindowsWindow()
+        : ApplicationShell(QStringLiteral(SKEWER_VERSION)),
+          launch_cancel_(
+              std::make_shared<skewer::windows::Handle>(CreateEventW(nullptr, TRUE, FALSE, nullptr))) {
+        if (!*launch_cancel_) {
+            throw std::runtime_error("Cannot create launcher cancellation event");
+        }
         buildPage();
         buildLauncher();
 #ifdef SKEWER_WINDOWS_PAIRING
@@ -104,6 +120,7 @@ public:
         report_watcher_.waitForFinished();
 #endif
         scan_watcher_.waitForFinished();
+        SetEvent(launch_cancel_->get());
         launch_watcher_.waitForFinished();
     }
 
@@ -119,11 +136,11 @@ private:
     void buildSaslikPage() {
         auto* page = new QWidget(this);
         auto* layout = new QVBoxLayout(page);
-        auto* explanation = new QLabel(
-            tr("Report this paired Windows client to Saslik. "
-               "Online presence does not mean that application routing is active. "
-               "This build does not report certificate-store installation status."),
-            page);
+        auto* explanation =
+            new QLabel(tr("Report this paired Windows client to Saslik. "
+                          "Online presence does not mean that application routing is active. "
+                          "This build does not report certificate-store installation status."),
+                       page);
         explanation->setWordWrap(true);
         layout->addWidget(explanation);
         endpoint_ = new QLineEdit(QSettings().value("windows/saslikEndpoint").toString(), page);
@@ -163,7 +180,7 @@ private:
             }
             QSettings().setValue("windows/saslikEndpoint", endpoint_->text().trimmed());
             report_status_->setText(tr("Report accepted at %1. Routing status is independent.")
-                                       .arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
+                                        .arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
         });
         // A previously validated endpoint resumes presence on the next launch.
         if (!endpoint_->text().isEmpty()) {
@@ -176,7 +193,8 @@ private:
         if (!endpoint.isValid() || endpoint.scheme() != "skewer" || endpoint.host().isEmpty() ||
             endpoint.port() <= 0 || endpoint.path() != "/pair" || endpoint.hasFragment() ||
             endpoint.hasQuery() || !endpoint.userInfo().isEmpty()) {
-            report_status_->setText(tr("Enter a paired skewer://HOST:PORT/pair endpoint, not an invitation."));
+            report_status_->setText(
+                tr("Enter a paired skewer://HOST:PORT/pair endpoint, not an invitation."));
             return;
         }
         endpoint_->setEnabled(false);
@@ -192,9 +210,8 @@ private:
         report_status_->setText(tr("Reporting to Saslik…"));
         // TLS and DNS run off the GUI thread, including while minimized.
         const QUrl endpoint(endpoint_->text().trimmed());
-        report_watcher_.setFuture(QtConcurrent::run([endpoint] {
-            return skewer::windows::sendClientReport(endpoint, SKEWER_VERSION);
-        }));
+        report_watcher_.setFuture(QtConcurrent::run(
+            [endpoint] { return skewer::windows::sendClientReport(endpoint, SKEWER_VERSION); }));
     }
 #endif
     void buildPage() {
@@ -207,15 +224,18 @@ private:
         addUnavailablePage(tr("Connections"),
                            tr("Windows per-process connection inspection is not available yet."));
 
-        auto* disclaimer = new QLabel(tr("Selected-application routing is not available from this page yet. Whole-host routing is controlled on the Routing tab. "
-                                         "Programs launched here follow the current host routing policy."),
+        auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
+                                         "releases it only after routing is ready. "
+                                         "Existing instances, descendants, UDP and IPv6 are not routed yet. "
+                                         "Whole-host routing is controlled on the Routing tab."),
                                       page_);
         disclaimer->setWordWrap(true);
         page_->top->addWidget(disclaimer);
         browser_ = new skewer::ui::ProcessBrowser(page_, page_->tree);
         page_->setProcessWidget(browser_);
         connect(page_->search, &QLineEdit::textChanged, browser_, &skewer::ui::ProcessBrowser::setFilterText);
-        page_->action_status->setText(tr("Application attachment is unavailable; no applications are individually attached."));
+        page_->action_status->setText(
+            tr("Application attachment is unavailable; no applications are individually attached."));
         for (auto* button : {page_->attach, page_->release}) {
             button->setToolTip(tr("Not supported by the Windows backend yet."));
         }
@@ -234,10 +254,17 @@ private:
         auto* completer = new skewer::ui::ApplicationCompleter(suggestions_, this);
         path_->setCompleter(completer);
         auto* browse = new QPushButton(tr("Browse…"), this);
-        start_ = new QPushButton(tr("Launch"), this);
+        start_ = new QPushButton(tr("Launch normally"), this);
+#ifdef SKEWER_WINDOWS_PAIRING
+        routed_start_ = new QPushButton(tr("Launch through Skewer"), this);
+        routed_start_->setObjectName("routedLaunch");
+#endif
         row->addWidget(path_, 1);
         row->addWidget(browse);
         row->addWidget(start_);
+#ifdef SKEWER_WINDOWS_PAIRING
+        row->addWidget(routed_start_);
+#endif
         page_->footer->addLayout(row);
         launch_status_ = new QLabel(this);
         launch_status_->setWordWrap(true);
@@ -247,7 +274,12 @@ private:
         page_->footer->addWidget(status_);
         connect(browse, &QPushButton::clicked, this, &WindowsWindow::browseExecutable);
         connect(start_, &QPushButton::clicked, this, &WindowsWindow::startProgram);
-        connect(path_, &QLineEdit::returnPressed, this, &WindowsWindow::startProgram);
+#ifdef SKEWER_WINDOWS_PAIRING
+        connect(routed_start_, &QPushButton::clicked, this, [this] { startProgram(true); });
+        connect(path_, &QLineEdit::returnPressed, this, [this] { startProgram(true); });
+#else
+        connect(path_, &QLineEdit::returnPressed, this, [this] { startProgram(); });
+#endif
     }
 
     void applyPreferences() {
@@ -300,12 +332,27 @@ private:
 
     void launchFinished() {
         start_->setEnabled(true);
+#ifdef SKEWER_WINDOWS_PAIRING
+        routed_start_->setEnabled(true);
+#endif
         const auto result = launch_watcher_.result();
-        launch_status_->setText(result.error.isEmpty()
-                                    ? tr("Started PID %1 — NOT routed. A single-instance application may "
-                                         "hand off to an existing process.")
-                                          .arg(result.pid)
-                                    : tr("Launch failed: %1").arg(result.error));
+        if (!result.error.isEmpty()) {
+            launch_status_->setText(
+                result.routed
+                    ? tr("Routed launch failed before the process was released: %1").arg(result.error)
+                    : tr("Launch failed: %1").arg(result.error));
+        } else if (result.routed) {
+            launch_status_->setText(
+                tr("PID %1 is routed through Skewer (generation %2). Closing this window "
+                   "does not stop it. A single-instance application may still hand off to "
+                   "an older, unrouted process.")
+                    .arg(result.pid)
+                    .arg(result.generation));
+        } else {
+            launch_status_->setText(tr("Started PID %1 — NOT routed. A single-instance application may "
+                                       "hand off to an existing process.")
+                                        .arg(result.pid));
+        }
         refresh();
     }
 
@@ -317,10 +364,14 @@ private:
         }
     }
 
-    void startProgram() {
+    void startProgram(bool routed = false) {
         // Keep Enter blocked until the completion callback has updated the UI,
         // not merely until the worker has returned its result.
-        if (!start_->isEnabled()) {
+        if (!start_->isEnabled()
+#ifdef SKEWER_WINDOWS_PAIRING
+            || !routed_start_->isEnabled()
+#endif
+        ) {
             return;
         }
         const auto executable = path_->text().trimmed();
@@ -329,19 +380,36 @@ private:
             return;
         }
         start_->setEnabled(false);
-        launch_status_->setText(tr("Starting %1…").arg(executable));
-        launch_watcher_.setFuture(QtConcurrent::run(launch, executable));
+#ifdef SKEWER_WINDOWS_PAIRING
+        routed_start_->setEnabled(false);
+#endif
+        if (!ResetEvent(launch_cancel_->get())) {
+            launch_status_->setText(tr("Cannot reset launcher cancellation state."));
+            start_->setEnabled(true);
+#ifdef SKEWER_WINDOWS_PAIRING
+            routed_start_->setEnabled(true);
+#endif
+            return;
+        }
+        const auto service = QSettings().value("windows/routingService", "SkewerRouting").toString();
+        launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
+                                       : tr("Starting %1 without routing…").arg(executable));
+        launch_watcher_.setFuture(QtConcurrent::run(launch, executable, service, routed, launch_cancel_));
     }
 
     skewer::ui::ApplicationPage* page_{};
     skewer::ui::ProcessBrowser* browser_{};
     QLineEdit* path_{};
     QPushButton* start_{};
+#ifdef SKEWER_WINDOWS_PAIRING
+    QPushButton* routed_start_{};
+#endif
     skewer::ui::LaunchCatalog* suggestions_{};
     QLabel* launch_status_{};
     QLabel* status_{};
     QFutureWatcher<ScanResult> scan_watcher_;
     QFutureWatcher<LaunchResult> launch_watcher_;
+    std::shared_ptr<skewer::windows::Handle> launch_cancel_;
     QTimer timer_;
 #ifdef SKEWER_WINDOWS_PAIRING
     QLineEdit* endpoint_{};

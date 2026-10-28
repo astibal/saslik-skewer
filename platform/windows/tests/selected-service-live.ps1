@@ -31,12 +31,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Rejected routed launch executed child code' }
     & $client pair $name $Endpoint
     if ($LASTEXITCODE -ne 0) { throw 'Selected fixture pairing failed' }
+    Set-Content 'C:\SkewerDev\routed-service-name.txt' $name
+    & (Join-Path $Directory 'run-routed-application-smoke.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'GUI routed launch test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
     & curl.exe --noproxy '*' -4 -k --fail --silent --show-error --max-time 12 `
         --resolve "${HostName}:443:${Destination}" --output NUL "https://${HostName}/"
     if ($LASTEXITCODE -ne 0) { throw 'Unrelated HTTPS unavailable after selected session' }
 } finally {
+    Remove-Item 'C:\SkewerDev\routed-service-name.txt' -ErrorAction SilentlyContinue
     if ($created -or (Get-Service -Name $name -ErrorAction SilentlyContinue)) {
         Stop-Service $name
         $service=Get-Service $name

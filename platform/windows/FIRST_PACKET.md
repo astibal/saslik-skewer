@@ -526,3 +526,29 @@ this experimental single-process contract.
 The SCM HTTPS fixture uses this production launcher path. Before pairing, it
 also checks that a rejected child cannot signal its first-action event, with
 a suspended/resumed positive control proving the fixture can observe execution.
+
+The Windows Applications page now exposes separate `Launch normally` and
+`Launch through Skewer` actions; Enter selects the routed path. The routed
+action reads the currently configured installed-service name when clicked,
+shows preparation before process release, and reports PID plus routing
+generation on success. Both launch buttons remain disabled while the worker is
+pending. Closing the GUI cancels only a pending launch and waits for its bounded
+cleanup; it never sends Stop for an already active generation or terminates a
+released process. The page states the current single-process/IPv4-TCP limits
+instead of presenting this milestone as application-tree parity.
+
+The LocalSystem routing service publishes only
+`PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE` on its own process object to
+the administrator-configured owner SID, before creating IPC pipes. This is
+needed because the default service-process DACL denied even those identity-only
+rights to the unelevated desktop client. The client still requires all of:
+RUNNING own-process SCM registration, matching named-pipe server PID, pinned
+process creation identity, a second SCM PID check and a live retained handle.
+The added ACE grants no terminate, VM, token, handle-duplication or DACL rights.
+
+The interactive VM fixture sets the disposable service name in user QSettings,
+invokes `Launch through Skewer` through UI Automation and waits for the visible
+PID/generation result. It then closes the GUI, verifies both the child and the
+same Active service generation remain, and terminates only its own test child.
+The fixture restores the prior setting, reopens the GUI, removes its scheduled
+test task, and the outer test deletes its uniquely named service.

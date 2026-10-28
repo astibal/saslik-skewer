@@ -16,6 +16,10 @@ std::unique_ptr<Handle> verifySelectionServer(HANDLE pipe, ProcessKey expected);
 // service_name comes from installed application configuration, never the peer.
 // Requires an own-process RUNNING service and rechecks SCM after pinning it.
 std::unique_ptr<Handle> verifySelectionService(HANDLE pipe, const std::wstring& service_name);
+// Call once from the LocalSystem service before creating its pipes. Grants only
+// query/synchronize access to its configured desktop owner, so an unelevated
+// client can pin the SCM process without gaining control over it.
+void allowSelectionServiceInspection(const ServiceOwner& owner);
 
 // Serve one connected, message-mode server pipe opened FILE_FLAG_OVERLAPPED.
 // The caller owns the pipe, its local-only ACL and connection acceptance.

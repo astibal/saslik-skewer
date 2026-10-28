@@ -17,7 +17,11 @@ function WindowText($window) {
 }
 try {
     'Starting interactive Windows smoke test' | Out-File $log
-    $window = FindWindow
+    $deadline=(Get-Date).AddSeconds(10)
+    do {
+        $window = FindWindow
+        if (!$window) { Start-Sleep -Milliseconds 200 }
+    } while (!$window -and (Get-Date) -lt $deadline)
     if (!$window) { throw 'Shared Skewer window missing' }
     $skewerId = $window.Current.ProcessId
     $exe = (Get-Process -Id $skewerId).Path
@@ -38,7 +42,13 @@ try {
     'PASS: shared application tabs' | Out-File $log -Append
     $edit = FindNamed $window 'Application executable'
     $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-    $invoke = (FindNamed $window 'Launch').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $normal = FindNamed $window 'Launch normally'
+    $routed = FindNamed $window 'Launch through Skewer'
+    if (!$normal -or !$routed -or !$normal.Current.IsEnabled -or !$routed.Current.IsEnabled) {
+        throw 'Missing launcher routing choice'
+    }
+    'PASS: normal and routed launch actions are explicit' | Out-File $log -Append
+    $invoke = $normal.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $value.SetValue('C:\SkewerDev\does-not-exist.exe')
     $invoke.Invoke()
     Start-Sleep -Seconds 2
