@@ -18,6 +18,34 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Native whole-host service integration
+
+`skewer-routing-service.exe --service NAME OWNER_SID ENDPOINT IPV4_PEER
+[SSH_MANAGEMENT_IP]` now hosts the real paired runtime under SCM. These arguments
+must be administrator-owned service configuration; DLLs are loaded only from
+the service installation directory. Pairing is memory-only through the existing
+authenticated client. This is an integrated development build, not a finished
+desktop installer or claim of application-routing parity.
+
+`WholeHostPolicy` snapshots the underlay, rejects existing conflicting /1 or peer
+/32 routes, arms the physical-egress guard, assigns the authenticated Wintun
+address, waits for transport health, then installs a peer /32 and tunnel /1 routes.
+The peer stays outside its tunnel. Cleanup withdraws routes before retiring the
+adapter. Physical IPv6 egress is blocked; IPv6 tunneling and system DNS policy
+remain unfinished. Tuple exceptions allow control TCP and protocol UDP ports
+40001–40255 to the configured peer. They are not process isolation. The optional
+management IP allows SSH replies only and is explicit lab administration policy.
+
+`tests/native-routing-service-live.ps1` installs a disposable real service from
+verified driver artifacts in Program Files, hands off saved pairing and tests
+plain HTTP/HTTPS with no explicit proxy. DNS is pre-resolved and the TLS CA check
+is bypassed only by the test curl. `-TestTunnelLoss` disables only the owned
+adapter, requires Blocked while the service remains alive, and verifies direct
+HTTP fallback times out. Explicit Stop removes protection after cleanup; the
+controller retains Failed for that generation rather than concealing the earlier
+tunnel error. The script finally removes the service and checks owned routes,
+adapter and unchanged default routes. Binaries are retained for diagnostics.
+
 ### Generation-bound routing commands
 
 `skewer-routing-control` is the real headless service client (also the transport
