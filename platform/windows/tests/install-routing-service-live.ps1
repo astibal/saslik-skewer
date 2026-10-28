@@ -39,7 +39,12 @@ try {
     $rejected = $false
     try { & $installer @arguments } catch { $rejected = $true }
     if (!$rejected) { throw 'Installer overwrote an existing installation' }
-    Write-Output 'PASS: dry-run, protected installation, Idle IPC, overwrite rejection'
+    & $installer @arguments -Upgrade
+    $updated = Get-CimInstance Win32_Service | Where-Object Name -eq $name
+    if ($updated.State -ne 'Running' -or (& $control status $name | ConvertFrom-Json).phase -ne 0) {
+        throw 'Explicit upgrade did not restart in Idle'
+    }
+    Write-Output 'PASS: dry-run, protected installation, overwrite rejection and explicit Idle upgrade'
 } finally {
     if (Get-Service $name -ErrorAction SilentlyContinue) {
         Stop-Service $name

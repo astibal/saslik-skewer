@@ -1,6 +1,6 @@
 # Windows routing service installation
 
-This is a development installer, not yet a signed release package or updater.
+This is a development installer, not yet a signed release package.
 Use a trusted build directory: driver verification does not authenticate the
 application binaries or their Qt runtime.
 
@@ -28,11 +28,14 @@ only on the tunnel adapter when routing starts. The optional `Management`
 address permits SSH return traffic to a test host while whole-host routing is
 active; omit it for normal use.
 
-The installer validates the pinned WinDivert 2.2.2-A artifacts and driver
+When all three dependency files are beside the script, `WinDivertDirectory` and
+`WintunDll` may be omitted. The installer validates the pinned WinDivert 2.2.2-A artifacts and driver
 signatures before and after copying. It installs only the required service
 runtime under `Program Files\SkewerRouting`, with Users read/execute access and
-SYSTEM/Administrators write access. An existing directory or service is rejected;
-in-place upgrades and automatic replacement are deliberately not implemented.
+SYSTEM/Administrators write access. An existing directory or service is rejected
+unless `-Upgrade` is explicit. Upgrade stops routing, backs up the exact runtime,
+updates and revalidates it, updates the SCM command line and starts in Idle. A
+failed update restores both runtime files and the previous command line.
 
 The LocalSystem service uses Manual startup. Installation starts its IPC server
 in **Idle**, not routing. In the GUI Routing tab, send the stored pairing and
@@ -45,7 +48,7 @@ Use `-WhatIf` to validate without installation. The elevated regression script
 and overwrite rejection. It removes its uniquely named service but retains that
 test's installation directory for inspection.
 
-Current routing is whole-host IPv4. Selected-application routing is not enabled
-by this installer. A tunnel failure keeps the live guard blocking until explicit
+Current routing supports whole-host IPv4 or one explicitly selected process's
+fresh IPv4 TCP connections. A tunnel failure keeps the live guard blocking until explicit
 Stop; a WinDivert owner/driver failure cannot provide that guarantee. This is a
 lab tool, not a security boundary against an administrator or driver failure.

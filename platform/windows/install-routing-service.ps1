@@ -1,16 +1,20 @@
 [CmdletBinding(SupportsShouldProcess=$true)]
 param(
     [Parameter(Mandatory=$true)][string]$PackageDirectory,
-    [Parameter(Mandatory=$true)][string]$WinDivertDirectory,
-    [Parameter(Mandatory=$true)][string]$WintunDll,
+    [string]$WinDivertDirectory = '',
+    [string]$WintunDll = '',
     [Parameter(Mandatory=$true)][string]$OwnerSid,
     [Parameter(Mandatory=$true)][string]$Endpoint,
     [Parameter(Mandatory=$true)][string]$Peer,
     [string]$DnsServer = '1.1.1.1',
     [string]$Management = '',
+    [switch]$Upgrade,
     [ValidatePattern('^SkewerRouting(?:-Test-[a-f0-9]{32})?$')][string]$Name = 'SkewerRouting'
 )
 $ErrorActionPreference = 'Stop'
+$PackageDirectory = (Resolve-Path -LiteralPath $PackageDirectory).Path
+if (!$WinDivertDirectory) { $WinDivertDirectory = $PackageDirectory }
+if (!$WintunDll) { $WintunDll = Join-Path $PackageDirectory 'wintun.dll' }
 $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Run this installer elevated. The desktop application itself must remain unelevated.'
@@ -27,8 +31,15 @@ foreach ($address in @($Peer,$DnsServer) + @($Management | Where-Object { $_ }))
     }
 }
 $root = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $Name
-if (Test-Path -LiteralPath $root) { throw "Installation directory already exists; refusing to overwrite: $root" }
-if (Get-Service -Name $Name -ErrorAction SilentlyContinue) { throw 'Service already exists; stop and explicitly upgrade it' }
+$existingRoot = Test-Path -LiteralPath $root
+$existingService = $null -ne (Get-Service -Name $Name -ErrorAction SilentlyContinue)
+if ($existingRoot -ne $existingService) {
+    throw 'Inconsistent installation: service and protected runtime directory must either both exist or both be absent'
+}
+if (($existingRoot -or $existingService) -and !$Upgrade) {
+    throw 'Service already exists; use -Upgrade for an explicit stopped-service update'
+}
+if ($Upgrade -and !$existingService) { throw 'Cannot upgrade a service that is not installed' }
 $files = @('skewer-routing-service.exe','skewer-routing-control.exe','Qt6Core.dll','Qt6Network.dll',
            'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll','libssp-0.dll')
 $sources = @{}
@@ -56,8 +67,53 @@ function VerifyDrivers([string]$Directory, [hashtable]$Paths) {
         if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne 'Valid') { throw "Invalid driver signature: $file" }
     }
 }
+function CopyRuntimeFile([string]$Source, [string]$Destination) {
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $Source -Destination $Destination -Force
+            return
+        } catch [IO.IOException] {
+            if ($attempt -eq 29) { throw }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+}
 VerifyDrivers '' $sources
-if (!$PSCmdlet.ShouldProcess($root, "Install demand-start $Name service for $OwnerSid without starting routing")) { return }
+$exe = Join-Path $root 'skewer-routing-service.exe'
+$command = '"' + $exe + '" --service ' + $Name + ' ' + $OwnerSid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer
+if ($Management) { $command += ' ' + $Management }
+$operation = if ($Upgrade) { "Stop and upgrade $Name, then restart it without routing" } else { "Install demand-start $Name service for $OwnerSid without starting routing" }
+if (!$PSCmdlet.ShouldProcess($root, $operation)) { return }
+if ($Upgrade) {
+    $oldService = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+    $backup = Join-Path ([IO.Path]::GetTempPath()) ('skewer-upgrade-' + [Guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $backup
+    try {
+        foreach ($file in $files + @('wintun.dll','WinDivert.dll','WinDivert64.sys')) {
+            Copy-Item -LiteralPath (Join-Path $root $file) -Destination (Join-Path $backup $file)
+        }
+        # Do not interrupt a working service until its complete rollback set exists.
+        Stop-Service $Name -Force
+        try {
+            foreach ($file in $sources.Keys) { CopyRuntimeFile $sources[$file] (Join-Path $root $file) }
+            VerifyDrivers $root $sources
+            $changed = Invoke-CimMethod -InputObject $oldService -MethodName Change -Arguments @{ PathName=$command }
+            if ($changed.ReturnValue -ne 0) { throw "Service configuration update failed ($($changed.ReturnValue))" }
+            Start-Service $Name
+        } catch {
+            foreach ($file in $files + @('wintun.dll','WinDivert.dll','WinDivert64.sys')) {
+                CopyRuntimeFile (Join-Path $backup $file) (Join-Path $root $file)
+            }
+            $restored = Invoke-CimMethod -InputObject $oldService -MethodName Change -Arguments @{ PathName=$oldService.PathName }
+            if ($restored.ReturnValue -eq 0) { Start-Service $Name }
+            throw
+        }
+    } finally {
+        Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    [pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Manual'; Updated=$true }
+    return
+}
 $null = New-Item -ItemType Directory -Path $root
 # Protected ACL: user may execute/read but never replace SYSTEM-loaded DLLs.
 $acl = [Security.AccessControl.DirectorySecurity]::new()
@@ -65,9 +121,6 @@ $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(
 Set-Acl -LiteralPath $root -AclObject $acl
 foreach ($file in $sources.Keys) { Copy-Item -LiteralPath $sources[$file] -Destination (Join-Path $root $file) }
 VerifyDrivers $root $sources
-$exe = Join-Path $root 'skewer-routing-service.exe'
-$command = '"' + $exe + '" --service ' + $Name + ' ' + $OwnerSid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer
-if ($Management) { $command += ' ' + $Management }
 $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
     Name=$Name; DisplayName='Skewer routing service'; PathName=$command; ServiceType=[byte]16
     ErrorControl=[byte]1; StartMode='Manual'; StartName='LocalSystem'
