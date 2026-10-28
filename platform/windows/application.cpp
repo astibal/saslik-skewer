@@ -28,6 +28,7 @@
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
 #include "ca_trust_panel.hpp"
+#include "connections_panel.hpp"
 #include "routing_panel.hpp"
 #include "routed_launch.hpp"
 #include <QSettings>
@@ -238,9 +239,6 @@ private:
 #endif
         addUnavailablePage(tr("Runtime Trust"),
                            tr("Application-specific trust integration is not available on Windows yet."));
-        addUnavailablePage(tr("Connections"),
-                           tr("Windows per-process connection inspection is not available yet."));
-
         auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
                                          "releases it only after routing is ready. "
                                          "Attach can move a running process, but its existing sockets keep "
@@ -251,6 +249,8 @@ private:
         page_->top->addWidget(disclaimer);
         browser_ = new skewer::ui::ProcessBrowser(page_, page_->tree);
         page_->setProcessWidget(browser_);
+        connections_ = new skewer::windows::ConnectionsPanel(browser_, this);
+        pages()->addTab(connections_, tr("Connections"));
         connect(page_->search, &QLineEdit::textChanged, browser_, &skewer::ui::ProcessBrowser::setFilterText);
         page_->action_status->setText(tr("Checking authoritative routing state…"));
         page_->attach->setEnabled(false);
@@ -406,6 +406,7 @@ private:
                                         QString::number(state.selected->created)
                                   : QString{};
         browser_->setRoutingState(known, selected && retained ? identity : QString{});
+        connections_->setRoutingState(known, state);
         updateApplicationActions();
         if (!known) {
             page_->action_status->setText(tr("Routing service unavailable; process state is unknown."));
@@ -510,6 +511,7 @@ private:
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};
     skewer::windows::RoutingPanel* routing_panel_{};
+    skewer::windows::ConnectionsPanel* connections_{};
     skewer::windows::RoutingReply routing_state_{};
     bool routing_known_{};
 #endif

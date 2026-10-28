@@ -598,9 +598,11 @@ It separates window-bearing processes from background roots, retains process
 ancestry, and never merges applications merely because executable names match.
 Selection/expansion survive refresh; PID reuse invalidates old selection.
 The shared page supplies search and routing action controls on both platforms.
-Linux keeps its richer model, CA/connection handling and routing controllers.
-Windows shows explanatory pages for CA Trust, Runtime Trust and Connections;
-these are capability notices, not implemented backends.
+Linux keeps its richer model and runtime-specific trust integrations. Windows
+has native current-user CA management and a read-only Connections page backed
+by the IPv4 and IPv6 IP Helper owner tables. The connection route column is the
+service's current policy state, not packet-level proof of interception. UDP is
+not included. Runtime Trust remains an explicit capability notice.
 
 The Windows application polls on a worker thread every three seconds by default, with no
 overlapping scans and no polling while minimized. It exposes launch progress,
@@ -609,8 +611,8 @@ Visible application names take precedence over renderer/helper labels. Distinct
 executable paths remain separate even when their names match. Up to 256 entries
 are retained in memory for the current session, including exited applications;
 this history is not written to disk. Selecting a completion inserts its actual
-executable path, never its display label. The initial launcher accepts an
-executable path only, not arguments.
+executable path, never its display label. The launcher accepts separate
+executable and argument fields and never invokes a command shell.
 It never edits browser profiles or requests elevation. Successful process
 creation does not prove that a singleton application opened a new instance.
 Closing the window does not terminate applications it launched. The shared

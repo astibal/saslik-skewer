@@ -40,6 +40,14 @@ try {
         if (!(FindNamed $window $tab)) { throw "Missing tab: $tab" }
     }
     'PASS: shared application tabs' | Out-File $log -Append
+    $connections = FindNamed $window 'Connections'
+    $connections.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Start-Sleep -Seconds 4
+    if ((WindowText $window) -notmatch '[0-9]+ TCP sockets from the Windows owner table') {
+        throw 'Native Windows connection inventory did not populate'
+    }
+    'PASS: native Windows TCP connection inventory' | Out-File $log -Append
+    (FindNamed $window 'Applications').GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     $edit = FindNamed $window 'Application executable'
     $value = $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
     $normal = FindNamed $window 'Launch normally'

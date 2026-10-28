@@ -2,17 +2,20 @@
 #include "packet_tuple.hpp"
 #include <chrono>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace skewer::windows::traffic {
 struct TcpOwnerRow {
     skewer::traffic::PacketTuple tuple;
     std::uint32_t pid{};
+    std::uint32_t state{}; // MIB_TCP_STATE_* from the same IP Helper row.
 };
 struct TcpOwnerSnapshot {
     using Clock = std::chrono::steady_clock;
     Clock::time_point started, completed;
     std::vector<TcpOwnerRow> rows;
+    std::string error; // Presentation snapshots may report a bounded collection failure.
 };
 // Reads both IP Helper owner-PID tables, not a selected-process filter.
 // Bounded retries/size; any error rejects the entire snapshot. No driver needed.

@@ -63,6 +63,7 @@ TcpOwnerSnapshot captureTcpOwners() {
     appendTable<MIB_TCPTABLE_OWNER_PID>(AF_INET, snapshot.rows, [](const auto& row) {
         TcpOwnerRow result;
         result.pid = row.dwOwningPid;
+        result.state = row.dwState;
         result.tuple.protocol = IPPROTO_TCP;
         std::memcpy(result.tuple.source.data(), &row.dwLocalAddr, 4);
         std::memcpy(result.tuple.destination.data(), &row.dwRemoteAddr, 4);
@@ -73,6 +74,7 @@ TcpOwnerSnapshot captureTcpOwners() {
     appendTable<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, snapshot.rows, [](const auto& row) {
         TcpOwnerRow result;
         result.pid = row.dwOwningPid;
+        result.state = row.dwState;
         result.tuple.ipv6 = true;
         result.tuple.protocol = IPPROTO_TCP;
         std::memcpy(result.tuple.source.data(), row.ucLocalAddr, 16);

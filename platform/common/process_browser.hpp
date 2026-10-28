@@ -27,6 +27,7 @@ public:
     void setRoutingState(bool available, const QString& routed_identity = {});
     void setFilterText(const QString& text);
     QStringList launchSuggestions() const;
+    const QVector<ProcessRecord>& processes() const { return records_; }
     std::optional<ProcessRecord> selectedProcess() const;
     QTreeView* tree() const { return tree_; }
     QStandardItemModel* model() { return &model_; }
