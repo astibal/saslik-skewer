@@ -38,7 +38,25 @@ It creates a temporary `203.0.113.254/32` route, sends no traffic, and checks
 conflict refusal, explicit/destructor cleanup, already-missing routes and
 preservation after an administrator-style metric change. It refuses an existing
 fixture route. This test is intentionally excluded from automatic CTest runs.
-The primitive is not yet wired into the production service or GUI.
+`TunnelRoutes` groups a bounded trusted route plan, installs in plan order and
+withdraws in reverse order. A partial installation rolls back; a retired plan
+cannot reactivate. `clean()` remains false for failed removal or an observed
+external change, so callers must not treat withdrawal alone as permission to
+release their guard. `tunnel_routes_test.exe --live` verifies the native plan
+and partial rollback using two TEST-NET /32 destinations.
+
+The paired packet worker accepts an optional `TunnelRoutePolicy`. It activates
+only after authenticated transport health, publishes readiness after activation,
+and clears readiness before withdrawal. Lease rejection/expiration, transport
+health loss, installation failure and cancellation all withdraw before waiting
+for pending renewal or closing the lease. Once a routed transport loses health,
+that worker terminates rather than silently reinstalling routes. The existing
+encrypted loopback test verifies this ordering and failure behavior.
+
+This wires route policy into the packet worker, not yet the production SCM
+service or GUI. The caller still supplies validated addressing, interface setup
+and an already-armed external guard, which this policy never releases. The live
+whole-host PowerShell fixture below remains unchanged for now.
 
 ### Whole-host IPv4 live experiment
 

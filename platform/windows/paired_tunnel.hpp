@@ -27,12 +27,22 @@ private:
     QString peer_;
 };
 
+// Called only by the packet worker. The external egress guard must already be
+// armed and must outlive this policy, including unsuccessful route cleanup.
+class TunnelRoutePolicy {
+public:
+    virtual ~TunnelRoutePolicy() = default;
+    virtual void activate(const Tuntom::Endpoint&) = 0;
+    virtual void withdraw() noexcept = 0;
+};
+
 // Owns lease and packet lifetime, but not routing/filter policy. The caller must
 // keep its external traffic guard armed before and after this function. A false
 // ready flag never authorizes fallback to ordinary host routes. No GUI lifetime
 // is involved. stop, device and ready must outlive this synchronous operation.
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,
-                                     const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready);
+                                     const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready,
+                                     TunnelRoutePolicy* routes = nullptr);
 inline TunnelPump::Counters runPairedTunnel(PacketDevice& device, PskTunnelControl& control, HANDLE stop,
                                             std::atomic_bool& ready) {
     // Pin both control and transport to the same resolved peer for this lifetime.

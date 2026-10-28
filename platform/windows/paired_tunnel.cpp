@@ -40,7 +40,8 @@ void PskTunnelControl::close(const Tuntom::Endpoint& endpoint) {
 }
 
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,
-                                     const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready) {
+                                     const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready,
+                                     TunnelRoutePolicy* routes) {
     ready.store(false);
     validatePeer(numeric_peer);
     if (cancelled(stop)) {
@@ -89,8 +90,15 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
     // bounded control request to finish during stack unwinding.
     struct StopReadiness {
         std::atomic_bool& ready;
-        ~StopReadiness() { ready.store(false); }
-    } reset{ready};
+        TunnelRoutePolicy* routes;
+        ~StopReadiness() {
+            ready.store(false);
+            if (routes) {
+                routes->withdraw();
+            }
+        }
+    } reset{ready, routes};
+    bool installed = false;
     while (!cancelled(stop)) {
         auto now = TunnelPump::Clock::now();
         if (!lease.valid(now)) {
@@ -111,7 +119,21 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
         }
         pump.step(TunnelPump::Clock::now());
         now = TunnelPump::Clock::now();
-        ready.store(!cancelled(stop) && lease.valid(now) && pump.healthy(now));
+        if (cancelled(stop)) {
+            break;
+        }
+        const bool healthy = lease.valid(now) && pump.healthy(now);
+        if (routes && installed && !healthy) {
+            // No automatic reactivation: require a fresh explicit lifecycle.
+            throw std::runtime_error("Routed tunnel lost readiness; traffic remains blocked");
+        }
+        if (routes && !installed && healthy) {
+            routes->activate(paired.endpoint);
+            installed = true;
+        }
+        // Route installation may take time. Never publish stale lease health.
+        now = TunnelPump::Clock::now();
+        ready.store(healthy && !cancelled(stop) && lease.valid(now) && pump.healthy(now));
         if (udp.wait(stop, 25, device.readEvent()) == UdpEndpoint::Wait::Cancelled) {
             break;
         }
