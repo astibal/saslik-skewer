@@ -37,13 +37,27 @@ public:
     virtual void withdraw() noexcept = 0;
 };
 
+// Optional selected-packet integration, invoked only on the packet worker.
+// prepare may configure the supplied PacketDevice from the assigned address.
+// poll runs only after authenticated readiness, and must be bounded/nonblocking.
+// block retires selected traffic on every exit, before waiting for renewal;
+// it must be idempotent and must not release interception or unrelated traffic.
+class TunnelPacketWorker {
+public:
+    virtual ~TunnelPacketWorker() = default;
+    virtual void prepare(const Tuntom::Endpoint&) = 0;
+    virtual void poll() = 0;
+    virtual void block() noexcept = 0;
+};
+
 // Owns lease and packet lifetime, but not routing/filter policy. The caller must
 // keep its external traffic guard armed before and after this function. A false
 // ready flag never authorizes fallback to ordinary host routes. No GUI lifetime
 // is involved. stop, device and ready must outlive this synchronous operation.
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,
                                      const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready,
-                                     TunnelRoutePolicy* routes = nullptr);
+                                     TunnelRoutePolicy* routes = nullptr,
+                                     TunnelPacketWorker* packets = nullptr);
 inline TunnelPump::Counters runPairedTunnel(PacketDevice& device, PskTunnelControl& control, HANDLE stop,
                                             std::atomic_bool& ready) {
     // Pin both control and transport to the same resolved peer for this lifetime.

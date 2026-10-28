@@ -412,3 +412,11 @@ datagrams, including direct traffic larger than the tunnel MTU. The supervisor
 must keep the worker and capture handle alive during a blocked tunnel state.
 Production service integration, UDP ownership, IPv6 and process-tree lifecycle remain unfinished;
 this flag is not exposed by the installed service or GUI.
+
+The shared paired-session loop now accepts a `TunnelPacketWorker`. It prepares
+the packet device using the assigned endpoint, polls bounded packet work only
+after authenticated readiness, and blocks it on teardown before joining a
+pending renewal. Preparation and polling exceptions release the lease without
+reviving a retired packet epoch. All packet callbacks run on the session worker;
+no additional packet thread or shared lock is introduced. This is the integration
+point for service-owned selection, not an enabled application-routing command.

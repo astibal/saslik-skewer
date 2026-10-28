@@ -76,7 +76,36 @@ public:
 private:
     std::atomic_bool& ready_;
 };
-void exercise(bool reject, bool late = false, bool route_failure = false, bool transport_loss = false) {
+class Packets final : public TunnelPacketWorker {
+public:
+    explicit Packets(std::atomic_bool& ready) : ready_(ready) {}
+    unsigned preparations{}, polls{}, blocks{};
+    bool bad_order{}, fail_prepare{}, fail_poll{};
+    void prepare(const Tuntom::Endpoint& endpoint) override {
+        thread_ = GetCurrentThreadId();
+        ++preparations;
+        bad_order |= ready_.load() || endpoint.id != 241;
+        if (fail_prepare) {
+            throw std::runtime_error("Fixture packet preparation failed");
+        }
+    }
+    void poll() override {
+        ++polls;
+        bad_order |= !ready_.load() || blocks || GetCurrentThreadId() != thread_;
+        if (fail_poll) {
+            throw std::runtime_error("Fixture packet processing failed");
+        }
+    }
+    void block() noexcept override {
+        ++blocks;
+        bad_order |= ready_.load() || GetCurrentThreadId() != thread_;
+    }
+private:
+    std::atomic_bool& ready_;
+    DWORD thread_{};
+};
+void exercise(bool reject, bool late = false, bool route_failure = false, bool transport_loss = false,
+              bool packet_failure = false) {
     Control control;
     control.reject = reject;
     control.late = late;
@@ -85,19 +114,23 @@ void exercise(bool reject, bool late = false, bool route_failure = false, bool t
     require(bool(stop), "Cannot create cancellation event");
     std::atomic_bool ready{};
     Routes routes(ready);
+    Packets packets(ready);
+    packets.fail_poll = packet_failure;
     routes.fail = route_failure;
     // Cancelled startup must not consume an invitation or open a lease.
     SetEvent(stop.get());
-    runPairedTunnel(device, control, "127.0.0.1", stop.get(), ready, &routes);
+    runPairedTunnel(device, control, "127.0.0.1", stop.get(), ready, &routes, &packets);
     require(control.opens == 0, "Cancelled startup opened control");
     require(routes.activations == 0 && routes.withdrawals == 0, "Cancelled startup touched routes");
+    require(!packets.preparations && !packets.blocks, "Cancelled startup touched packets");
     ResetEvent(stop.get());
     UdpEndpoint server(UdpAddress::numeric("127.0.0.1", 40241));
     tuntom::ascon::key_type key{};
     key.fill(9);
     tuntom::SessionProtocol protocol(241, key, true, 1280, true, 300, true);
     auto run = std::async(std::launch::async, [&] {
-        return runPairedTunnel(device, control, "127.0.0.1", stop.get(), ready, &routes);
+        return runPairedTunnel(device, control, "127.0.0.1", stop.get(), ready,
+                               packet_failure ? nullptr : &routes, &packets);
     });
     struct CancelOnExit {
         HANDLE stop;
@@ -158,7 +191,15 @@ void exercise(bool reject, bool late = false, bool route_failure = false, bool t
     } catch (const std::exception&) {
         failed = true;
     }
-    require(failed == (reject || late || route_failure || transport_loss), "Unexpected renewal result");
+    require(failed == (reject || late || route_failure || transport_loss || packet_failure),
+            "Unexpected renewal result");
+    require(packets.preparations == 1 && packets.blocks && !packets.bad_order,
+            "Packet worker lifetime or thread order incorrect");
+    if (packet_failure) {
+        require(packets.polls == 1 && control.closes == 1 && !ready,
+                "Packet failure did not retire readiness and lease");
+        return;
+    }
     require(routes.activations == 1 && routes.withdrawals == 1 && !routes.bad_order,
             "Routes must activate before readiness and withdraw after readiness is cleared");
     require(control.closes == 1 && !ready, "Route teardown did not release lease and readiness");
@@ -184,6 +225,24 @@ int main(int argc, char** argv) {
         exercise(false, true);
         exercise(false, false, true);
         exercise(false, false, false, true);
+        exercise(false, false, false, false, true);
+        {
+            Control control;
+            Device device;
+            Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            std::atomic_bool ready{};
+            Packets packets(ready);
+            packets.fail_prepare = true;
+            bool failed = false;
+            try {
+                runPairedTunnel(device, control, "127.0.0.1", stop.get(), ready, nullptr, &packets);
+            } catch (const std::exception&) {
+                failed = true;
+            }
+            require(failed && packets.preparations == 1 && packets.blocks == 1 &&
+                        !packets.polls && !packets.bad_order && control.closes == 1,
+                    "Partial packet preparation did not clean up");
+        }
         std::cout << "PASS: paired owner, encrypted data, asynchronous renewal, rejection and cancellation\n";
         return 0;
     } catch (const std::exception& error) {

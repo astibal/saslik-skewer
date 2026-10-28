@@ -47,7 +47,7 @@ void PskTunnelControl::close(const Tuntom::Endpoint& endpoint) {
 
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,
                                      const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready,
-                                     TunnelRoutePolicy* routes) {
+                                     TunnelRoutePolicy* routes, TunnelPacketWorker* packets) {
     ready.store(false);
     validatePeer(numeric_peer);
     if (cancelled(stop)) {
@@ -76,6 +76,19 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
     if (paired.key.size() != 16 || paired.endpoint.id < 1 || paired.endpoint.id > 255) {
         throw std::runtime_error("Invalid paired transport key or ID");
     }
+    // Covers partial initialization too. A second, inner guard below blocks
+    // before joining an in-flight renewal during stack unwinding.
+    struct BlockPackets {
+        TunnelPacketWorker* packets;
+        ~BlockPackets() {
+            if (packets) {
+                packets->block();
+            }
+        }
+    } packetCleanup{packets};
+    if (packets) {
+        packets->prepare(paired.endpoint);
+    }
     tuntom::ascon::key_type key{};
     std::copy(paired.key.begin(), paired.key.end(), key.begin());
     struct WipeKey {
@@ -97,13 +110,17 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
     struct StopReadiness {
         std::atomic_bool& ready;
         TunnelRoutePolicy* routes;
+        TunnelPacketWorker* packets;
         ~StopReadiness() {
             ready.store(false);
+            if (packets) {
+                packets->block();
+            }
             if (routes) {
                 routes->withdraw();
             }
         }
-    } reset{ready, routes};
+    } reset{ready, routes, packets};
     bool installed = false;
     while (!cancelled(stop)) {
         auto now = TunnelPump::Clock::now();
@@ -129,17 +146,29 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
             break;
         }
         const bool healthy = lease.valid(now) && pump.healthy(now);
-        if (routes && installed && !healthy) {
+        if ((routes || packets) && installed && !healthy) {
             // No automatic reactivation: require a fresh explicit lifecycle.
             throw std::runtime_error("Routed tunnel lost readiness; traffic remains blocked");
         }
         if (routes && !installed && healthy) {
             routes->activate(paired.endpoint);
-            installed = true;
         }
+        installed |= healthy;
         // Route installation may take time. Never publish stale lease health.
         now = TunnelPump::Clock::now();
         ready.store(healthy && !cancelled(stop) && lease.valid(now) && pump.healthy(now));
+        if (packets && ready.load()) {
+            packets->poll();
+            // Packet processing may query the OS. Never keep stale readiness
+            // after that work, or wait with an expired lease still advertised.
+            now = TunnelPump::Clock::now();
+            if (cancelled(stop)) {
+                break;
+            }
+            if (!lease.valid(now) || !pump.healthy(now)) {
+                throw std::runtime_error("Selected tunnel lost readiness during packet processing");
+            }
+        }
         if (udp.wait(stop, 25, device.readEvent()) == UdpEndpoint::Wait::Cancelled) {
             break;
         }
