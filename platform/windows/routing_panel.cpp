@@ -321,6 +321,10 @@ bool RoutingPanel::nextStartRequiresPairing() const {
 }
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
+    // Keep the UI bound to the authoritative service generation it started.
+    // Changing the service/endpoint or upgrading SCM while that generation is
+    // live could orphan routing from this panel or terminate it outside Stop.
+    const bool configuration_editable = !known_ || idle;
     const auto requested = transport_->currentData().toInt();
     const bool direct = requested == static_cast<int>(RoutingTransport::Direct);
     const bool automatic = requested == AutoTransport;
@@ -334,8 +338,8 @@ void RoutingPanel::updateControls() {
     pair_->setEnabled(idle && state_.tunnel_available && !action_busy_);
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
-    service_->setEnabled(!action_busy_);
-    endpoint_->setEnabled(!action_busy_);
+    service_->setEnabled(configuration_editable && !action_busy_);
+    endpoint_->setEnabled(configuration_editable && !action_busy_);
     transport_->setEnabled(idle && !action_busy_);
     gateway_->setEnabled(idle && !action_busy_ && (direct || automatic));
     const auto package = QCoreApplication::applicationDirPath();
@@ -347,7 +351,7 @@ void RoutingPanel::updateControls() {
     install_->setText(routingServiceInstalled(service_->text().trimmed())
                           ? tr("Upgrade routing service…") : tr("Install routing service…"));
     const bool managing = install_watcher_.isRunning() || remove_watcher_.isRunning();
-    install_->setEnabled(install_packaged && !action_busy_ && !managing);
+    install_->setEnabled(install_packaged && configuration_editable && !action_busy_ && !managing);
     const bool removable = !known_ || state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed;
     remove_->setEnabled(remove_packaged && routingServiceInstalled(service_->text().trimmed()) && removable &&
                         !action_busy_ && !managing);

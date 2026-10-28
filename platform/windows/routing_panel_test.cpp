@@ -25,9 +25,12 @@ int main(int argc, char** argv) {
             auto panel = std::make_unique<skewer::windows::RoutingPanel>();
             panel->show();
             auto* status = panel->findChild<QLabel*>("routingStatus");
+            auto* service = panel->findChild<QLineEdit*>("routingService");
+            auto* endpoint = panel->findChild<QLineEdit*>("routingEndpoint");
             auto* pair = panel->findChild<QPushButton*>("routingPair");
             auto* start = panel->findChild<QPushButton*>("routingStart");
             auto* stop = panel->findChild<QPushButton*>("routingStop");
+            auto* install = panel->findChild<QPushButton*>("routingInstall");
             auto wait = [&](const QString& text) {
                 QElapsedTimer timer; timer.start();
                 while (!status->text().startsWith(text) && timer.elapsed() < 30000) {
@@ -38,7 +41,8 @@ int main(int argc, char** argv) {
                 }
             };
             wait("Idle");
-            if (!pair->isEnabled() || start->isEnabled() || stop->isEnabled()) {
+            if (!pair->isEnabled() || start->isEnabled() || stop->isEnabled() ||
+                !service->isEnabled() || !endpoint->isEnabled()) {
                 throw std::runtime_error("Unpaired Idle enabled routing");
             }
             pair->click(); wait("Pairing delivered");
@@ -46,7 +50,8 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("Paired Idle did not enable routing");
             }
             start->click(); wait("Active");
-            if (pair->isEnabled() || start->isEnabled() || !stop->isEnabled()) {
+            if (pair->isEnabled() || start->isEnabled() || !stop->isEnabled() ||
+                service->isEnabled() || endpoint->isEnabled() || install->isEnabled()) {
                 throw std::runtime_error("Incorrect Active controls");
             }
             panel.reset();
@@ -64,11 +69,14 @@ int main(int argc, char** argv) {
             auto panel = std::make_unique<skewer::windows::RoutingPanel>();
             panel->show();
             auto* status = panel->findChild<QLabel*>("routingStatus");
+            auto* service = panel->findChild<QLineEdit*>("routingService");
+            auto* endpoint = panel->findChild<QLineEdit*>("routingEndpoint");
             auto* transport = panel->findChild<QComboBox*>("routingTransport");
             auto* gateway = panel->findChild<QLineEdit*>("routingGateway");
             auto* pair = panel->findChild<QPushButton*>("routingPair");
             auto* start = panel->findChild<QPushButton*>("routingStart");
             auto* stop = panel->findChild<QPushButton*>("routingStop");
+            auto* install = panel->findChild<QPushButton*>("routingInstall");
             auto wait = [&](const QString& text) {
                 QElapsedTimer timer; timer.start();
                 while (!status->text().startsWith(text) && timer.elapsed() < 30000) {
@@ -81,12 +89,14 @@ int main(int argc, char** argv) {
             wait("Idle");
             if (transport->currentIndex() != 2 || gateway->text() != QString::fromLocal8Bit(argv[3]) ||
                 !status->text().contains("Direct-only") || pair->isEnabled() ||
-                !start->isEnabled() || stop->isEnabled()) {
+                !start->isEnabled() || stop->isEnabled() || !service->isEnabled() ||
+                !endpoint->isEnabled()) {
                 throw std::runtime_error("Auto did not admit the valid unpaired direct gateway");
             }
             start->click();
             wait("Active");
-            if (!status->text().contains("direct gateway") || start->isEnabled() || !stop->isEnabled()) {
+            if (!status->text().contains("direct gateway") || start->isEnabled() || !stop->isEnabled() ||
+                service->isEnabled() || endpoint->isEnabled() || install->isEnabled()) {
                 throw std::runtime_error("Auto did not publish authoritative Direct state");
             }
             panel.reset();
