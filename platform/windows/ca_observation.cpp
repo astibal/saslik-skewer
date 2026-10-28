@@ -72,13 +72,19 @@ void rememberAdvertisedCa(const QByteArray& pem) {
     QSettings().setValue("windows/advertisedCa", pem);
 }
 
-CaObservation advertisedCaObservation() {
+QByteArray advertisedCaCertificate() {
     const auto pem = QSettings().value("windows/advertisedCa").toByteArray();
     if (pem.isEmpty() || pem.size() > 1024 * 1024) return {};
     try {
-        return inspect(pem);
+        (void)inspect(pem);
+        return pem;
     } catch (const std::exception&) {
         return {};
     }
+}
+
+CaObservation advertisedCaObservation() {
+    const auto pem = advertisedCaCertificate();
+    return pem.isEmpty() ? CaObservation{} : inspect(pem);
 }
 } // namespace skewer::windows

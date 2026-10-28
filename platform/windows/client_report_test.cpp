@@ -67,6 +67,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     skewer::windows::rememberAdvertisedCa(root);
+    if (skewer::windows::advertisedCaCertificate() != root) {
+        std::fputs("Validated advertised CA was not restored\n", stderr);
+        return 1;
+    }
     const auto observed_ca = skewer::windows::clientReport("SKEWER-WIN11", "test-version")
                                  .value("ca").toObject();
     const auto observed_stores = observed_ca.value("stores").toArray();

@@ -188,6 +188,15 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent) {
             updateControls();
         }
     });
+    const auto remembered = advertisedCaCertificate();
+    if (!remembered.isEmpty()) {
+        const auto result = inspect(remembered);
+        applyCertificate(remembered);
+        status_->setText(result.present ? tr("Trusted by the current user.")
+                                        : tr("Not present in Current User\\ROOT."));
+        install_->setEnabled(!result.present);
+        remove_->setEnabled(result.present);
+    }
     updateControls();
 }
 
@@ -250,7 +259,9 @@ void CaTrustPanel::applyCertificate(const QByteArray& pem) {
 }
 
 void CaTrustPanel::updateControls() {
-    install_->setEnabled(false);
-    remove_->setEnabled(false);
+    if (certificate_.isEmpty()) {
+        install_->setEnabled(false);
+        remove_->setEnabled(false);
+    }
 }
 } // namespace skewer::windows
