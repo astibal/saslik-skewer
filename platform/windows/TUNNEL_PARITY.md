@@ -66,6 +66,13 @@ a known direct lab route, as Linux does. Once a tunnel has been selected, its
 loss must not silently switch back to direct mode. User-authorized mode changes
 are distinct from automatic recovery.
 
+The Windows GUI implements that admission rule without a runtime fallback:
+Auto chooses Direct only when a canonical gateway is configured at Start;
+otherwise it requires paired Tuntom. Invalid non-empty gateway input blocks
+activation instead of silently choosing the tunnel. Native SCM/GUI integration
+verifies that closing the panel after Auto selected Direct leaves the generation
+active until an explicit Stop.
+
 The controller, tunnel endpoint and control plane must not be routed back into
 their own tunnel. Application identity must resist PID reuse and preserve
 instance boundaries. An executable-path-only firewall rule is not by itself

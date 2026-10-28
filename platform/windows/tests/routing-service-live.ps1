@@ -1,5 +1,6 @@
 param([string]$Directory = 'C:\SkewerDev\flow-test',
-      [string]$ClientDirectory = '', [string]$StoredEndpoint = '')
+      [string]$ClientDirectory = '', [string]$StoredEndpoint = '',
+      [string]$GuiTestDirectory = '')
 $ErrorActionPreference = 'Stop'
 # Disposable elevated VM only. Fixed false WinDivert filter, public test key.
 $name = 'SkewerRoutingTest-' + [guid]::NewGuid().ToString('N')
@@ -70,6 +71,26 @@ try {
     }
     $null = Command 2 $activeDirect.generation
     $initial = AwaitPhase 0
+    if ($GuiTestDirectory) {
+        $previousPlatform = $env:QT_QPA_PLATFORM
+        $previousPath = $env:PATH
+        try {
+            $env:QT_QPA_PLATFORM = 'offscreen'
+            $env:PATH = "$GuiTestDirectory;$previousPath"
+            & (Join-Path $GuiTestDirectory 'routing_panel_test.exe') `
+                --live-direct $name '192.0.2.1'
+            if ($LASTEXITCODE -ne 0) { throw 'GUI Auto direct start failed' }
+        } finally {
+            $env:QT_QPA_PLATFORM = $previousPlatform
+            $env:PATH = $previousPath
+        }
+        $activeDirect = AwaitPhase 2
+        if ($activeDirect.scope -ne 1 -or $activeDirect.transport -ne 2 -or $activeDirect.paired) {
+            throw 'GUI Auto direct state was not retained after panel close'
+        }
+        $null = Command 2 $activeDirect.generation
+        $initial = AwaitPhase 0
+    }
     & $exe --client $name 1 $initial.generation
     if ($LASTEXITCODE -eq 0) { throw 'Unpaired service accepted Start' }
     $unpaired = Command 0 0

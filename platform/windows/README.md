@@ -40,7 +40,7 @@ changing trust.
 ### Native whole-host service integration
 
 The Windows desktop has a **Routing** tab for an installed service: stored
-pairing handoff, encrypted-tunnel versus direct-gateway transport selection,
+pairing handoff, Auto / encrypted-tunnel / direct-gateway transport selection,
 asynchronous state, generation-bound Start/Stop, and explicit
 Idle/Starting/Active/Blocked/Stopping/Failed feedback. Periodic status reads do
 not toggle controls; unknown state disables mutations. A click arriving during
@@ -53,6 +53,10 @@ an absent, unpaired or incompatible service never enables routing controls.
 Direct mode instead requires a canonical on-link IPv4 gateway and does not
 require tunnel pairing. The authoritative service status restores both scope
 and transport after a GUI restart.
+Auto makes a single choice when Start is pressed: a configured valid gateway
+selects Direct, while an empty gateway selects the paired tunnel. Invalid
+non-empty gateway input is rejected. A selected tunnel never falls back to
+direct routing after failure.
 
 `routing_panel_test` checks missing-service responsiveness and bounded local
 cancellation. `native-routing-service-live.ps1 -GuiClient` uses the real Qt

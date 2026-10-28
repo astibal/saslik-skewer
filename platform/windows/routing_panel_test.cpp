@@ -14,6 +14,8 @@ int main(int argc, char** argv) {
     app.setOrganizationName("SkewerTests");
     app.setApplicationName("RoutingPanel-" + QString::number(GetCurrentProcessId()));
     QSettings settings;
+    settings.clear();
+    settings.sync();
     settings.setValue("windows/routingService", "SkewerMissing-" + QString::number(GetCurrentProcessId()));
     int result = 0;
     try {
@@ -52,7 +54,45 @@ int main(int argc, char** argv) {
             std::cout << "PASS: GUI pairing and Start reached Active; panel closed without Stop\n";
             return 0;
         }
-        if (argc != 1) { throw std::invalid_argument("Expected no args or --live SERVICE ENDPOINT"); }
+        if (argc == 4 && std::string(argv[1]) == "--live-direct") {
+            settings.setValue("windows/routingService", QString::fromLocal8Bit(argv[2]));
+            settings.setValue("windows/routingTransport", 2);
+            settings.setValue("windows/directGateway", QString::fromLocal8Bit(argv[3]));
+            auto panel = std::make_unique<skewer::windows::RoutingPanel>();
+            panel->show();
+            auto* status = panel->findChild<QLabel*>("routingStatus");
+            auto* transport = panel->findChild<QComboBox*>("routingTransport");
+            auto* gateway = panel->findChild<QLineEdit*>("routingGateway");
+            auto* start = panel->findChild<QPushButton*>("routingStart");
+            auto* stop = panel->findChild<QPushButton*>("routingStop");
+            auto wait = [&](const QString& text) {
+                QElapsedTimer timer; timer.start();
+                while (!status->text().startsWith(text) && timer.elapsed() < 30000) {
+                    app.processEvents(); QThread::msleep(10);
+                }
+                if (!status->text().startsWith(text)) {
+                    throw std::runtime_error(("Unexpected direct panel state: " + status->text()).toStdString());
+                }
+            };
+            wait("Idle");
+            if (transport->currentIndex() != 2 || gateway->text() != QString::fromLocal8Bit(argv[3]) ||
+                !start->isEnabled() || stop->isEnabled()) {
+                throw std::runtime_error("Auto did not admit the valid unpaired direct gateway");
+            }
+            start->click();
+            wait("Active");
+            if (!status->text().contains("direct gateway") || start->isEnabled() || !stop->isEnabled()) {
+                throw std::runtime_error("Auto did not publish authoritative Direct state");
+            }
+            panel.reset();
+            settings.clear(); settings.sync();
+            std::cout << "PASS: GUI Auto selected Direct; panel closed without Stop\n";
+            return 0;
+        }
+        if (argc != 1) {
+            throw std::invalid_argument("Expected no args, --live SERVICE ENDPOINT, or "
+                                        "--live-direct SERVICE GATEWAY");
+        }
         auto panel = std::make_unique<skewer::windows::RoutingPanel>();
         panel->show();
         const auto endpoint = panel->findChild<QLineEdit*>("routingEndpoint");
@@ -64,6 +104,10 @@ int main(int argc, char** argv) {
         if (!endpoint || !gateway || !transport || !start || !stop || !status ||
             start->isEnabled() || stop->isEnabled()) {
             throw std::runtime_error("Unknown service enabled routing controls");
+        }
+        if (transport->count() != 3 || transport->itemData(2).toInt() != -1 ||
+            !transport->itemText(2).startsWith("Auto")) {
+            throw std::runtime_error("Windows routing does not expose explicit Auto transport");
         }
         transport->setCurrentIndex(1);
         gateway->setText("not-an-address");

@@ -112,7 +112,7 @@ try {
         $gateway.Current.ControlType -ne [System.Windows.Automation.ControlType]::Edit) {
         throw 'Whole-host transport controls expose unexpected accessibility roles'
     }
-    'PASS: whole-host tunnel/direct transport controls' | Out-File $log -Append
+    'PASS: whole-host Auto/tunnel/direct transport controls' | Out-File $log -Append
     $package = Split-Path $exe
     $completeRuntime = @('install-routing-service.ps1','remove-routing-service.ps1',
                          'wintun.dll','WinDivert.dll','WinDivert64.sys') |
