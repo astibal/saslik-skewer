@@ -104,14 +104,30 @@ int main() {
             shortPacket.resize(size);
             const auto saved = shortPacket;
             require(!rewriteIpv4Endpoint(shortPacket, original, RewriteSide::Source, {{10, 0, 0, 1}, 1}) &&
-                        shortPacket == saved, "Truncated packet was mutated");
+                        shortPacket == saved,
+                    "Truncated packet was mutated");
         }
+        auto syn = packet(true, 4);
+        syn[32] = 0x60;
+        syn[33] = 2;
+        syn[40] = 2;
+        syn[41] = 4;
+        word(syn, 42, 1460);
+        require(clampIpv4TcpMss(syn, 1240), "MSS clamp rejected SYN");
+        require(syn[42] == 4 && syn[43] == 216, "MSS not reduced");
+        verify(syn);
+        const auto clamped = syn;
+        require(clampIpv4TcpMss(syn, 1300) && syn == clamped, "MSS increased");
+        syn[41] = 5;
+        const auto invalidOptions = syn;
+        require(!clampIpv4TcpMss(syn, 1200) && syn == invalidOptions, "Malformed MSS mutated packet");
         bool zeroEncoded = false;
         for (unsigned value = 0; value <= 65535; ++value) {
             auto udp = packet(false, 2);
             word(udp, 28, value);
             require(rewriteIpv4Endpoint(udp, *parsePacketTuple(udp).tuple, RewriteSide::Source,
-                                        {{10, 0, 0, 1}, 1}), "UDP checksum search failed");
+                                        {{10, 0, 0, 1}, 1}),
+                    "UDP checksum search failed");
             if (udp[26] == 255 && udp[27] == 255) {
                 verify(udp);
                 zeroEncoded = true;

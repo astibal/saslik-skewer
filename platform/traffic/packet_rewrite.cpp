@@ -26,6 +26,49 @@ void store(std::span<std::uint8_t> bytes, std::size_t offset, std::uint16_t valu
 }
 } // namespace
 
+bool clampIpv4TcpMss(std::span<std::uint8_t> packet, std::uint16_t maximum) {
+    const auto parsed = parsePacketTuple(packet);
+    if (!maximum || !parsed.tuple || parsed.tuple->ipv6) {
+        return false;
+    }
+    if (parsed.tuple->protocol != 6 || !(packet[33] & 2)) {
+        return true;
+    }
+    const std::size_t end = 20 + (packet[32] >> 4) * 4;
+    std::optional<std::size_t> mss;
+    for (std::size_t i = 40; i < end;) {
+        const auto kind = packet[i];
+        if (!kind) {
+            break;
+        }
+        if (kind == 1) {
+            ++i;
+            continue;
+        }
+        if (i + 1 >= end || packet[i + 1] < 2 || i + packet[i + 1] > end) {
+            return false;
+        }
+        if (kind == 2) {
+            if (packet[i + 1] != 4 || mss || (packet[i + 2] == 0 && packet[i + 3] == 0)) {
+                return false;
+            }
+            mss = i + 2;
+        }
+        i += packet[i + 1];
+    }
+    if (!mss || ((unsigned(packet[*mss]) << 8) | packet[*mss + 1]) <= maximum) {
+        return true;
+    }
+    if (!parsed.tuple->source_port || !parsed.tuple->source[0] || parsed.tuple->source[0] >= 224) {
+        return false;
+    }
+    store(packet, *mss, maximum);
+    std::array<std::uint8_t, 4> source;
+    std::copy_n(parsed.tuple->source.begin(), 4, source.begin());
+    return rewriteIpv4Endpoint(packet, *parsed.tuple, RewriteSide::Source,
+                               {source, parsed.tuple->source_port});
+}
+
 bool rewriteIpv4Endpoint(std::span<std::uint8_t> packet, const PacketTuple& expected, RewriteSide side,
                          Ipv4Endpoint replacement) {
     const auto parsed = parsePacketTuple(packet);

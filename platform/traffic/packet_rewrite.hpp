@@ -15,4 +15,7 @@ enum class RewriteSide { Source, Destination };
 // Failure leaves the packet unchanged. IPv6, IP options and fragments are rejected.
 bool rewriteIpv4Endpoint(std::span<std::uint8_t> packet, const PacketTuple& expected, RewriteSide side,
                          Ipv4Endpoint replacement);
+// Clamp SYN/SYN-ACK MSS in both directions before forwarding through a smaller
+// tunnel. Validate the complete option list before mutation; recompute checksums.
+bool clampIpv4TcpMss(std::span<std::uint8_t> packet, std::uint16_t maximum);
 } // namespace skewer::traffic

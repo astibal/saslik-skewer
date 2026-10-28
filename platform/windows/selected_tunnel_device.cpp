@@ -80,6 +80,7 @@ std::optional<std::size_t> SelectedTunnelDevice::readPacket(std::span<std::uint8
             continue;
         }
         flows_.expire(now);
+        if (!skewer::traffic::clampIpv4TcpMss(packet.bytes, 1240)) { continue; }
         if (!flows_.outbound(packet.owner, packet.bytes, now) || !allowed(packet.owner)) {
             continue;
         }
@@ -93,6 +94,7 @@ bool SelectedTunnelDevice::writePacket(std::span<const std::uint8_t> packet) {
         return false;
     }
     std::vector<std::uint8_t> bytes(packet.begin(), packet.end());
+    if (!skewer::traffic::clampIpv4TcpMss(bytes, 1240)) { return false; }
     const auto now = Clock::now();
     flows_.expire(now);
     const auto owner = flows_.inbound(bytes, now);

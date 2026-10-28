@@ -356,3 +356,29 @@ This remains non-atomic lab evidence, not `PacketOwner::Unique`. The service's
 selection policy must explicitly consume this result and preserve held/drop
 behavior for unknowns. It is TCP-only and does not supply routing for existing
 connections whose CONNECT event predates the observer, shared sockets, or UDP.
+
+### Selected TCP through the paired lab
+
+`selected_tcp_live PAIRED_ENDPOINT PEER_IPV4 HTTP_IPV4 HTTP_HOST [--tls]`
+is an explicit elevated developer probe, not an installed service mode. It loads
+the current user's stored pairing, opens a bounded tunnel lease, and binds one
+exclusive TCP source port. A narrow WinDivert filter holds only that port's
+traffic to the supplied destination. The real TCP resolver feeds the shared
+capture bridge; translated packets traverse the paired Saslik and replies are
+restored to the source socket. No default routes, adapter addresses or DNS
+settings are changed. The socket closes before interception is destroyed on
+both successful and failed exits. The lease is closed best-effort afterward.
+
+The Windows VM reached `example.com` with HTTP 200 over both plaintext and TLS.
+The TLS probe deliberately disables certificate verification in its own OpenSSL
+context to test MITM transport; it is not a CA-trust test and does not alter any
+system/browser settings. Success requires a complete HTTP response header, not
+a complete downloaded body. Credentials remain in memory and are never argv.
+
+This integration exposed the physical/tunnel MTU mismatch. The selected device
+now clamps TCP MSS to 1240 in SYN and SYN-ACK packets for its 1280-byte tunnel.
+The portable clamp validates options before mutation, never increases MSS and
+recomputes checksums. Before the clamp the TLS probe timed out; after it the
+same probe returned HTTP 200. Fragmented and unsupported input remains rejected.
+The probe still owns its exclusive source socket; general GUI selection, other
+application lifetimes, DNS and service-mode policy are not yet provided by it.
