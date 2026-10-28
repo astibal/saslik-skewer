@@ -31,6 +31,51 @@ jobs:
           path: |
             dist/*.deb
             dist/SHA256SUMS
+  windows-package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the pinned Qt installer
+        run: python -m pip install aqtinstall==3.3.0
+      - name: Build the Windows release package
+        env:
+          BUILD_JOBS: '4'
+        run: ./packaging/build-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skewer-windows-amd64
+          path: |
+            dist/windows/*.zip
+            dist/windows/*.zip.sha256
+  windows-verify:
+    needs: windows-package
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: skewer-windows-amd64
+          path: dist/windows
+      - name: Verify and install the Windows release package
+        shell: pwsh
+        run: |
+          $archive = @(Get-ChildItem -LiteralPath dist/windows -Filter 'skewer-windows-amd64-*.zip')
+          if ($archive.Count -ne 1) { throw "Expected one Windows archive, found $($archive.Count)" }
+          $sidecar = Get-Content -LiteralPath ($archive[0].FullName + '.sha256') -Raw
+          if ($sidecar -notmatch '^([0-9a-f]{64})\s+\*?([^\r\n]+)\s*$') {
+            throw 'Invalid Windows checksum sidecar'
+          }
+          if ($Matches[2] -ne $archive[0].Name) { throw 'Checksum names a different archive' }
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive[0].FullName).Hash.ToLowerInvariant()
+          if ($actual -ne $Matches[1]) { throw 'Windows archive checksum mismatch' }
+          if ($archive[0].BaseName -notmatch '^skewer-windows-amd64-(\d+(?:\.\d+){3})$') {
+            throw 'Windows archive has an invalid versioned name'
+          }
+          ./packaging/test-windows-package.ps1 -Archive $archive[0].FullName `
+            -ExpectedVersion $Matches[1] -TestRoot (Join-Path $env:RUNNER_TEMP 'skewer-release-smoke')
   install:
     needs: package
     runs-on: ubuntu-24.04
@@ -54,7 +99,7 @@ jobs:
           docker run --rm --platform linux/amd64 -v "$PWD:/src:ro" -v "$PWD/dist:/packages:ro" "$TEST_IMAGE" bash /src/packaging/test-installed.sh
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [package, install]
+    needs: [package, install, windows-package, windows-verify]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -63,11 +108,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: skewer-linux-amd64
-          path: dist
+          path: dist/linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: skewer-windows-amd64
+          path: dist/windows
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" dist/*.deb dist/SHA256SUMS --verify-tag \
+          gh release create "$RELEASE_TAG" dist/linux/*.deb dist/linux/SHA256SUMS \
+            dist/windows/*.zip dist/windows/*.zip.sha256 --verify-tag \
             --title "Skewer $RELEASE_TAG" --notes-file packaging/RELEASE.md
