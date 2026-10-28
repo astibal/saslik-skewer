@@ -13,7 +13,7 @@ Transport milestones verified independently of the remaining service/UI gates:
 - [x] Real paired Wintun/Tuntom path to Saslik: source-bound ICMP and HTTPS
   through Smithproxy CONNECT, preserving host default routes and cleaning up
   both endpoints. The same transport is now owned by the routing service for
-  whole-host IPv4 and selected-process IPv4 TCP modes.
+  whole-host IPv4 and selected-process corroborated IPv4 TCP/UDP modes.
 
 - [x] Run interception in a privileged service independent of the GUI, with
   authenticated local IPC and verified current-user process identities.

@@ -80,6 +80,7 @@ Use `-WhatIf` to validate without installation. The elevated regression script
 overwrite rejection, upgrade and complete removal of its unique test service.
 
 Current routing supports whole-host IPv4 or one explicitly selected process's
-fresh IPv4 TCP connections. A tunnel failure keeps the live guard blocking until explicit
+fresh corroborated IPv4 TCP and UDP traffic. Ambiguous ownership remains blocked.
+A tunnel failure keeps the live guard blocking until explicit
 Stop; a WinDivert owner/driver failure cannot provide that guarantee. This is a
 lab tool, not a security boundary against an administrator or driver failure.
