@@ -169,13 +169,34 @@ bool readable(SOCKET socket, long milliseconds) {
 }
 
 #ifdef SKEWER_TEST_TUNNEL_PATH
-void translatedUdpSocket(const std::wstring& path) {
+void translatedUdpSocket(const std::wstring& path, bool physical = false) {
     using namespace skewer::windows;
     Socket source(AF_INET), destination(AF_INET);
-    const auto local = bindLoopback(source.value, AF_INET);
-    const auto remote = bindLoopback(destination.value, AF_INET);
+    sockaddr_storage local{}, remote{};
+    if (physical) {
+        // TEST-NET destination; connect selects an underlay address but sends
+        // no UDP payload. Install the narrow capture before the first send.
+        auto& target = reinterpret_cast<sockaddr_in&>(remote);
+        target.sin_family = AF_INET;
+        target.sin_port = htons(39531);
+        require(InetPtonW(AF_INET, L"192.0.2.1", &target.sin_addr) == 1, "Parse TEST-NET address");
+        const BOOL exclusive = TRUE;
+        require(setsockopt(source.value, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                           reinterpret_cast<const char*>(&exclusive), sizeof(exclusive)) == 0,
+                "Reserve physical source socket");
+        require(connect(source.value, reinterpret_cast<const sockaddr*>(&remote), sizeof(sockaddr_in)) == 0,
+                "Select physical fixture route");
+        int length = sizeof(local);
+        require(getsockname(source.value, reinterpret_cast<sockaddr*>(&local), &length) == 0,
+                "Read physical source address");
+    } else {
+        local = bindLoopback(source.value, AF_INET);
+        remote = bindLoopback(destination.value, AF_INET);
+    }
     traffic::PacketCapture capture(
-        path, "outbound and loopback and ip and udp and udp.SrcPort == " + std::to_string(port(local)) +
+        path, std::string("outbound and ") +
+                  (physical ? "!loopback and ip.DstAddr == 192.0.2.1 and " : "loopback and ") +
+                  "ip and udp and udp.SrcPort == " + std::to_string(port(local)) +
                   " and udp.DstPort == " + std::to_string(port(remote)));
     Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(stop), "Create translated capture cancellation");
@@ -215,7 +236,11 @@ void translatedUdpSocket(const std::wstring& path) {
                    sizeof(sockaddr_in)) == sizeof(payload),
             "Send translated capture fixture");
     auto held = capture.next(stop.get(), 2000);
-    require(held.packet.has_value() && !readable(destination.value, 50), "Original packet escaped capture");
+    require(held.packet.has_value(), "Original packet not captured");
+    require(static_cast<bool>(held.packet->address.Loopback) == !physical, "Wrong capture interface class");
+    if (!physical) {
+        require(!readable(destination.value, 50), "Original packet escaped capture");
+    }
     require(device.enqueue(owner, held.packet->bytes), "Captured packet not accepted by translator");
     std::optional<SelectedTunnelDevice::Packet> response;
     while (GetTickCount64() < deadline && !response) {
@@ -237,7 +262,16 @@ void translatedUdpSocket(const std::wstring& path) {
     require(response && response->owner == owner, "No restored translated response");
     require(!readable(source.value, 50), "Reply reached socket before reinjection");
     // Windows loopback packets are always injected outbound, including replies.
-    capture.reinject({std::move(response->bytes), held.packet->address});
+    auto forged = response->bytes;
+    forged[12] ^= 1;
+    bool rejected = false;
+    try {
+        traffic::restoredReply(*held.packet, std::move(forged));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "Wrong remote accepted for reinjection");
+    capture.reinject(traffic::restoredReply(*held.packet, std::move(response->bytes)));
     require(readable(source.value, 2000), "Restored reply did not reach original socket");
     std::array<char, 128> received{};
     sockaddr_storage sender{};
@@ -247,10 +281,13 @@ void translatedUdpSocket(const std::wstring& path) {
     require(count == sizeof(payload) && std::equal(received.begin(), received.begin() + count, payload) &&
                 port(sender) == port(remote),
             "Restored socket payload/peer mismatch");
-    require(!readable(destination.value, 50), "Original packet was also delivered directly");
+    if (!physical) {
+        require(!readable(destination.value, 50), "Original packet was also delivered directly");
+    }
     healthy = false;
     require(!device.enqueue(owner, held.packet->bytes), "Lost health accepted captured packet");
-    std::cout << "PASS: captured UDP socket -> translated encrypted tunnel -> restored socket reply\n";
+    std::cout << "PASS: captured UDP socket -> translated encrypted tunnel -> restored socket reply ("
+              << (physical ? "physical interface" : "loopback") << ")\n";
 }
 
 void tcpTunnel(const std::wstring& path, int family) {
@@ -635,6 +672,7 @@ int wmain(int argc, wchar_t** argv) {
         exercise(module, path, AF_INET6, true);
 #ifdef SKEWER_TEST_TUNNEL_PATH
         translatedUdpSocket(path);
+        translatedUdpSocket(path, true);
         tcpTunnel(path, AF_INET);
         tcpTunnel(path, AF_INET6);
 #endif

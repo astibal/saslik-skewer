@@ -314,3 +314,16 @@ duplicate direct delivery in this fixture. Loopback replies use Windows' outboun
 loopback metadata; physical-interface reply metadata still needs its own test.
 Ownership is known because the fixture owns exclusive socket endpoints; this is
 not a general proof for arbitrary Windows processes or shared sockets.
+
+The same fixture also binds a real non-loopback source address by connecting a
+UDP socket to TEST-NET `192.0.2.1:39531`, without sending before capture is armed.
+The encrypted test peer still runs locally; no external echo service is required.
+The restored reply is injected inbound with the captured interface index and
+must be received by the connected source socket. This verifies physical-interface
+metadata, not an Internet round trip or a packet capture on the physical wire.
+
+The shared `restoredReply` function now constructs reinjection metadata only
+after validating the complete reverse IPv4 tuple and outbound NETWORK capture.
+Physical replies become inbound; loopback replies remain outbound. Missing
+physical interface IDs, mismatched peers and unsupported input are rejected.
+The caller remains responsible for current process ownership and epoch health.

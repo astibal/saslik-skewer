@@ -43,4 +43,11 @@ private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// Build an already-restored reply for a retained outbound capture. Require the
+// entire reverse tuple, not just a port, before reusing its interface metadata.
+// This does not authorize delivery: the caller must recheck the pinned owner
+// and tunnel epoch immediately before reinjection.
+PacketCapture::Packet restoredReply(const PacketCapture::Packet& original,
+                                     std::vector<std::uint8_t> restored);
 } // namespace skewer::windows::traffic
