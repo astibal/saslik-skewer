@@ -286,3 +286,19 @@ clearing the table while old replies may still arrive. Idle timeout is configura
 and can interrupt idle TCP sessions; automatic TCP lifecycle policy and epoch
 renewal are not implemented yet. The table is tested on Linux and Windows but is
 not yet connected to the live selected-application packet pump.
+
+`SelectedTunnelDevice` connects this table to the existing `TunnelPump` device
+interface, with bounded outbound/reply queues and a three-second queue deadline.
+It rechecks the supplied live-owner resolver at dequeue and before returning a
+reply for reinjection. Lost health or a resolver exception permanently retires
+the adapter and drops queued bytes; there is no direct-network fallback.
+The owner must arm interception before use, enqueue only after authenticated
+readiness, and retain interception through adapter/transport shutdown.
+
+The Windows `selected_tunnel_device_test` performs an actual encrypted UDP
+loopback round trip through client/server pumps, including source translation
+and reverse restoration. It injects owner exit, gate closure and resolver failure
+and checks bounded queues. Identities in this test are synthetic: this does not
+prove OS ownership resolution or physical-egress enforcement. The production
+capture resolver, reply metadata/reinjection and GUI selections still need to be
+connected; no new per-application capability is advertised yet.
