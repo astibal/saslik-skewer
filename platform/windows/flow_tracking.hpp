@@ -26,6 +26,21 @@ private:
     std::map<skewer::traffic::FlowIdentity, skewer::traffic::PacketTuple> tuples_;
 };
 
+// UDP BIND/CLOSE ownership before the first datagram reaches NETWORK. Remote
+// addresses are deliberately absent; the owner table must independently
+// corroborate the local bind and reject wildcard/dual-stack competition.
+class UdpBindIndex final {
+public:
+    void observe(const FlowEvent& event);
+    std::optional<skewer::traffic::FlowIdentity> lookup(skewer::traffic::PacketTuple tuple) const;
+    void invalidate();
+
+private:
+    struct Bind { bool ipv6{}; std::array<std::uint8_t, 16> address{}; std::uint16_t port{}; };
+    std::map<skewer::traffic::FlowIdentity, Bind> binds_;
+    bool reliable_{true};
+};
+
 // Retains the authenticated process handle and a CONNECT/CLOSE index together.
 // Cancellation, exit and read errors permanently invalidate this epoch. This
 // remains diagnostic evidence, never a conversion to PacketOwner::Unique.
@@ -36,10 +51,12 @@ public:
     FlowObserver::Result next(HANDLE cancellation, DWORD timeout_ms);
     skewer::traffic::FlowIndex::Match lookup(skewer::traffic::PacketTuple tuple);
     std::optional<skewer::traffic::FlowIdentity> lookupFlow(skewer::traffic::PacketTuple tuple);
+    std::optional<skewer::traffic::FlowIdentity> lookupUdpBind(skewer::traffic::PacketTuple tuple);
 
 private:
     FlowObserver observer_;
     SocketAttemptIndex index_;
+    UdpBindIndex udp_;
 };
 
 // One consumer owns both observer and index. No automatic epoch reset: once

@@ -12,7 +12,7 @@ struct RoutedLaunch {
 // Caller-user launch, never SYSTEM launch or shell execution. The new process
 // remains suspended until its authenticated service generation is Active.
 // Failure terminates only this newly created child, never a discovered process.
-// Currently one process / fresh IPv4 TCP, not descendants or existing instances.
+// Currently one process / fresh corroborated IPv4 TCP/UDP, not descendants or existing instances.
 RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& executable,
                           const std::vector<std::wstring>& arguments, HANDLE cancel,
                           const EnvironmentOverrides& environment = {},

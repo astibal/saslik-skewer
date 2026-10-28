@@ -4,7 +4,7 @@
 #include "selected_packets.hpp"
 #include "owner_evidence.hpp"
 #include "tcp_owners.hpp"
-#include "tcp_selection_resolver.hpp"
+#include "selected_owner_resolver.hpp"
 #include "udp_owners.hpp"
 #include "packet_capture.hpp"
 #include "socket_connect_guard.hpp"
@@ -182,7 +182,7 @@ void socketProtocolGuard(const std::wstring& path) {
         require(listen(control.value, 1) == 0 && listen(other.value, 1) == 0,
                 "Listen for control endpoint guard");
         traffic::SocketConnectGuard guard(path, target,
-            traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp, "127.0.0.1", port(controlAddress));
+            traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp, "127.0.0.1", port(controlAddress));
         require(connect(blocked.value, reinterpret_cast<const sockaddr*>(&controlAddress),
                         sizeof(sockaddr_in)) == SOCKET_ERROR,
                 "Selected process escaped through control endpoint exemption");
@@ -199,10 +199,10 @@ void socketProtocolGuard(const std::wstring& path) {
                 std::unique_ptr<traffic::SocketConnectGuard> guard;
                 if (mode) {
                     guard = std::make_unique<traffic::SocketConnectGuard>(
-                        path, target, mode == 1 ? traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp
+                        path, target, mode == 1 ? traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp
                                                : traffic::SocketConnectGuard::Mode::All);
                 }
-                const bool blocked = mode == 2 || (mode == 1 && (!tcp || family == AF_INET6));
+                const bool blocked = mode == 2 || (mode == 1 && family == AF_INET6);
                 const int size = family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
                 const auto result = connect(source.value, reinterpret_cast<const sockaddr*>(&destination), size);
                 if (tcp && (result == SOCKET_ERROR) != blocked) {
@@ -234,7 +234,7 @@ void socketProtocolGuard(const std::wstring& path) {
             }
         }
     }
-    std::cout << "PASS: socket guard blocks fresh UDP/IPv6, preserves IPv4 TCP, and releases explicitly\n";
+    std::cout << "PASS: socket guard blocks IPv6, preserves IPv4 TCP/UDP, and releases explicitly\n";
 }
 
 void translatedUdpSocket(const std::wstring& path, bool physical = false) {
@@ -516,14 +516,17 @@ void tcpTunnel(const std::wstring& path, int family) {
 }
 #endif
 
-void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = false) {
+void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = false,
+              bool connected_udp = false) {
     using namespace skewer::windows;
+    require(!(tcp && connected_udp), "Fixture cannot combine TCP and connected UDP modes");
     const auto identity = processKey(GetCurrentProcess(), GetCurrentProcessId());
     // Start observing before creating traffic. A selected-PID observer proves
     // correlation only, not the absence of another process sharing a tuple.
-    traffic::TrackedFlowObserver observer(path, identity);
-    traffic::TrackedSocketObserver attempts(path, std::make_unique<ProcessTarget>(identity));
-    traffic::TcpSelectionResolver tcpResolver(path, std::make_unique<ProcessTarget>(identity));
+    std::unique_ptr<traffic::TrackedSocketObserver> attempts;
+    if (tcp) attempts = std::make_unique<traffic::TrackedSocketObserver>(
+        path, std::make_unique<ProcessTarget>(identity));
+    traffic::SelectedOwnerResolver ownerResolver(path, std::make_unique<ProcessTarget>(identity));
     Handle cancellation(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancellation), "Create observer cancellation event");
     const auto open = resolve<decltype(&WinDivertOpen)>(dll, "WinDivertOpen");
@@ -554,6 +557,10 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         require(listen(destination.value, 1) == 0, "Listen for fixture connection");
         u_long nonblocking = 1;
         require(ioctlsocket(source.value, FIONBIO, &nonblocking) == 0, "Make connect nonblocking");
+    } else if (connected_udp) {
+        const auto address_size = family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+        require(connect(source.value, reinterpret_cast<const sockaddr*>(&remote), address_size) == 0,
+                "Connect UDP fixture socket");
     }
     traffic::PacketCapture capture(path, filter);
     require(capture.next(cancellation.get(), 1).status == traffic::PacketCapture::Status::Timeout,
@@ -586,6 +593,9 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                 connect(source.value, reinterpret_cast<const sockaddr*>(&remote), static_cast<int>(size));
             require(result == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK,
                     "TCP connect did not wait for held SYN");
+        } else if (connected_udp) {
+            require(send(source.value, payload, sizeof(payload), 0) == sizeof(payload),
+                    "Send connected fixture datagram");
         } else {
             require(sendto(source.value, payload, sizeof(payload), 0,
                            reinterpret_cast<const sockaddr*>(&remote),
@@ -607,8 +617,15 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         require(parsed.status == skewer::traffic::TupleStatus::Parsed && parsed.tuple.has_value(),
                 "Decode captured packet tuple");
         if (tcp) {
-            const auto attempt = attempts.next(cancellation.get(), 2000);
-            const auto resolution = tcpResolver.resolve(*parsed.tuple,cancellation.get());
+            const auto attempt = attempts->next(cancellation.get(), 2000);
+            auto resolution = ownerResolver.resolve(*parsed.tuple, cancellation.get());
+            const auto resolution_deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (resolution.evidence != skewer::traffic::OwnerEvidence::Corroborated &&
+                   std::chrono::steady_clock::now() < resolution_deadline) {
+                resolution = ownerResolver.resolve(*parsed.tuple, cancellation.get());
+                Sleep(5);
+            }
             require(resolution.evidence == skewer::traffic::OwnerEvidence::Corroborated &&
                         resolution.flow && resolution.flow->process ==
                             skewer::traffic::ProcessIdentity{identity.pid,identity.created},
@@ -619,7 +636,7 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                         traffic::flowTuple(*attempt.event) == parsed.tuple,
                     "Reusable CONNECT observer did not match the held SYN");
             tracked_tuple = parsed.tuple;
-            const auto tracked = attempts.lookup(*tracked_tuple);
+            const auto tracked = attempts->lookup(*tracked_tuple);
             require(tracked.status == skewer::traffic::FlowIndex::Status::Observed && tracked.process ==
                         skewer::traffic::ProcessIdentity{identity.pid, identity.created},
                     "Tracked socket index lost the held SYN identity");
@@ -628,7 +645,7 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
             require(std::find(candidates.begin(), candidates.end(), identity.pid) != candidates.end(),
                     "Independent TCP table did not contain held-SYN owner");
             require(skewer::traffic::assessOwnerEvidence(
-                        {identity.pid, identity.created}, attempts.lookup(*tracked_tuple), candidates, false,
+                        {identity.pid, identity.created}, attempts->lookup(*tracked_tuple), candidates, false,
                         snapshot.started, snapshot.completed, traffic::TcpOwnerSnapshot::Clock::now(),
                         std::chrono::seconds(1)) == skewer::traffic::OwnerEvidence::Corroborated,
                     "TCP lifecycle and snapshot did not corroborate fixture ownership");
@@ -675,27 +692,28 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         require(std::find(udp_candidates.pids.begin(), udp_candidates.pids.end(), identity.pid) !=
                     udp_candidates.pids.end(),
                 "Independent UDP table did not contain held-datagram owner");
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        auto owner = observer.lookup(*parsed.tuple);
-        while (owner.status == skewer::traffic::FlowIndex::Status::Unknown &&
-               std::chrono::steady_clock::now() < deadline) {
-            const auto result = observer.next(cancellation.get(), 100);
-            require(result.status == traffic::FlowObserver::Status::Event ||
-                        result.status == traffic::FlowObserver::Status::Timeout,
-                    "Flow observer unexpectedly stopped");
-            owner = observer.lookup(*parsed.tuple);
-        }
+        const auto udp_resolution = ownerResolver.resolve(*parsed.tuple, cancellation.get());
+        const bool initially_held = !udp_resolution.flow &&
+            udp_resolution.disposition == traffic::SelectedOwnerResolver::Disposition::Hold;
+        const bool initially_corroborated =
+            udp_resolution.evidence == skewer::traffic::OwnerEvidence::Corroborated &&
+            udp_resolution.flow && udp_resolution.flow->process ==
+                skewer::traffic::ProcessIdentity{identity.pid, identity.created} &&
+            udp_resolution.disposition == traffic::SelectedOwnerResolver::Disposition::Tunnel;
+        require(initially_held || initially_corroborated,
+                "Initial UDP was neither held nor positively corroborated");
         const skewer::traffic::ProcessIdentity expected{identity.pid, identity.created};
-        require(owner.status == skewer::traffic::FlowIndex::Status::Observed && owner.process == expected,
-                "Held first packet could not be correlated with fixture process");
-        require(skewer::traffic::assessOwnerEvidence(
-                    expected, owner, udp_candidates.pids, udp_candidates.unknown_owner,
-                    udp_snapshot.started, udp_snapshot.completed, traffic::UdpOwnerSnapshot::Clock::now(),
-                    std::chrono::seconds(1)) == skewer::traffic::OwnerEvidence::Corroborated,
-                "UDP flow and snapshot did not corroborate fixture ownership");
-        const auto reverse = observer.lookup(parsed.tuple->reversed());
-        require(reverse.status == skewer::traffic::FlowIndex::Status::Observed && reverse.process == expected,
-                "Reverse tuple lost fixture identity");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        auto retry_resolution = udp_resolution;
+        while (retry_resolution.evidence != skewer::traffic::OwnerEvidence::Corroborated &&
+               std::chrono::steady_clock::now() < deadline) {
+            retry_resolution = ownerResolver.resolve(*parsed.tuple, cancellation.get());
+            Sleep(5);
+        }
+        require(retry_resolution.evidence == skewer::traffic::OwnerEvidence::Corroborated &&
+                    retry_resolution.flow && retry_resolution.flow->process == expected &&
+                    retry_resolution.disposition == traffic::SelectedOwnerResolver::Disposition::Tunnel,
+                "UDP retry did not gain corroborated tunnel authority");
         require(!readable(destination.value, 100), "Packet leaked while awaiting flow metadata");
         if (!reinject) {
 #ifdef SKEWER_TEST_TUNNEL_PATH
@@ -734,7 +752,7 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         bool closed = false;
         while (std::chrono::steady_clock::now() < deadline) {
-            const auto event = attempts.next(cancellation.get(), 100);
+            const auto event = attempts->next(cancellation.get(), 100);
             require(event.status == traffic::FlowObserver::Status::Event ||
                         event.status == traffic::FlowObserver::Status::Timeout,
                     "Socket observer stopped before CLOSE");
@@ -743,23 +761,27 @@ void exercise(HMODULE dll, const std::wstring& path, int family, bool tcp = fals
                 break;
             }
         }
-        require(closed && attempts.lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unknown,
+        require(closed && attempts->lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unknown,
                 "Closed socket retained live ownership evidence");
-        require(!tcpResolver.resolve(*tracked_tuple,cancellation.get()).flow,
-                "TCP resolver retained a closed socket");
+        require(!ownerResolver.resolve(*tracked_tuple,cancellation.get()).flow,
+                "Selected owner resolver retained a closed socket");
     }
     require(SetEvent(cancellation.get()), "Signal capture cancellation");
-    require(attempts.next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
-            "CONNECT observer ignored cancellation");
+    if (attempts) {
+        require(attempts->next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
+                "CONNECT observer ignored cancellation");
+    }
     if (tracked_tuple) {
-        require(attempts.lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unreliable,
+        require(attempts->lookup(*tracked_tuple).status == skewer::traffic::FlowIndex::Status::Unreliable,
                 "Cancelled socket observer retained stale ownership evidence");
     }
     require(capture.next(cancellation.get(), 100).status == traffic::PacketCapture::Status::Cancelled,
             "Capture did not cancel");
     require(ResetEvent(cancellation.get()), "Reset cancellation fixture");
-    require(attempts.next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
-            "Cancelled socket observer restarted");
+    if (attempts) {
+        require(attempts->next(cancellation.get(), 0).status == traffic::FlowObserver::Status::Cancelled,
+                "Cancelled socket observer restarted");
+    }
     require(capture.next(cancellation.get(), 0).status == traffic::PacketCapture::Status::Cancelled,
             "Cancelled capture restarted");
     bool rejected{};
@@ -821,6 +843,7 @@ int wmain(int argc, wchar_t** argv) {
         std::shared_ptr<void> library(module, [](void* value) { FreeLibrary(static_cast<HMODULE>(value)); });
         exercise(module, path, AF_INET);
         exercise(module, path, AF_INET6);
+        exercise(module, path, AF_INET, false, true);
         exercise(module, path, AF_INET, true);
         exercise(module, path, AF_INET6, true);
 #ifdef SKEWER_TEST_TUNNEL_PATH

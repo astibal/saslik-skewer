@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "flow_tracking.hpp"
+#include <algorithm>
 #include <stdexcept>
 
 namespace skewer::windows::traffic {
@@ -90,6 +91,54 @@ void SocketAttemptIndex::invalidate() {
     index_.invalidate();
     tuples_.clear();
 }
+
+void UdpBindIndex::observe(const FlowEvent& event) {
+    if (event.protocol != IPPROTO_UDP) return;
+    const skewer::traffic::FlowIdentity id{{event.process.pid, event.process.created}, event.endpoint_id};
+    if (event.kind == FlowEvent::Kind::SocketClosed) {
+        binds_.erase(id);
+        return;
+    }
+    if (event.kind != FlowEvent::Kind::SocketBound && event.kind != FlowEvent::Kind::ConnectAttempt) return;
+    // bind(port=0) reports the requested value, not the assigned ephemeral
+    // port. A later CONNECT carries the usable local endpoint.
+    if (!event.local.port) return;
+    if (event.local.address.find('\0') != std::string::npos ||
+        (binds_.size() >= 4096 && !binds_.contains(id))) {
+        invalidate();
+        return;
+    }
+    Bind bind;
+    bind.ipv6 = event.ipv6;
+    bind.port = event.local.port;
+    if (InetPtonA(bind.ipv6 ? AF_INET6 : AF_INET, event.local.address.c_str(), bind.address.data()) != 1) {
+        invalidate();
+        return;
+    }
+    binds_.insert_or_assign(id, bind);
+}
+
+std::optional<skewer::traffic::FlowIdentity>
+UdpBindIndex::lookup(PacketTuple tuple) const {
+    if (!reliable_ || tuple.protocol != IPPROTO_UDP || !tuple.source_port) return std::nullopt;
+    std::optional<skewer::traffic::FlowIdentity> result;
+    for (const auto& [identity, bind] : binds_) {
+        if (bind.ipv6 != tuple.ipv6 || bind.port != tuple.source_port) continue;
+        const auto size = bind.ipv6 ? 16U : 4U;
+        const bool wildcard = std::all_of(bind.address.begin(), bind.address.begin() + size,
+                                          [](auto byte) { return byte == 0; });
+        if (!wildcard && !std::equal(bind.address.begin(), bind.address.begin() + size,
+                                     tuple.source.begin())) continue;
+        if (result && *result != identity) return std::nullopt;
+        result = identity;
+    }
+    return result;
+}
+
+void UdpBindIndex::invalidate() {
+    reliable_ = false;
+    binds_.clear();
+}
 std::optional<skewer::traffic::FlowIdentity> SocketAttemptIndex::lookupFlow(PacketTuple tuple, Index::Time now) const {
     return index_.lookupFlow(tuple, now);
 }
@@ -114,15 +163,26 @@ FlowObserver::Result TrackedSocketObserver::next(HANDLE cancellation, DWORD time
                 index_.invalidate();
                 throw std::runtime_error("Socket observer returned an event without metadata");
             }
-            index_.observe(*result.event, FlowIndex::Clock::now());
+            if (result.event->protocol == IPPROTO_TCP) index_.observe(*result.event, FlowIndex::Clock::now());
+            else udp_.observe(*result.event);
         } else if (result.status != FlowObserver::Status::Timeout) {
             index_.invalidate();
+            udp_.invalidate();
         }
         return result;
     } catch (...) {
         index_.invalidate();
+        udp_.invalidate();
         throw;
     }
+}
+
+std::optional<skewer::traffic::FlowIdentity>
+TrackedSocketObserver::lookupUdpBind(PacketTuple tuple) {
+    try {
+        if (!observer_.targetRunning()) udp_.invalidate();
+        return udp_.lookup(tuple);
+    } catch (...) { udp_.invalidate(); throw; }
 }
 
 FlowIndex::Match TrackedSocketObserver::lookup(PacketTuple tuple) {

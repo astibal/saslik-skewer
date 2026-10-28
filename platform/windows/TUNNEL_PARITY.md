@@ -14,7 +14,7 @@ close and their filters disappear: applications may communicate through normal
 host routes. Automatic service restart does not eliminate this exposure window.
 This limitation is accepted for laboratory/testing use, not as a security boundary.
 The service implements whole-host IPv4 routing and one selected process's fresh
-IPv4 TCP connections. The remaining protocol and coverage limits below are
+corroborated IPv4 TCP and UDP traffic. The remaining protocol and coverage limits below are
 release gaps, not a claim that routing is unavailable.
 
 A custom WFP callout driver is deferred beyond the first release. Neither its

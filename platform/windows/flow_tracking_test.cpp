@@ -106,12 +106,56 @@ void testSocketLifecycle() {
     require(ambiguous.lookup(tuple, {}).status == FlowIndex::Status::Ambiguous,
             "Shared tuple chose an owner");
 }
+void testUdpBindLifecycle() {
+    UdpBindIndex index;
+    auto event = sample();
+    event.protocol = 17;
+    event.kind = FlowEvent::Kind::SocketBound;
+    event.local = {"0.0.0.0", 0};
+    index.observe(event);
+
+    skewer::traffic::PacketTuple tuple;
+    tuple.protocol = 17;
+    tuple.source = {192, 0, 2, 1};
+    tuple.source_port = 53000;
+    require(!index.lookup(tuple), "Port-zero UDP bind was treated as assigned");
+
+    event.kind = FlowEvent::Kind::ConnectAttempt;
+    event.local.port = tuple.source_port;
+    index.observe(event);
+    const auto owner = index.lookup(tuple);
+    require(owner && owner->process == skewer::traffic::ProcessIdentity{42, 100},
+            "Wildcard UDP bind did not match its assigned local port");
+    auto other = tuple;
+    ++other.source_port;
+    require(!index.lookup(other), "UDP bind matched another local port");
+
+    auto competing = event;
+    competing.process.pid = 43;
+    competing.endpoint_id = 13;
+    index.observe(competing);
+    require(!index.lookup(tuple), "Competing UDP binds selected an owner");
+    competing.kind = FlowEvent::Kind::SocketClosed;
+    index.observe(competing);
+    require(index.lookup(tuple) == owner, "UDP CLOSE removed another endpoint");
+
+    event.kind = FlowEvent::Kind::SocketClosed;
+    index.observe(event);
+    require(!index.lookup(tuple), "Closed UDP bind retained ownership");
+
+    UdpBindIndex malformed;
+    event.kind = FlowEvent::Kind::SocketBound;
+    event.local = {"not-an-address", tuple.source_port};
+    malformed.observe(event);
+    require(!malformed.lookup(tuple), "Malformed UDP bind retained a usable epoch");
+}
 } // namespace
 int main() {
     try {
         testConversion();
         testUpdates();
         testSocketLifecycle();
+        testUdpBindLifecycle();
         std::cout << "PASS: Windows flow normalization and index updates (no driver loaded)\n";
         return 0;
     } catch (const std::exception& error) {

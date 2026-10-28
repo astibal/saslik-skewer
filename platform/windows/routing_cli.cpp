@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
                                "       skewer-routing-control pair SERVICE PAIRED_ENDPOINT\n"
                                "       skewer-routing-control start-process SERVICE GENERATION PID BIRTH\n"
                                "       skewer-routing-control launch SERVICE EXECUTABLE [ARGUMENTS...]\n"
-                               "       (experimental: fresh IPv4 TCP, one process, no descendants)\n";
+                               "       (experimental: fresh corroborated IPv4 TCP/UDP, one process, no descendants)\n";
         return 2;
     }
     try {

@@ -19,7 +19,8 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     auto* note = new QLabel(tr("Whole-host IPv4 routing through an installed Skewer service. Closing this "
                                "window does not stop routing. "
-                               "The Applications tab can route one process's fresh IPv4 TCP connections. "
+                               "The Applications tab can route one process's fresh corroborated IPv4 TCP "
+                               "and UDP traffic. "
                                "WinDivert protection does "
                                "not survive a service crash."),
                             this);

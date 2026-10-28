@@ -1,6 +1,6 @@
 #include "paired_tunnel.hpp"
 #include "selected_capture_bridge.hpp"
-#include "tcp_selection_resolver.hpp"
+#include "selected_owner_resolver.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QTextStream>
@@ -108,7 +108,7 @@ int main(int argc, char** argv) {
         } closeSocket{source};
         const auto identity = processKey(GetCurrentProcess(), GetCurrentProcessId());
         ProcessTarget pinned(identity);
-        traffic::TcpSelectionResolver resolver(dll, std::make_unique<ProcessTarget>(identity));
+        traffic::SelectedOwnerResolver resolver(dll, std::make_unique<ProcessTarget>(identity));
         Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         require(static_cast<bool>(stop), "Create cancellation event");
         TunnelPump* current = nullptr;
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
             capture, device,
             [&](auto tuple) {
                 const auto result = resolver.resolve(tuple, stop.get());
-                using Source = traffic::TcpSelectionResolver::Disposition;
+                using Source = traffic::SelectedOwnerResolver::Disposition;
                 using Target = SelectedCaptureBridge::Disposition;
                 const auto action = result.disposition == Source::Tunnel   ? Target::Tunnel
                                     : result.disposition == Source::Direct ? Target::Direct

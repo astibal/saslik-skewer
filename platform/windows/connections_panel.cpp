@@ -157,7 +157,8 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
             route = tr("Skewer (whole host)");
         } else if (routing_.scope == RoutingScope::SelectedProcess && routing_.selected &&
                    routing_.selected->pid == row.pid && owner.created == routing_.selected->created) {
-            route = tr("Not routed (selected TCP only)");
+            route = row.ipv6 ? tr("Not routed (selected IPv4 only)")
+                             : tr("Skewer candidate (selected UDP)");
         }
         const QStringList cells{owner.name.isEmpty() ? tr("Unknown process") : owner.name,
                                 QString::number(row.pid), tr("BOUND"), udpAddress(row),

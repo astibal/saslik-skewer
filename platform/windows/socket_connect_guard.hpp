@@ -9,7 +9,7 @@ namespace skewer::windows::traffic {
 // WinDivert owner/driver failure has the same documented lab limitation.
 class SocketConnectGuard final {
 public:
-    enum class Mode { All, UnsupportedForIpv4Tcp };
+    enum class Mode { All, UnsupportedForIpv4TcpUdp };
     SocketConnectGuard(const std::wstring& dll, const ProcessTarget& target, Mode mode,
                        std::string control_peer = {}, std::uint16_t control_port = 0);
     ~SocketConnectGuard();

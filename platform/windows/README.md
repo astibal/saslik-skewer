@@ -4,8 +4,8 @@
 
 The selected backend is WinDivert interception with Wintun/Tuntom transport,
 owned by a privileged service independent of the GUI. Whole-host IPv4 and one
-selected process's fresh IPv4 TCP connections are integrated. UDP, IPv6,
-descendants and already-open sockets are not covered by selected-process mode.
+selected process's fresh corroborated IPv4 TCP and UDP are integrated. IPv6,
+descendants, ambiguous shared binds and already-open sockets are not covered by selected-process mode.
 The custom kernel callout prototype is deferred and will not ship in the first
 release. No custom-driver test-signing setup is required for that release.
 

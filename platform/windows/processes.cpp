@@ -154,6 +154,7 @@ ProcessTarget::ProcessTarget(ProcessKey expected) : process_(openTarget(expected
     validateOwner(userSid(GetCurrentProcess()));
 }
 
+
 ServiceOwner::ServiceOwner(const std::wstring& sid) {
     PSID raw{};
     if (sid.empty() || sid.size() > 184 || !ConvertStringSidToSidW(sid.c_str(), &raw)) {

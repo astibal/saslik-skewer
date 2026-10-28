@@ -1,7 +1,7 @@
 #include "selected_service_tunnel.hpp"
 #include "selected_session_packets.hpp"
 #include "socket_connect_guard.hpp"
-#include "tcp_selection_resolver.hpp"
+#include "selected_owner_resolver.hpp"
 
 namespace skewer::windows {
 namespace {
@@ -12,7 +12,7 @@ public:
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
           published_(published), target_(target.get()), identity_(target->key()),
           resolver_(dll, std::move(target)),
-          unsupported_(dll, *target_, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp, peer_,
+          unsupported_(dll, *target_, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp, peer_,
                        port_) {
         startup_ = std::make_unique<traffic::SocketConnectGuard>(dll, *target_,
                                                                  traffic::SocketConnectGuard::Mode::All);
@@ -26,13 +26,13 @@ public:
         // matching SOCKET guard denies the selected process this direct path.
         // This also lets renewal/close finish while packet processing is blocked.
         capture_ = std::make_unique<traffic::PacketCapture>(
-            dll_, "outbound and ip and tcp and (ip.DstAddr == " + peer_ +
+            dll_, "outbound and ip and (tcp and ip.DstAddr == " + peer_ +
                       " and tcp.DstPort == " + std::to_string(port_) + " ? false : true)");
         packets_ = std::make_unique<SelectedSessionPackets>(
             *capture_,
             [&](auto tuple) {
                 const auto result = resolver_.resolve(tuple, cancel_);
-                using From = traffic::TcpSelectionResolver::Disposition;
+                using From = traffic::SelectedOwnerResolver::Disposition;
                 using To = SelectedCaptureBridge::Disposition;
                 const auto action = result.disposition == From::Tunnel   ? To::Tunnel
                                     : result.disposition == From::Direct ? To::Direct
@@ -95,7 +95,7 @@ private:
     std::atomic_bool& published_;
     const ProcessTarget* target_; // Owned by resolver_, never reopened under SYSTEM.
     ProcessKey identity_;
-    traffic::TcpSelectionResolver resolver_;
+    traffic::SelectedOwnerResolver resolver_;
     traffic::SocketConnectGuard unsupported_;
     std::unique_ptr<traffic::SocketConnectGuard> startup_;
     std::unique_ptr<traffic::PacketCapture> capture_;

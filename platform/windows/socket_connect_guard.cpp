@@ -31,7 +31,7 @@ public:
             !dll.empty() && ((dll[0] >= L'A' && dll[0] <= L'Z') || (dll[0] >= L'a' && dll[0] <= L'z'));
         if (!drive || dll.size() < 4 || dll[1] != L':' || dll[2] != L'\\' ||
             dll.find(L'\0') != std::wstring::npos ||
-            (mode != Mode::All && mode != Mode::UnsupportedForIpv4Tcp)) {
+            (mode != Mode::All && mode != Mode::UnsupportedForIpv4TcpUdp)) {
             throw std::invalid_argument("Invalid socket guard configuration");
         }
         if (!target.running()) {
@@ -53,8 +53,7 @@ public:
         std::vector<std::string> filters =
             mode == Mode::All ? std::vector<std::string>{base}
                               : std::vector<std::string>{
-                                    base + " and (remoteAddr < ::ffff:0:0 or remoteAddr > ::ffff:ffff:ffff)",
-                                    base + " and protocol != TCP"};
+                                    base + " and (remoteAddr < ::ffff:0:0 or remoteAddr > ::ffff:ffff:ffff)"};
         if (!control_peer.empty()) {
             filters.push_back(base + " and protocol == TCP and remoteAddr == " + control_peer +
                               " and remotePort == " + std::to_string(control_port));

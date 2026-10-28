@@ -1,5 +1,5 @@
 #include "selected_session_packets.hpp"
-#include "tcp_selection_resolver.hpp"
+#include "selected_owner_resolver.hpp"
 #include "socket_connect_guard.hpp"
 #include "routing_client.hpp"
 #include "routed_launch.hpp"
@@ -152,10 +152,10 @@ int main(int argc, char** argv) {
             Child& child;
             ~StopBeforeCaptureRelease() { child.stop(); }
         };
-        traffic::TcpSelectionResolver resolver(dll, std::make_unique<ProcessTarget>(identity));
+        traffic::SelectedOwnerResolver resolver(dll, std::make_unique<ProcessTarget>(identity));
         ProcessTarget pinned(identity);
         traffic::SocketConnectGuard unsupported(dll, pinned,
-                                                traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp);
+                                                traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp);
         StopBeforeCaptureRelease stopChild{child};
         std::atomic_bool ready{};
         std::uint64_t selected{}, direct{};
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
             capture,
             [&](auto tuple) {
                 const auto result = resolver.resolve(tuple, stop.get());
-                using From = traffic::TcpSelectionResolver::Disposition;
+                using From = traffic::SelectedOwnerResolver::Disposition;
                 using To = SelectedCaptureBridge::Disposition;
                 const auto decision = result.disposition == From::Tunnel   ? To::Tunnel
                                       : result.disposition == From::Direct ? To::Direct

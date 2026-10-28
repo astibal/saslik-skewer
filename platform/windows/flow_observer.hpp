@@ -13,7 +13,7 @@ struct FlowEndpoint {
 };
 
 struct FlowEvent {
-    enum class Kind { Established, Deleted, ConnectAttempt, SocketClosed };
+    enum class Kind { Established, Deleted, SocketBound, ConnectAttempt, SocketClosed };
     Kind kind{};
     ProcessKey process;
     std::uint64_t endpoint_id{}, parent_endpoint_id{};
