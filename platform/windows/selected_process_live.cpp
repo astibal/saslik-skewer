@@ -2,6 +2,7 @@
 #include "tcp_selection_resolver.hpp"
 #include "socket_connect_guard.hpp"
 #include "routing_client.hpp"
+#include "routed_launch.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QTextStream>
@@ -58,20 +59,17 @@ private:
     HANDLE stop_;
     bool resumed_{};
 };
-void throughService(Child& child, ProcessKey identity, const std::wstring& name) {
+void throughService(const std::wstring& executable, const std::vector<std::wstring>& arguments,
+                    const std::wstring& name) {
     Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(bool(cancel), "Create service fixture cancellation");
     const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
         auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
         return exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
     };
-    const auto initial = command(RoutingCommand::Status, 0);
-    require(initial.phase == RoutingPhase::Idle, "Fixture service is not idle");
-    auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
-    const auto started =
-        exchangeSelectedRouting(pipe->get(), name, identity, initial.generation, cancel.get(), 3000);
-    pipe.reset();
-    require(started.result == RoutingResult::Ok, "Selected service start rejected");
+    const auto started = launchRouted(name, executable, arguments, cancel.get());
+    Child child;
+    child.process = started.process;
     struct Release {
         Child& child;
         std::function<void()> stop;
@@ -83,20 +81,6 @@ void throughService(Child& child, ProcessKey identity, const std::wstring& name)
             }
         }
     } release{child, [&] { command(RoutingCommand::Stop, started.generation); }};
-    const auto deadline = GetTickCount64() + 20000;
-    bool active = false;
-    while (GetTickCount64() < deadline) {
-        const auto state = command(RoutingCommand::Status, 0);
-        require(state.generation == started.generation && state.phase != RoutingPhase::Failed &&
-                    state.phase != RoutingPhase::Blocked,
-                "Selected service failed before readiness");
-        if (state.phase == RoutingPhase::Active) {
-            active = true;
-            break;
-        }
-        Sleep(100);
-    }
-    require(active && ResumeThread(child.process.hThread) == 1, "Selected service did not become active");
     require(WaitForSingleObject(child.process.hProcess, 25000) == WAIT_OBJECT_0,
             "Service-routed curl timed out");
     DWORD exit{};
@@ -139,6 +123,15 @@ int main(int argc, char** argv) {
         const auto length = GetSystemDirectoryW(system, MAX_PATH);
         require(length && length < MAX_PATH, "Resolve system directory");
         const auto executable = std::wstring(system) + L"\\curl.exe";
+        if (args.size() == 6) {
+            throughService(executable,
+                           {L"--noproxy", L"*", L"-4", L"-k", L"--fail", L"--silent", L"--show-error",
+                            L"--max-time", L"20", L"--output", L"NUL", L"--resolve",
+                            (args[4] + ":443:" + args[3]).toStdWString(),
+                            ("https://" + args[4] + "/").toStdWString()},
+                           args[5].toStdWString());
+            return 0;
+        }
         auto command =
             (QString::fromStdWString(L"\"" + executable + L"\"") +
              " --noproxy * -4 -k --fail --silent --show-error --max-time 20 --output NUL --resolve " +
@@ -152,10 +145,6 @@ int main(int argc, char** argv) {
                                &child.process),
                 "Create suspended curl");
         const auto identity = processKey(child.process.hProcess, child.process.dwProcessId);
-        if (args.size() == 6) {
-            throughService(child, identity, args[5].toStdWString());
-            return 0;
-        }
         const auto dll = QDir::toNativeSeparators(app.applicationDirPath() + "/WinDivert.dll").toStdWString();
         traffic::PacketCapture capture(dll, "outbound and ip and tcp and ip.DstAddr == " +
                                                 args[3].toStdString() + " and tcp.DstPort == 443");

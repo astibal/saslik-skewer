@@ -98,7 +98,11 @@ std::wstring commandLine(const std::wstring& executable, const std::vector<std::
 
 // No shell, no elevation, no network policy changes. The caller owns handles
 // returned in PROCESS_INFORMATION and must close them after observing launch.
-PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments);
+// Suspended mode additionally requires the caller to resume or terminate its
+// child; closing handles alone deliberately does neither.
+enum class LaunchMode { Running, Suspended };
+PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments,
+                           LaunchMode mode = LaunchMode::Running);
 std::string utf8(std::wstring_view value);
 
 } // namespace skewer::windows

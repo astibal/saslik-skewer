@@ -511,3 +511,18 @@ Queued device output and cancellation retain priority, and idle/drained events
 are regression-tested against spinning. This removes an avoidable polling delay;
 it is not a throughput benchmark or a claim that per-packet owner-table queries
 have been optimized.
+
+`skewer-routing-control launch SERVICE EXECUTABLE [ARGUMENTS...]` now uses the
+shared routed-launch transaction. It creates a caller-user process suspended,
+pins PID/birth, sends one authenticated selected Start and waits for that exact
+generation to become Active before resuming. It never launches as SYSTEM or
+uses a shell. Start is not retried after an uncertain reply; failure/cancellation
+terminates only the newly created suspended child by its retained handle. It
+does not send a speculative Stop that might affect another generation.
+Once resumed, closing the launcher handles does not terminate the application
+or routing service. Descendants and existing-instance handoff remain outside
+this experimental single-process contract.
+
+The SCM HTTPS fixture uses this production launcher path. Before pairing, it
+also checks that a rejected child cannot signal its first-action event, with
+a suspended/resumed positive control proving the fixture can observe execution.

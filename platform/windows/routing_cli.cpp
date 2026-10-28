@@ -1,4 +1,5 @@
 #include "routing_client.hpp"
+#include "routed_launch.hpp"
 #include "stored_pairing_handoff.hpp"
 #include <QCoreApplication>
 #include <QTextStream>
@@ -7,16 +8,38 @@ using namespace skewer::windows;
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const auto args = app.arguments();
-    if (args.size() < 3 || args.size() > 6) {
+    if (args.size() < 3) {
         QTextStream(stderr) << "Usage: skewer-routing-control status SERVICE\n"
                                "       skewer-routing-control start|stop SERVICE GENERATION\n"
                                "       skewer-routing-control pair SERVICE PAIRED_ENDPOINT\n"
                                "       skewer-routing-control start-process SERVICE GENERATION PID BIRTH\n"
+                               "       skewer-routing-control launch SERVICE EXECUTABLE [ARGUMENTS...]\n"
                                "       (experimental: fresh IPv4 TCP, one process, no descendants)\n";
         return 2;
     }
     try {
         const auto action = args[1];
+        if (action == "launch") {
+            if (args.size() < 4) {
+                throw std::invalid_argument("Routed launch requires an executable");
+            }
+            Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            if (!cancel) {
+                throw std::runtime_error("Cannot create cancellation event");
+            }
+            std::vector<std::wstring> arguments;
+            for (qsizetype i = 4; i < args.size(); ++i) {
+                arguments.push_back(args[i].toStdWString());
+            }
+            QTextStream(stderr) << "Preparing selected-process routing before launch...\n";
+            const auto launched =
+                launchRouted(args[2].toStdWString(), args[3].toStdWString(), arguments, cancel.get());
+            Handle process(launched.process.hProcess), thread(launched.process.hThread);
+            QTextStream(stdout) << "{\"pid\":" << launched.identity.pid << ",\"birth\":\""
+                                << launched.identity.created << "\",\"generation\":\"" << launched.generation
+                                << "\"}\n";
+            return 0;
+        }
         const bool pairing = action == "pair";
         const bool selected = action == "start-process";
         const int expected = selected ? 6 : action == "status" ? 3 : 4;

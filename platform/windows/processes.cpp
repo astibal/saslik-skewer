@@ -345,7 +345,11 @@ std::wstring commandLine(const std::wstring& executable, const std::vector<std::
     return result;
 }
 
-PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments) {
+PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments,
+                           LaunchMode mode) {
+    if (mode != LaunchMode::Running && mode != LaunchMode::Suspended) {
+        throw std::invalid_argument("Invalid process launch mode");
+    }
     if (executable.empty() || executable.find(L'\0') != std::wstring::npos) {
         throw std::invalid_argument("Executable must be nonempty and contain no NUL");
     }
@@ -362,7 +366,8 @@ PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION information{};
     // No inherited handles, shell expansion, admin token or hidden routing.
-    if (!CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
+    const DWORD flags = mode == LaunchMode::Suspended ? CREATE_SUSPENDED : 0;
+    if (!CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr,
                         &startup, &information)) {
         fail("CreateProcessW");
     }

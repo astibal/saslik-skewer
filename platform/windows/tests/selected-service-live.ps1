@@ -27,6 +27,8 @@ try {
         -WinDivertDirectory $DriverDirectory -WintunDll $WintunDll -OwnerSid $owner `
         -Endpoint $Endpoint -Peer $Peer -Name $name
     $created=$true
+    & (Join-Path $Directory 'routed_launch_test.exe') $name
+    if ($LASTEXITCODE -ne 0) { throw 'Rejected routed launch executed child code' }
     & $client pair $name $Endpoint
     if ($LASTEXITCODE -ne 0) { throw 'Selected fixture pairing failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
