@@ -169,14 +169,27 @@ bool UdpEndpoint::send(std::span<const uint8_t> packet, const UdpAddress& destin
     return true;
 }
 
-UdpEndpoint::Wait UdpEndpoint::wait(HANDLE cancellation, DWORD timeout_ms, HANDLE packet_event) {
-    const HANDLE handles[] = {cancellation, event_, packet_event};
-    const DWORD result = WaitForMultipleObjects(packet_event ? 3 : 2, handles, FALSE, timeout_ms);
+UdpEndpoint::Wait UdpEndpoint::wait(HANDLE cancellation, DWORD timeout_ms, HANDLE packet_event,
+                                    HANDLE capture_event) {
+    HANDLE handles[] = {cancellation, event_, nullptr, nullptr};
+    DWORD count = 2;
+    const DWORD packet_index = packet_event ? count++ : MAXDWORD;
+    if (packet_event) {
+        handles[packet_index] = packet_event;
+    }
+    const DWORD capture_index = capture_event ? count++ : MAXDWORD;
+    if (capture_event) {
+        handles[capture_index] = capture_event;
+    }
+    const DWORD result = WaitForMultipleObjects(count, handles, FALSE, timeout_ms);
     if (result == WAIT_OBJECT_0) {
         return Wait::Cancelled;
     }
-    if (result == WAIT_OBJECT_0 + 2) {
+    if (packet_event && result == WAIT_OBJECT_0 + packet_index) {
         return Wait::PacketDevice;
+    }
+    if (capture_event && result == WAIT_OBJECT_0 + capture_index) {
+        return Wait::Capture;
     }
     if (result == WAIT_TIMEOUT) {
         return Wait::Timeout;

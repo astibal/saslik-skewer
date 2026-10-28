@@ -15,6 +15,7 @@ public:
     void poll() override;
     void block() noexcept override;
     bool blocked() const { return blocked_ || (bridge_ && bridge_->tunnelBlocked()); }
+    HANDLE captureEvent() const override { return capture_.readEvent(); }
     HANDLE readEvent() const override;
     std::optional<std::size_t> readPacket(std::span<std::uint8_t> buffer) override;
     bool writePacket(std::span<const std::uint8_t> packet) override;

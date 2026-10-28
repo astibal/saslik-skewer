@@ -502,3 +502,12 @@ The HTTPS fixture supplies IPv4 resolution and disables certificate validation
 for that request only. Attribution failures hold packets rather than guessing
 Direct, so unrelated traffic can stall when attribution is unavailable. Service
 exit/crash removes interception, as documented for the lab-only WinDivert model.
+
+The paired loop also waits on the selected worker's borrowed capture completion
+event. A newly captured packet wakes it immediately rather than waiting for the
+25 ms transport timer; processing remains bounded to one capture step between
+lease/health checks. The capture owner alone consumes and re-arms that event.
+Queued device output and cancellation retain priority, and idle/drained events
+are regression-tested against spinning. This removes an avoidable polling delay;
+it is not a throughput benchmark or a claim that per-packet owner-table queries
+have been optimized.

@@ -169,7 +169,10 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
                 throw std::runtime_error("Selected tunnel lost readiness during packet processing");
             }
         }
-        if (udp.wait(stop, 25, device.readEvent()) == UdpEndpoint::Wait::Cancelled) {
+        // Wake on captured host traffic as well as encrypted input and queued
+        // device output. Idle captures no longer impose a 25 ms packet delay.
+        const auto capture_event = packets && ready.load() ? packets->captureEvent() : nullptr;
+        if (udp.wait(stop, 25, device.readEvent(), capture_event) == UdpEndpoint::Wait::Cancelled) {
             break;
         }
     }

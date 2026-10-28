@@ -37,6 +37,7 @@ UdpEndpoint::Datagram receive(UdpEndpoint &endpoint, HANDLE stop, std::span<uint
 void loopback(const char *ip) {
     Event stop;
     Event packet;
+    Event capture;
     UdpEndpoint sender(UdpAddress::numeric(ip, 0));
     UdpEndpoint receiver(UdpAddress::numeric(ip, 0));
     const auto destination = receiver.localAddress();
@@ -62,6 +63,18 @@ void loopback(const char *ip) {
     check(receiver.wait(stop.handle, 100, packet.handle) == UdpEndpoint::Wait::PacketDevice,
           "Packet device notification missing");
     ResetEvent(packet.handle);
+    SetEvent(capture.handle);
+    check(receiver.wait(stop.handle, 100, nullptr, capture.handle) == UdpEndpoint::Wait::Capture,
+          "Capture notification without a packet device missing");
+    check(receiver.wait(stop.handle, 100, packet.handle, capture.handle) == UdpEndpoint::Wait::Capture,
+          "Capture notification alongside a packet device missing");
+    SetEvent(packet.handle);
+    check(receiver.wait(stop.handle, 100, packet.handle, capture.handle) == UdpEndpoint::Wait::PacketDevice,
+          "Queued device output must not starve behind host capture");
+    ResetEvent(packet.handle);
+    ResetEvent(capture.handle);
+    check(receiver.wait(stop.handle, 10, packet.handle, capture.handle) == UdpEndpoint::Wait::Timeout,
+          "Drained device/capture events spin");
 
     std::vector<uint8_t> payload(1400, 0xa5);
     for (int index = 0; index != 16; ++index) {
@@ -109,7 +122,8 @@ void loopback(const char *ip) {
     check(sender.send(payload, destination), "Cancellation test send failed");
     SetEvent(stop.handle);
     SetEvent(packet.handle);
-    check(receiver.wait(stop.handle, 100, packet.handle) == UdpEndpoint::Wait::Cancelled,
+    SetEvent(capture.handle);
+    check(receiver.wait(stop.handle, 100, packet.handle, capture.handle) == UdpEndpoint::Wait::Cancelled,
           "Cancellation must take precedence");
     std::cout << "PASS UDP " << ip << '\n';
 }

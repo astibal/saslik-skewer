@@ -78,6 +78,7 @@ public:
         }
     }
     HANDLE readEvent() const override { return packets_ ? packets_->readEvent() : nullptr; }
+    HANDLE captureEvent() const override { return packets_ ? packets_->captureEvent() : nullptr; }
     std::optional<std::size_t> readPacket(std::span<std::uint8_t> buffer) override {
         return packets_ ? packets_->readPacket(buffer) : std::nullopt;
     }

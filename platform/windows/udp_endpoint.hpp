@@ -26,7 +26,7 @@ private:
 
 class UdpEndpoint final {
 public:
-    enum class Wait { Network, PacketDevice, Cancelled, Timeout };
+    enum class Wait { Network, PacketDevice, Cancelled, Timeout, Capture };
     struct Datagram {
         size_t size;
         UdpAddress source;
@@ -44,7 +44,8 @@ public:
     bool send(std::span<const uint8_t> packet, const UdpAddress& destination);
     // Events are borrowed. Cancellation wins when multiple handles are ready.
     // Readiness is advisory: drain receive() until would-block after Network.
-    Wait wait(HANDLE cancellation, DWORD timeout_ms, HANDLE packet_event = nullptr);
+    Wait wait(HANDLE cancellation, DWORD timeout_ms, HANDLE packet_event = nullptr,
+              HANDLE capture_event = nullptr);
 
 private:
     void close() noexcept;

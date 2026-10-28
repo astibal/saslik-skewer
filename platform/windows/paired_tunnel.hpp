@@ -47,6 +47,9 @@ public:
     virtual ~TunnelPacketWorker() = default;
     virtual void prepare(const Tuntom::Endpoint&) = 0;
     virtual void poll() = 0;
+    // Optional borrowed capture event; used only once the transport is ready.
+    // poll must consume/re-arm it so an idle worker cannot spin the loop.
+    virtual HANDLE captureEvent() const { return nullptr; }
     virtual void block() noexcept = 0;
 };
 

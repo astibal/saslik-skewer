@@ -784,6 +784,8 @@ void captureLifecycle(const std::wstring& path) {
         // without capturing unrelated host traffic.
         Capture capture(path, "false");
         require(capture.next(cancellation.get(), 1).status == Capture::Status::Timeout, "Idle timeout");
+        require(WaitForSingleObject(capture.readEvent(), 0) == WAIT_TIMEOUT,
+                "Idle capture completion event spins");
         require(capture.next(cancellation.get(), 1).status == Capture::Status::Timeout, "Pending read reuse");
         require(SetEvent(cancellation.get()), "Signal pending read cancellation");
         require(capture.next(cancellation.get(), 100).status == Capture::Status::Cancelled,

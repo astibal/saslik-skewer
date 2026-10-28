@@ -139,6 +139,7 @@ public:
         stats_.injected_bytes += sent;
     }
     Stats stats() const { return stats_; }
+    HANDLE readEvent() const { return event_.get(); }
 
 private:
     void cancelRead() noexcept {
@@ -180,5 +181,8 @@ void PacketCapture::reinject(Packet packet) {
 }
 PacketCapture::Stats PacketCapture::stats() const {
     return impl_->stats();
+}
+HANDLE PacketCapture::readEvent() const {
+    return impl_->readEvent();
 }
 } // namespace skewer::windows::traffic

@@ -34,6 +34,10 @@ public:
     // Timeout preserves pending I/O. Cancellation retires it and is terminal;
     // the handle remains open (still intercepting) until object destruction.
     Result next(HANDLE cancellation, DWORD timeout_ms);
+    // Borrowed completion event. Consume with next(); never reset externally.
+    // A completed read stays signalled until the next read is armed, allowing
+    // the owner to interleave packet processing with transport/lease checks.
+    HANDLE readEvent() const;
     // Explicit send only; neither timeout nor destruction forwards packets.
     // Capture metadata is preserved; this is reinjection, not tunnel routing.
     void reinject(Packet packet);
