@@ -420,3 +420,20 @@ pending renewal. Preparation and polling exceptions release the lease without
 reviving a retired packet epoch. All packet callbacks run on the session worker;
 no additional packet thread or shared lock is introduced. This is the integration
 point for service-owned selection, not an enabled application-routing command.
+
+`SelectedSessionPackets` now implements that integration and the packet device
+in one session-owned object. It configures translation from the assigned IPv4
+address, shares readiness/cancellation with the paired loop, and preserves
+explicit Direct processing after its tunnel is blocked. It cannot be prepared
+twice or reused after blocking. The external owner retains interception.
+
+`selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST` exercises an
+independent Windows system curl process, created suspended and pinned before
+execution. The worker resumes it only after authenticated tunnel readiness.
+Unlike the self-socket probe, this fixture uses the shared lease/renewal session
+loop. A complete curl HTTPS transfer through the real paired Saslik passed in
+the Windows VM. The fixture deliberately uses a narrow destination/port capture,
+explicit IPv4 resolution and curl's per-request insecure TLS option; it proves
+neither DNS nor certificate-store integration, UDP/IPv6 protection or general
+application-tree selection. Its own child is terminated before capture cleanup
+on failure. No host routes, adapter configuration or DNS settings are changed.
