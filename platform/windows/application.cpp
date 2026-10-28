@@ -215,6 +215,9 @@ private:
             }
             endpoint_->setText(result.first);
             QSettings().setValue("windows/saslikEndpoint", result.first);
+            if (routing_panel_) {
+                routing_panel_->setPairedEndpoint(result.first);
+            }
             report_status_->setText(tr("Paired. Starting presence reporting…"));
             if (!report_timer_.isActive()) startReporting();
         });

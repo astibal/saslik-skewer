@@ -18,6 +18,7 @@ public:
     ~RoutingPanel() override;
     void setStateCallback(StateCallback callback);
     void setServiceName(const QString& service);
+    void setPairedEndpoint(const QString& endpoint);
     void startSelected(ProcessKey process);
     void stopCurrent();
 

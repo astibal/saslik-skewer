@@ -215,6 +215,12 @@ void RoutingPanel::setServiceName(const QString& service) {
         service_->setText(normalized);
     }
 }
+void RoutingPanel::setPairedEndpoint(const QString& endpoint) {
+    const auto normalized = endpoint.trimmed();
+    if (!normalized.isEmpty() && endpoint_->text() != normalized) {
+        endpoint_->setText(normalized);
+    }
+}
 void RoutingPanel::startSelected(ProcessKey process) {
     if (!process.pid || !process.created || !known_ || !state_.paired) {
         return;

@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QSettings>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QElapsedTimer>
 #include <QThread>
@@ -53,11 +54,16 @@ int main(int argc, char** argv) {
         if (argc != 1) { throw std::invalid_argument("Expected no args or --live SERVICE ENDPOINT"); }
         auto panel = std::make_unique<skewer::windows::RoutingPanel>();
         panel->show();
+        const auto endpoint = panel->findChild<QLineEdit*>("routingEndpoint");
         const auto start = panel->findChild<QPushButton*>("routingStart");
         const auto stop = panel->findChild<QPushButton*>("routingStop");
         const auto status = panel->findChild<QLabel*>("routingStatus");
-        if (!start || !stop || !status || start->isEnabled() || stop->isEnabled()) {
+        if (!endpoint || !start || !stop || !status || start->isEnabled() || stop->isEnabled()) {
             throw std::runtime_error("Unknown service enabled routing controls");
+        }
+        panel->setPairedEndpoint("  skewer://192.0.2.10:8766/pair  ");
+        if (endpoint->text() != "skewer://192.0.2.10:8766/pair") {
+            throw std::runtime_error("Paired endpoint did not propagate into routing controls");
         }
         QElapsedTimer time;
         time.start();
