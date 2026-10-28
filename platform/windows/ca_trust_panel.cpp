@@ -1,4 +1,5 @@
 #include "ca_trust_panel.hpp"
+#include "ca_observation.hpp"
 #include "pairing.hpp"
 #include <QHBoxLayout>
 #include <QLabel>
@@ -169,6 +170,7 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent) {
             const auto result = watcher_.result();
             if (!result.pem.isEmpty()) {
                 applyCertificate(result.pem);
+                rememberAdvertisedCa(result.pem);
                 QSettings().setValue("windows/saslikEndpoint", endpoint_->text().trimmed());
             }
             status_->setText(result.message.isEmpty()

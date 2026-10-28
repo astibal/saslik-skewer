@@ -5,14 +5,32 @@
 #include <exception>
 
 namespace skewer::windows {
-QJsonObject clientReport(const QString& hostname, const QString& version) {
-    // Presence is not routing health. Do not invent trust-store observations
-    // until the native certificate-store integration can actually collect them.
+QJsonObject clientReport(const QString& hostname, const QString& version,
+                         const CaObservation& observation) {
+    QJsonArray applications;
+    QJsonArray stores;
+    if (!observation.fingerprint.isEmpty()) {
+        applications.append(QJsonObject{{"id", "system"}, {"alias", "Windows"},
+                                        {"recognized", true}, {"icon", ""}});
+        stores.append(QJsonObject{{"key", "windows-current-user-root"},
+                                  {"label", "Current User Root"},
+                                  {"path", "Current User\\ROOT"},
+                                  {"system", true}, {"available", true},
+                                  {"installed", observation.current_user_root},
+                                  {"detail", "Windows CryptoAPI exact certificate match"},
+                                  {"matches", observation.current_user_root ? 1 : 0},
+                                  {"application_id", "system"}});
+    }
     return {
         {"version", 1},
         {"hostname", hostname},
         {"skewer_version", version},
-        {"ca", QJsonObject{{"fingerprint", ""}, {"applications", QJsonArray{}}, {"stores", QJsonArray{}}}}};
+        {"ca", QJsonObject{{"fingerprint", observation.fingerprint},
+                           {"applications", applications}, {"stores", stores}}}};
+}
+
+QJsonObject clientReport(const QString& hostname, const QString& version) {
+    return clientReport(hostname, version, advertisedCaObservation());
 }
 
 QString sendClientReport(const QUrl& endpoint, const QString& version) {

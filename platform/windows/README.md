@@ -354,13 +354,16 @@ window leave pairing, applications and routing untouched; Saslik marks presence
 offline after its report timeout (currently thirty seconds).
 
 The device list is populated by reports, not enrollment alone. Reports contain
-the hostname and Skewer version, with empty CA observations until Windows trust
-inventory is implemented. Online presence must not be interpreted as active
-application routing or successful CA installation. Invitations must only be
-submitted through the pairing command's stdin, not the endpoint field.
+the hostname, Skewer version and an exact CryptoAPI observation of the last CA
+downloaded from Saslik in `Current User\\ROOT`. No other Windows or
+application-private store is claimed. Online presence must not be interpreted
+as active application routing. Invitations can be consumed by the protected
+field on the Saslik tab or by the pairing command's stdin; they must never be
+placed in the endpoint field or command-line arguments.
 
-`client_report_test` covers the minimal report schema, empty trust observations,
-and rejection of invitation-bearing endpoints without leaking their contents.
+`client_report_test` covers the minimal report schema, a real Current User Root
+observation, and rejection of invitation-bearing endpoints without leaking
+their contents.
 `tests/client-report-smoke.ps1` runs on the interactive Windows desktop and
 checks accepted reports, renewal while minimized, and stop/start controls.
 
