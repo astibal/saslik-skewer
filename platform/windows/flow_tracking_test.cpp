@@ -111,7 +111,8 @@ void testUdpBindLifecycle() {
     auto event = sample();
     event.protocol = 17;
     event.kind = FlowEvent::Kind::SocketBound;
-    event.local = {"0.0.0.0", 0};
+    // WinDivert 2.2 uses this spelling for an IPv4 wildcard BIND.
+    event.local = {"::", 0};
     index.observe(event);
 
     skewer::traffic::PacketTuple tuple;

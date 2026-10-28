@@ -66,8 +66,31 @@ int main() {
         failed.command(RoutingCommand::Start, fresh.generation);
         const auto failure = awaitPhase(failed, RoutingPhase::Failed);
         require(failure.detail == "Fixture failure", "Fatal worker detail was lost");
+        std::atomic_bool recover{};
+        RoutingController retrying([&](HANDLE stop, RoutingSignals& signals) {
+            signals.stage = RoutingStage::Connecting;
+            signals.retry_error = std::make_shared<const std::string>("Fixture retry failure");
+            signals.blocked = true;
+            while (!recover && WaitForSingleObject(stop, 1) == WAIT_TIMEOUT) {
+            }
+            if (WaitForSingleObject(stop, 0) == WAIT_OBJECT_0) return;
+            signals.retry_error.store({});
+            signals.blocked = false;
+            signals.ready = true;
+            WaitForSingleObject(stop, INFINITE);
+            signals.ready = false;
+        });
+        const auto retry_initial = retrying.command(RoutingCommand::Status, 0);
+        retrying.command(RoutingCommand::Start, retry_initial.generation);
+        const auto blocked = awaitPhase(retrying, RoutingPhase::Blocked);
+        require(blocked.detail == "Fixture retry failure", "Blocked retry detail was lost");
+        recover = true;
+        const auto recovered = awaitPhase(retrying, RoutingPhase::Active);
+        require(recovered.detail.empty(), "Recovered session retained stale retry detail");
+        retrying.command(RoutingCommand::Stop, recovered.generation);
+        awaitPhase(retrying, RoutingPhase::Idle);
         std::cout
-            << "PASS: controller generations, duplicate start, stale stop, cleanup wait and fatal failure\n";
+            << "PASS: controller generations, cleanup, failure and retry diagnostics\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

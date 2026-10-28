@@ -73,7 +73,8 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
     for (;;) {
         const auto state = command(RoutingCommand::Status, 0);
         if (state.result != RoutingResult::Ok || state.generation != started.generation ||
-            (state.phase != RoutingPhase::Starting && state.phase != RoutingPhase::Active)) {
+            (state.phase != RoutingPhase::Starting && state.phase != RoutingPhase::Active &&
+             state.phase != RoutingPhase::Blocked)) {
             throw std::runtime_error("Selected routing stopped before process readiness");
         }
         if (state.phase == RoutingPhase::Active) {

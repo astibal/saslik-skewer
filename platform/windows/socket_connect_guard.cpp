@@ -55,8 +55,10 @@ public:
                               : std::vector<std::string>{
                                     base + " and (remoteAddr < ::ffff:0:0 or remoteAddr > ::ffff:ffff:ffff)"};
         if (!control_peer.empty()) {
-            filters.push_back(base + " and protocol == TCP and remoteAddr == " + control_peer +
-                              " and remotePort == " + std::to_string(control_port));
+            filters.push_back(base + " and remoteAddr == " + control_peer +
+                              " and ((protocol == TCP and remotePort == " +
+                              std::to_string(control_port) +
+                              ") or (protocol == UDP and remotePort >= 40001 and remotePort <= 40255))");
         }
         handles_.reserve(filters.size());
         try {

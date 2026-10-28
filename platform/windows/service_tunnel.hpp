@@ -14,7 +14,9 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
                                                const std::wstring& adapter_name, TunnelControl& control,
                                                const QString& peer, ServiceGuardFactory guard_factory,
                                                ServiceRoutePlan plan, HANDLE stop, std::atomic_bool& ready,
-                                               std::atomic_bool& blocked, const std::wstring& dns = {});
+                                               std::atomic_bool& blocked, const std::wstring& dns = {},
+                                               std::atomic<std::shared_ptr<const std::string>>* retry_error =
+                                                   nullptr);
 
 // One routing generation owns adapter, address and routes. The caller owns an
 // already armed guard and keeps control/API alive until this function returns.

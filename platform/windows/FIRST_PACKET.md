@@ -437,9 +437,11 @@ explicit IPv4 resolution and curl's per-request insecure TLS option; it proves
 neither certificate-store integration, IPv6 protection or general
 application-tree selection. Its own child is terminated before capture cleanup
 on failure. No host routes, adapter configuration or DNS settings are changed.
-With `--udp`, the same harness launches system `nslookup` suspended, captures its
-DNS datagrams, and requires selected-packet, tunnel TX/RX and successful child
-exit evidence. Supplying `SERVICE --udp` exercises that UDP child through the
+With `--udp`, the same harness launches its own bounded DNS client suspended,
+captures the datagram owned by that exact process, and requires selected-packet,
+tunnel TX/RX and successful child exit evidence. This deliberately avoids the
+Windows DNS Client service owning `nslookup` traffic. Supplying `SERVICE --udp`
+exercises that UDP child through the
 installed SCM service. `tests/selected-service-live.ps1` runs both HTTPS/TCP and
 DNS/UDP while proving that host routes and DNS settings remain unchanged.
 

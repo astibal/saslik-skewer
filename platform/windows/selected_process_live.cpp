@@ -7,6 +7,8 @@
 #include <QDir>
 #include <QTextStream>
 #include <future>
+#include <sstream>
+#include <vector>
 
 using namespace skewer::windows;
 namespace {
@@ -14,6 +16,64 @@ void require(bool ok, const char* message) {
     if (!ok) {
         throw std::runtime_error(message);
     }
+}
+int runUdpChild(const QString& host, const QString& destination) {
+    WSADATA data{};
+    require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "UDP child Winsock startup failed");
+    struct Cleanup {
+        ~Cleanup() { WSACleanup(); }
+    } cleanup;
+    SOCKET socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(socket != INVALID_SOCKET, "UDP child socket failed");
+    struct SocketCleanup {
+        SOCKET value;
+        ~SocketCleanup() { closesocket(value); }
+    } close{socket};
+    DWORD timeout = 15000;
+    require(setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout),
+                       sizeof(timeout)) == 0,
+            "UDP child timeout failed");
+    sockaddr_in server{};
+    server.sin_family = AF_INET;
+    server.sin_port = htons(53);
+    require(InetPtonA(AF_INET, destination.toLatin1().constData(), &server.sin_addr) == 1,
+            "UDP child destination invalid");
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    bool bound{};
+    const auto first_port = static_cast<std::uint16_t>(40000 + GetCurrentProcessId() % 20000);
+    for (unsigned attempt = 0; attempt < 32 && !bound; ++attempt) {
+        local.sin_port = htons(static_cast<std::uint16_t>(first_port + attempt));
+        bound = bind(socket, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == 0;
+    }
+    require(bound, "UDP child bind failed");
+
+    std::vector<std::uint8_t> query{
+        0x53, 0x4b, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    };
+    for (const auto& label : host.toLatin1().split('.')) {
+        require(!label.isEmpty() && label.size() <= 63, "UDP child host invalid");
+        query.push_back(static_cast<std::uint8_t>(label.size()));
+        query.insert(query.end(), label.begin(), label.end());
+    }
+    query.insert(query.end(), {0x00, 0x00, 0x01, 0x00, 0x01});
+    require(connect(socket, reinterpret_cast<const sockaddr*>(&server), sizeof(server)) == 0,
+            "UDP child connect failed");
+    // Let the passive SOCKET lifecycle and owner-table views converge before
+    // the one-shot datagram. The production resolver remains fail-closed.
+    Sleep(50);
+    require(send(socket, reinterpret_cast<const char*>(query.data()), static_cast<int>(query.size()), 0) ==
+                static_cast<int>(query.size()),
+            "UDP child send failed");
+    std::array<std::uint8_t, 2048> response{};
+    const auto received = recv(socket, reinterpret_cast<char*>(response.data()),
+                               static_cast<int>(response.size()), 0);
+    require(received >= 12 && response[0] == query[0] && response[1] == query[1] &&
+                (response[2] & 0x80) != 0,
+            "UDP child DNS response failed");
+    return 0;
 }
 // Own only the child created by this fixture; never terminate a discovered PID.
 struct Child {
@@ -97,6 +157,14 @@ int main(int argc, char** argv) {
     app.setOrganizationName("Saslik");
     app.setApplicationName("Skewer");
     const auto args = app.arguments();
+    if (args.size() == 4 && args[1] == "--udp-child") {
+        try {
+            return runUdpChild(args[2], args[3]);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
         (args.size() == 7 && args[6] != "--udp")) {
         QTextStream(stderr)
@@ -125,10 +193,12 @@ int main(int argc, char** argv) {
         wchar_t system[MAX_PATH]{};
         const auto length = GetSystemDirectoryW(system, MAX_PATH);
         require(length && length < MAX_PATH, "Resolve system directory");
-        const auto executable = std::wstring(system) + (udp_probe ? L"\\nslookup.exe" : L"\\curl.exe");
+        const auto executable = udp_probe ? app.applicationFilePath().toStdWString()
+                                          : std::wstring(system) + L"\\curl.exe";
         if ((args.size() == 6 && !udp_probe) || args.size() == 7) {
             const auto child_arguments = udp_probe
-                ? std::vector<std::wstring>{args[4].toStdWString(), args[3].toStdWString()}
+                ? std::vector<std::wstring>{L"--udp-child", args[4].toStdWString(),
+                                            args[3].toStdWString()}
                 : std::vector<std::wstring>{L"--noproxy", L"*", L"-4", L"-k", L"--fail",
                                             L"--silent", L"--show-error", L"--max-time", L"20",
                                             L"--output", L"NUL", L"--resolve",
@@ -138,7 +208,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         auto command = udp_probe
-            ? (QString::fromStdWString(L"\"" + executable + L"\"") + " " + args[4] + " " + args[3])
+            ? (QString::fromStdWString(L"\"" + executable + L"\"") + " --udp-child " + args[4] +
+               " " + args[3])
                   .toStdWString()
             : (QString::fromStdWString(L"\"" + executable + L"\"") +
                " --noproxy * -4 -k --fail --silent --show-error --max-time 20 --output NUL --resolve " +
@@ -167,7 +238,8 @@ int main(int argc, char** argv) {
                                                 traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp);
         StopBeforeCaptureRelease stopChild{child};
         std::atomic_bool ready{};
-        std::uint64_t selected{}, direct{};
+        std::uint64_t selected{}, direct{}, held{};
+        skewer::traffic::OwnerEvidence last_evidence{};
         SelectedSessionPackets packets(
             capture,
             [&](auto tuple) {
@@ -179,6 +251,8 @@ int main(int argc, char** argv) {
                                                                            : To::Hold;
                 selected += decision == To::Tunnel;
                 direct += decision == To::Direct;
+                held += decision == To::Hold;
+                last_evidence = result.evidence;
                 return SelectedCaptureBridge::Resolution{decision, result.flow};
             },
             [&](auto flow) {
@@ -198,9 +272,21 @@ int main(int argc, char** argv) {
         }
         const auto counters = run.get();
         DWORD exit{};
-        require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0 && selected && counters.tx &&
-                    counters.rx,
-                "Selected curl did not complete through the tunnel");
+        const auto exit_read = GetExitCodeProcess(child.process.hProcess, &exit) != FALSE;
+        if (!exit_read || exit != 0 || !selected || !counters.tx || !counters.rx) {
+            std::ostringstream detail;
+            detail << "Selected " << (udp_probe ? "DNS UDP" : "curl HTTPS")
+                   << " did not complete through the tunnel: exit=";
+            if (exit_read) {
+                detail << exit;
+            } else {
+                detail << "unavailable (win32=" << GetLastError() << ')';
+            }
+            detail << " selected=" << selected << " direct=" << direct << " held=" << held
+                   << " evidence=" << static_cast<unsigned>(last_evidence) << " tx=" << counters.tx
+                   << " rx=" << counters.rx;
+            throw std::runtime_error(detail.str());
+        }
         QTextStream(stdout)
             << "PASS: separate selected " << (udp_probe ? "DNS UDP" : "curl HTTPS")
             << " via shared paired session" << (udp_probe ? "" : " (trust unchecked)")

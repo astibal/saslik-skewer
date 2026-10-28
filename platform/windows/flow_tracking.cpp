@@ -111,7 +111,12 @@ void UdpBindIndex::observe(const FlowEvent& event) {
     Bind bind;
     bind.ipv6 = event.ipv6;
     bind.port = event.local.port;
-    if (InetPtonA(bind.ipv6 ? AF_INET6 : AF_INET, event.local.address.c_str(), bind.address.data()) != 1) {
+    // WinDivert 2.2 reports an IPv4 wildcard SOCKET BIND as "::" while the
+    // event itself is correctly marked IPv4. Preserve that documented
+    // wildcard meaning instead of poisoning the complete attribution epoch.
+    const bool ipv4_wildcard = !bind.ipv6 && event.local.address == "::";
+    if (!ipv4_wildcard &&
+        InetPtonA(bind.ipv6 ? AF_INET6 : AF_INET, event.local.address.c_str(), bind.address.data()) != 1) {
         invalidate();
         return;
     }

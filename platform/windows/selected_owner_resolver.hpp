@@ -21,7 +21,7 @@ public:
 
 private:
     bool drain(HANDLE cancel);
-    bool awaitTcpFlow(skewer::traffic::PacketTuple tuple, HANDLE cancel);
+    bool awaitSelectedFlow(skewer::traffic::PacketTuple tuple, HANDLE cancel);
     std::optional<skewer::traffic::FlowIdentity> lookupFlow(skewer::traffic::PacketTuple tuple);
     skewer::traffic::FlowIndex::Match lookup(skewer::traffic::PacketTuple tuple);
     ProcessKey target_;

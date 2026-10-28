@@ -3,6 +3,7 @@
 #include "socket_connect_guard.hpp"
 #include "selected_owner_resolver.hpp"
 #include <algorithm>
+#include <exception>
 
 namespace skewer::windows {
 namespace {
@@ -10,9 +11,11 @@ class Runtime final : public PacketDevice, public TunnelPacketWorker {
 public:
     Runtime(const std::wstring& dll, std::unique_ptr<ProcessTarget> target, std::string peer,
             std::uint16_t port, HANDLE cancel, std::atomic_bool& ready, std::atomic_bool& published,
-            std::atomic_bool& blocked)
+            std::atomic_bool& blocked, std::atomic<RoutingStage>& stage,
+            std::atomic<std::shared_ptr<const std::string>>& retry_error)
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
-          published_(published), blocked_(blocked), target_(target.get()), identity_(target->key()),
+          published_(published), blocked_(blocked), stage_(stage), retry_error_(retry_error),
+          target_(target.get()), identity_(target->key()),
           resolver_(dll, std::move(target)),
           unsupported_(dll, *target_, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp, peer_,
                        port_) {
@@ -21,6 +24,7 @@ public:
     }
     bool running() const { return target_->running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
+        stage_ = RoutingStage::Intercepting;
         if (packets_ && !packets_->blocked()) {
             throw std::logic_error("Selected runtime already has a live packet generation");
         }
@@ -30,8 +34,9 @@ public:
             // do not capture unrelated host packets during the first control
             // handshake. Once opened, keep interception across all reconnects.
             capture_ = std::make_unique<traffic::PacketCapture>(
-                dll_, "outbound and ip and (tcp and ip.DstAddr == " + peer_ +
-                          " and tcp.DstPort == " + std::to_string(port_) + " ? false : true)");
+                dll_, "outbound and ip and ((ip.DstAddr == " + peer_ +
+                          " and ((udp.DstPort >= 40001 and udp.DstPort <= 40255) or tcp.DstPort == " +
+                          std::to_string(port_) + ")) ? false : true)");
         }
         packets_ = std::make_unique<SelectedSessionPackets>(
             *capture_,
@@ -51,6 +56,7 @@ public:
             cancel_, ready_);
         try {
             packets_->prepare(endpoint);
+            stage_ = RoutingStage::StartingSession;
         } catch (...) {
             // Persistent capture and the startup guard retain fail-closed
             // behavior. A later lease may create a fresh packet generation.
@@ -73,6 +79,8 @@ public:
                 // socket block, not merely after the transport handshake.
                 published_ = true;
                 blocked_ = false;
+                stage_ = RoutingStage::None;
+                retry_error_.store({});
             }
         } else if (capture_) {
             // A failed packet-generation setup must not strand unrelated host
@@ -113,6 +121,8 @@ private:
     std::atomic_bool& ready_;
     std::atomic_bool& published_;
     std::atomic_bool& blocked_;
+    std::atomic<RoutingStage>& stage_;
+    std::atomic<std::shared_ptr<const std::string>>& retry_error_;
     const ProcessTarget* target_; // Owned by resolver_, never reopened under SYSTEM.
     ProcessKey identity_;
     traffic::SelectedOwnerResolver resolver_;
@@ -128,9 +138,11 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
     if (!target || !target->running() || !control_port) {
         throw std::invalid_argument("Selected runtime requires a live authorized target and control port");
     }
+    state.stage = RoutingStage::Preparing;
     std::atomic_bool transport_ready{};
     Runtime runtime(dll, std::move(target), peer.toStdString(), control_port, cancel, transport_ready,
-                    state.ready, state.blocked);
+                    state.ready, state.blocked, state.stage, state.retry_error);
+    state.stage = RoutingStage::Connecting;
     unsigned failures{};
     for (;;) {
         try {
@@ -138,11 +150,22 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
                             &state.blocked);
             return;
         } catch (...) {
+            const auto failure = std::current_exception();
+            try {
+                std::rethrow_exception(failure);
+            } catch (const std::exception& error) {
+                state.retry_error = std::make_shared<const std::string>(error.what());
+            } catch (...) {
+                state.retry_error =
+                    std::make_shared<const std::string>("Tunnel retry failed with an unknown exception");
+            }
+            state.stage = RoutingStage::Connecting;
             transport_ready = false;
             state.ready = false;
             state.blocked = true;
             runtime.block();
-            if (!runtime.running() || WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
+            if (WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
+            if (!runtime.running()) std::rethrow_exception(failure);
             // Preserve capture while backing off. Direct decisions for other
             // processes are still reinjected; selected/unknown packets drop.
             const auto shift = std::min(failures, 4U);
@@ -158,7 +181,8 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
                 }
                 WaitForSingleObject(cancel, 25);
             }
-            if (!runtime.running() || WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
+            if (WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
+            if (!runtime.running()) std::rethrow_exception(failure);
             // A successful generation clears Blocked from Runtime::poll().
             // Until then the authoritative service phase remains Blocked.
         }

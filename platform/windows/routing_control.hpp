@@ -3,6 +3,7 @@
 #include <atomic>
 #include <functional>
 #include <future>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -20,9 +21,12 @@ struct RoutingReply {
     std::string detail;
     bool paired{};
 };
+enum class RoutingStage : std::uint8_t { None, Preparing, Connecting, Intercepting, StartingSession };
 struct RoutingSignals {
     std::atomic_bool ready{};
     std::atomic_bool blocked{};
+    std::atomic<RoutingStage> stage{RoutingStage::None};
+    std::atomic<std::shared_ptr<const std::string>> retry_error{};
 };
 
 // One service command thread owns this controller. The runner owns all runtime

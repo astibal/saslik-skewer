@@ -3,6 +3,18 @@
 #include <bcrypt.h>
 
 namespace skewer::windows {
+namespace {
+std::string stageDetail(RoutingStage stage) {
+    switch (stage) {
+    case RoutingStage::Preparing: return "Preparing protected packet path";
+    case RoutingStage::Connecting: return "Connecting encrypted tunnel";
+    case RoutingStage::Intercepting: return "Activating packet interception";
+    case RoutingStage::StartingSession: return "Starting encrypted packet session";
+    case RoutingStage::None: return {};
+    }
+    return {};
+}
+} // namespace
 RoutingController::RoutingController(Runner runner)
     : runner_(std::move(runner)), stop_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
     if (!runner_ || !stop_) {
@@ -36,6 +48,8 @@ void RoutingController::reap() {
     if (terminal_ == RoutingPhase::Idle) detail_.clear();
     signals_.ready = false;
     signals_.blocked = false;
+    signals_.stage = RoutingStage::None;
+    signals_.retry_error.store({});
     stopping_ = false;
 }
 RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t generation) {
@@ -55,6 +69,8 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             }
             signals_.ready = false;
             signals_.blocked = false;
+            signals_.stage = RoutingStage::None;
+            signals_.retry_error.store({});
             detail_.clear();
             work_ = std::async(std::launch::async, [this] {
                 try {
@@ -79,6 +95,15 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
                        : signals_.blocked.load() ? RoutingPhase::Blocked
                        : signals_.ready.load()   ? RoutingPhase::Active
                                                  : RoutingPhase::Starting;
-    return {result, phase, generation_, RoutingScope::None, std::nullopt, detail_};
+    auto detail = detail_;
+    if (detail.empty() && work_.valid()) {
+        const auto retry = phase == RoutingPhase::Blocked ? signals_.retry_error.load() : nullptr;
+        if (retry) {
+            detail = *retry;
+        } else if (phase == RoutingPhase::Starting) {
+            detail = stageDetail(signals_.stage.load());
+        }
+    }
+    return {result, phase, generation_, RoutingScope::None, std::nullopt, detail};
 }
 } // namespace skewer::windows

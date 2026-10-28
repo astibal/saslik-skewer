@@ -56,19 +56,20 @@ function Status {
     $output | ConvertFrom-Json
 }
 function Await([int]$phase) {
-    for ($i = 0; $i -lt 100; ++$i) {
+    for ($i = 0; $i -lt 300; ++$i) {
         $state = Status
         if ($state.phase -eq $phase) { return $state }
         if ($state.phase -eq 5) { throw 'Service worker failed' }
         Start-Sleep -Milliseconds 100
     }
-    throw "Expected phase $phase, got $($state.phase)"
+    throw "Expected phase $phase, got $($state.phase): $($state.detail)"
 }
 $before = Defaults
 $dnsBefore = DnsState
 $testIp = (Resolve-DnsName example.com -Type A -DnsOnly | Where-Object Type -EQ A | Select-Object -First 1).IPAddress
 if (!$testIp) { throw 'Cannot pre-resolve HTTPS destination' }
 $created = $false
+$firewallRule = $null
 try {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $command = '"' + $exe + '" --service ' + $name + ' ' + $sid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer + ' ' + $Management
@@ -114,15 +115,21 @@ try {
     if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw 'HTTPS with system DNS failed' }
     Write-Output 'PASS: system DNS and HTTPS without --resolve through the tunnel'
     if ($TestTunnelLoss) {
-        # Only the exact adapter created by this fixture is affected.
-        Disable-NetAdapter -Name $adapter.Name -Confirm:$false
+        # Remove only this service's authenticated UDP transport. The owned
+        # Wintun device stays intact, so this tests remote/path loss rather
+        # than administratively deleting the local packet device.
+        $firewallRule = 'SkewerTunnelLoss-' + [guid]::NewGuid().ToString('N')
+        New-NetFirewallRule -Name $firewallRule -DisplayName $firewallRule -Direction Outbound `
+            -Action Block -Protocol UDP -RemoteAddress $Peer -RemotePort '40001-40255' `
+            -Program $exe | Out-Null
         $null = Await 3
         if ((Get-Service $name).Status -ne 'Running') { throw 'Tunnel failure stopped the service guard' }
         & curl.exe -4 --silent --show-error --noproxy '*' --resolve "example.com:80:$testIp" `
             --connect-timeout 2 --max-time 3 http://example.com/ | Out-Null
         if ($LASTEXITCODE -eq 0) { throw 'Direct fallback succeeded after tunnel loss' }
         Write-Output 'PASS: lost tunnel stays Blocked and public HTTP cannot fall back directly'
-        Enable-NetAdapter -Name $adapter.Name -Confirm:$false
+        Remove-NetFirewallRule -Name $firewallRule
+        $firewallRule = $null
         $active = Await 2
         $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
             --resolve "example.com:443:$testIp" --connect-timeout 5 --max-time 15 https://example.com/
@@ -135,6 +142,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Stop failed' }
     $null = Await 0
 } finally {
+    if ($firewallRule) {
+        Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
+    }
     if ($created) {
         Stop-Service $name
         $service = Get-Service $name

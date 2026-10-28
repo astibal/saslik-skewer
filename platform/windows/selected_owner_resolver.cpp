@@ -17,11 +17,11 @@ bool SelectedOwnerResolver::drain(HANDLE cancel) {
     return false;
 }
 
-bool SelectedOwnerResolver::awaitTcpFlow(skewer::traffic::PacketTuple tuple, HANDLE cancel) {
-    // NETWORK can deliver the SYN a few milliseconds before SOCKET delivers
-    // its CONNECT metadata. Wait only for a selected owner candidate; unrelated
-    // traffic must not make packet capture a polling delay line.
-    for (unsigned i = 0; i < 5; ++i) {
+bool SelectedOwnerResolver::awaitSelectedFlow(skewer::traffic::PacketTuple tuple, HANDLE cancel) {
+    // NETWORK can deliver the first TCP or UDP packet a few milliseconds
+    // before SOCKET delivers its CONNECT metadata. Wait only for a selected
+    // owner candidate; unrelated traffic must not make capture a delay line.
+    for (unsigned i = 0; i < 20; ++i) {
         const auto event = observer_.next(cancel, 5);
         if (event.status != FlowObserver::Status::Event &&
             event.status != FlowObserver::Status::Timeout) return false;
@@ -70,8 +70,7 @@ SelectedOwnerResolver::Result SelectedOwnerResolver::resolve(skewer::traffic::Pa
     captureOwners();
     const bool selected_candidate = !unknown_owner &&
         std::find(candidates.begin(), candidates.end(), target_.pid) != candidates.end();
-    if (!flow && tuple.protocol == IPPROTO_TCP && selected_candidate &&
-        awaitTcpFlow(tuple, cancel)) {
+    if (!flow && selected_candidate && awaitSelectedFlow(tuple, cancel)) {
         flow = lookupFlow(tuple);
         captureOwners();
     }

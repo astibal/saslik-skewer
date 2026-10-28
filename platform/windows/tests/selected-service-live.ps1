@@ -4,11 +4,17 @@ param(
     [string]$WintunDll='C:\SkewerDev\wintun-test\wintun.dll',
     [string]$Endpoint='skewer://172.30.1.73:8766/pair',
     [string]$Peer='172.30.1.73',
-    [string]$Destination='172.66.147.243',
-    [string]$HostName='example.com'
+    [string]$Destination='',
+    [string]$HostName='example.com',
+    [switch]$SkipGuiSmoke
 )
 $ErrorActionPreference='Stop'
 # Elevated disposable VM only. Broad IPv4 TCP capture, no route/DNS changes.
+if (!$Destination) {
+    $Destination = (Resolve-DnsName $HostName -Type A -DnsOnly |
+        Where-Object Type -EQ A | Select-Object -First 1).IPAddress
+}
+if (!$Destination) { throw 'Cannot pre-resolve selected HTTPS destination' }
 $name='SkewerRouting-Test-'+[Guid]::NewGuid().ToString('N')
 $client=Join-Path $Directory 'skewer-routing-control.exe'
 $created=$false
@@ -35,9 +41,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Rejected routed launch executed child code' }
     & $client pair $name $Endpoint
     if ($LASTEXITCODE -ne 0) { throw 'Selected fixture pairing failed' }
-    Set-Content 'C:\SkewerDev\routed-service-name.txt' $name
-    & (Join-Path $Directory 'run-routed-application-smoke.ps1')
-    if ($LASTEXITCODE -ne 0) { throw 'GUI routed launch test failed' }
+    if (!$SkipGuiSmoke) {
+        Set-Content 'C:\SkewerDev\routed-service-name.txt' $name
+        & (Join-Path $Directory 'run-routed-application-smoke.ps1')
+        if ($LASTEXITCODE -ne 0) { throw 'GUI routed launch test failed' }
+    }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
@@ -45,6 +53,17 @@ try {
     & curl.exe --noproxy '*' -4 -k --fail --silent --show-error --max-time 12 `
         --resolve "${HostName}:443:${Destination}" --output NUL "https://${HostName}/"
     if ($LASTEXITCODE -ne 0) { throw 'Unrelated HTTPS unavailable after selected session' }
+} catch {
+    Write-Warning "Selected service fixture failed: $($_.Exception.Message)"
+    $state = & $client status $name 2>&1
+    Write-Warning "Routing status: $state"
+    $installed = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction SilentlyContinue
+    if ($installed -and $installed.ProcessId) {
+        $connections = Get-NetTCPConnection -OwningProcess $installed.ProcessId -ErrorAction SilentlyContinue |
+            Select-Object State,LocalAddress,LocalPort,RemoteAddress,RemotePort
+        Write-Warning "Service PID $($installed.ProcessId) TCP: $($connections | ConvertTo-Json -Compress)"
+    }
+    throw
 } finally {
     Remove-Item 'C:\SkewerDev\routed-service-name.txt' -ErrorAction SilentlyContinue
     if ($created -or (Get-Service -Name $name -ErrorAction SilentlyContinue)) {

@@ -1,5 +1,6 @@
 #include "service_tunnel.hpp"
 #include <algorithm>
+#include <exception>
 
 namespace skewer::windows {
 namespace {
@@ -43,12 +44,14 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
                                          const std::wstring& adapter_name, TunnelControl& control,
                                          const QString& peer, ServiceRoutePlan plan, HANDLE stop,
                                          std::atomic_bool& ready, std::atomic_bool& blocked,
-                                         const std::wstring& dns = {}) {
+                                         const std::wstring& dns = {},
+                                         std::atomic<std::shared_ptr<const std::string>>* retry_error = nullptr) {
     if (!api || !plan || adapter_name.empty()) {
         throw std::invalid_argument("Incomplete service tunnel configuration");
     }
     ready.store(false);
     blocked.store(false);
+    if (retry_error) retry_error->store(nullptr);
     std::unique_ptr<AddressedTunnelControl> addressed;
     DeferredRoutes routes(std::move(plan), device);
     GuardedTunnelResult result{};
@@ -68,8 +71,17 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
                                                        nullptr, &blocked);
                     return;
                 } catch (...) {
+                    const auto failure = std::current_exception();
+                    std::string detail = "Tunnel retry failed with an unknown exception";
+                    try {
+                        std::rethrow_exception(failure);
+                    } catch (const std::exception& error) {
+                        detail = error.what();
+                    } catch (...) {
+                    }
                     ready.store(false);
                     blocked.store(true);
+                    if (retry_error) retry_error->store(std::make_shared<const std::string>(std::move(detail)));
                     routes.withdraw();
                     if (!routes.clean()) throw;
                     addressed.reset();
@@ -115,7 +127,8 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
                                                TunnelControl& control, const QString& peer,
                                                ServiceGuardFactory guard_factory, ServiceRoutePlan plan,
                                                HANDLE stop, std::atomic_bool& ready,
-                                               std::atomic_bool& blocked, const std::wstring& dns) {
+                                               std::atomic_bool& blocked, const std::wstring& dns,
+                                               std::atomic<std::shared_ptr<const std::string>>* retry_error) {
     ready.store(false);
     blocked.store(false);
     if (!api || !guard_factory || !plan || name.empty()) {
@@ -130,6 +143,6 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
         throw std::runtime_error("Service egress guard was not created");
     }
     return runOwnedDeviceTunnel(*guard, device, api, name, control, peer, std::move(plan), stop, ready,
-                                blocked, dns);
+                                blocked, dns, retry_error);
 }
 } // namespace skewer::windows
