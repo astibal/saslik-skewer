@@ -17,6 +17,11 @@ The service implements whole-host IPv4 routing and one selected process's fresh
 corroborated IPv4 TCP and UDP traffic. The remaining protocol and coverage limits below are
 release gaps, not a claim that routing is unavailable.
 
+Selected-process transport loss retains the same NETWORK capture handle, retires
+the old packet epoch and retries with bounded backoff. Only a fresh authenticated,
+healthy generation clears `Blocked`; GUI lifetime is not involved. Whole-host
+reconnect remains a separate acceptance gap.
+
 A custom WFP callout driver is deferred beyond the first release. Neither its
 build nor a live kernel experiment is a gate for the WinDivert implementation.
 

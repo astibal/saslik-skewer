@@ -20,7 +20,9 @@ try {
         -ArgumentList ('"' + $dll + '"') -PassThru -NoNewWindow
     $null = $child.Handle
     if (-not $child.WaitForExit(45000)) { throw 'Packet diversion fixture timed out' }
-    if ($child.ExitCode -ne 0) { throw "Packet diversion fixture failed: $($child.ExitCode)" }
+if ($child.ExitCode -ne 0) { throw "Packet diversion fixture failed: $($child.ExitCode)" }
+& (Join-Path $Directory 'selected_reconnect_live.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Selected reconnect fixture failed' }
 } finally {
     # Retained child only; closing its handles removes its narrowly scoped filters.
     if ($null -ne $child) {

@@ -443,6 +443,11 @@ exit evidence. Supplying `SERVICE --udp` exercises that UDP child through the
 installed SCM service. `tests/selected-service-live.ps1` runs both HTTPS/TCP and
 DNS/UDP while proving that host routes and DNS settings remain unchanged.
 
+`selected_reconnect_live` injects renewal loss twice under the real WinDivert
+driver. It verifies that selected capture ownership survives both generations,
+the service remains blocked, retries, and exits only after explicit cancellation.
+The elevated packet-divert suite runs this regression after first-packet tests.
+
 The routing IPC now has a separate selected-start operation. After authenticating
 the actual pipe caller against the configured service owner, it reads a complete
 PID/birth identity, authorizes that process against both caller and owner, and

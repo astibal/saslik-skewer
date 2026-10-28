@@ -2,15 +2,17 @@
 #include "selected_session_packets.hpp"
 #include "socket_connect_guard.hpp"
 #include "selected_owner_resolver.hpp"
+#include <algorithm>
 
 namespace skewer::windows {
 namespace {
 class Runtime final : public PacketDevice, public TunnelPacketWorker {
 public:
     Runtime(const std::wstring& dll, std::unique_ptr<ProcessTarget> target, std::string peer,
-            std::uint16_t port, HANDLE cancel, std::atomic_bool& ready, std::atomic_bool& published)
+            std::uint16_t port, HANDLE cancel, std::atomic_bool& ready, std::atomic_bool& published,
+            std::atomic_bool& blocked)
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
-          published_(published), target_(target.get()), identity_(target->key()),
+          published_(published), blocked_(blocked), target_(target.get()), identity_(target->key()),
           resolver_(dll, std::move(target)),
           unsupported_(dll, *target_, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp, peer_,
                        port_) {
@@ -19,15 +21,18 @@ public:
     }
     bool running() const { return target_->running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
-        if (capture_) {
-            throw std::logic_error("Selected runtime cannot be prepared twice");
+        if (packets_ && !packets_->blocked()) {
+            throw std::logic_error("Selected runtime already has a live packet generation");
         }
-        // Only the configured control endpoint bypasses NETWORK capture. Its
-        // matching SOCKET guard denies the selected process this direct path.
-        // This also lets renewal/close finish while packet processing is blocked.
-        capture_ = std::make_unique<traffic::PacketCapture>(
-            dll_, "outbound and ip and (tcp and ip.DstAddr == " + peer_ +
-                      " and tcp.DstPort == " + std::to_string(port_) + " ? false : true)");
+        packets_.reset();
+        if (!capture_) {
+            // The startup SOCKET guard already blocks the selected process, so
+            // do not capture unrelated host packets during the first control
+            // handshake. Once opened, keep interception across all reconnects.
+            capture_ = std::make_unique<traffic::PacketCapture>(
+                dll_, "outbound and ip and (tcp and ip.DstAddr == " + peer_ +
+                          " and tcp.DstPort == " + std::to_string(port_) + " ? false : true)");
+        }
         packets_ = std::make_unique<SelectedSessionPackets>(
             *capture_,
             [&](auto tuple) {
@@ -47,10 +52,9 @@ public:
         try {
             packets_->prepare(endpoint);
         } catch (...) {
-            // Startup guard still denies new selected attempts. Do not strand
-            // unrelated traffic behind an incompletely initialized bridge.
+            // Persistent capture and the startup guard retain fail-closed
+            // behavior. A later lease may create a fresh packet generation.
             packets_.reset();
-            capture_.reset();
             throw;
         }
     }
@@ -68,11 +72,26 @@ public:
                 // Publish only after interception and removal of the startup
                 // socket block, not merely after the transport handshake.
                 published_ = true;
+                blocked_ = false;
+            }
+        } else if (capture_) {
+            // A failed packet-generation setup must not strand unrelated host
+            // traffic behind the persistent capture handle. Unknown and
+            // selected packets remain dropped while recovery is Blocked.
+            auto packet = capture_->next(cancel_, 0);
+            if (packet.packet) {
+                const auto tuple = skewer::traffic::parsePacketTuple(packet.packet->bytes);
+                if (tuple.tuple &&
+                    resolver_.resolve(*tuple.tuple, cancel_).disposition ==
+                        traffic::SelectedOwnerResolver::Disposition::Direct) {
+                    capture_->reinject(std::move(*packet.packet));
+                }
             }
         }
     }
     void block() noexcept override {
         published_ = false;
+        blocked_ = true;
         if (packets_) {
             packets_->block();
         }
@@ -93,6 +112,7 @@ private:
     HANDLE cancel_;
     std::atomic_bool& ready_;
     std::atomic_bool& published_;
+    std::atomic_bool& blocked_;
     const ProcessTarget* target_; // Owned by resolver_, never reopened under SYSTEM.
     ProcessKey identity_;
     traffic::SelectedOwnerResolver resolver_;
@@ -110,26 +130,37 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
     }
     std::atomic_bool transport_ready{};
     Runtime runtime(dll, std::move(target), peer.toStdString(), control_port, cancel, transport_ready,
-                    state.ready);
-    try {
-        runPairedTunnel(runtime, control, peer, cancel, transport_ready, nullptr, &runtime);
-    } catch (...) {
-        const auto error = std::current_exception();
-        state.ready = false;
-        state.blocked = true;
-        runtime.block();
-        // Tunnel failure must not close interception. Continue independent
-        // Direct decisions until explicit Stop or the pinned process exits.
-        while (WaitForSingleObject(cancel, 2) == WAIT_TIMEOUT && runtime.running()) {
-            try {
-                runtime.poll();
-            } catch (...) {
-                // If attribution itself is unavailable, keep interception and
-                // report Blocked rather than guessing that packets are unrelated.
+                    state.ready, state.blocked);
+    unsigned failures{};
+    for (;;) {
+        try {
+            runPairedTunnel(runtime, control, peer, cancel, transport_ready, nullptr, &runtime);
+            return;
+        } catch (...) {
+            transport_ready = false;
+            state.ready = false;
+            state.blocked = true;
+            runtime.block();
+            if (!runtime.running() || WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
+            // Preserve capture while backing off. Direct decisions for other
+            // processes are still reinjected; selected/unknown packets drop.
+            const auto shift = std::min(failures, 4U);
+            if (failures < 4U) ++failures;
+            const auto delay = static_cast<DWORD>(250U << shift);
+            const auto deadline = GetTickCount64() + delay;
+            while (GetTickCount64() < deadline && runtime.running() &&
+                   WaitForSingleObject(cancel, 0) == WAIT_TIMEOUT) {
+                try {
+                    runtime.poll();
+                } catch (...) {
+                    // Attribution failure is not permission to release capture.
+                }
                 WaitForSingleObject(cancel, 25);
             }
+            if (!runtime.running() || WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
+            // A successful generation clears Blocked from Runtime::poll().
+            // Until then the authoritative service phase remains Blocked.
         }
-        std::rethrow_exception(error);
     }
 }
 } // namespace skewer::windows
