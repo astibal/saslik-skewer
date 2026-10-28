@@ -1,4 +1,6 @@
 #include "ca_trust_panel.hpp"
+#include "ca_observation.hpp"
+#include "test_certificate.hpp"
 #include <QApplication>
 #include <QLineEdit>
 #include <QSettings>
@@ -12,8 +14,12 @@ int main(int argc, char** argv) try {
     QCoreApplication::setApplicationName("CaTrustPanel");
     QStandardPaths::setTestModeEnabled(true);
     QSettings().clear();
+    QSettings().setValue("windows/advertisedCa", skewer::windows::test::nonCaCertificate());
 
     skewer::windows::CaTrustPanel panel;
+    if (!skewer::windows::advertisedCaCertificate().isEmpty()) {
+        throw std::runtime_error("CA Trust restored an invalid saved certificate");
+    }
     auto* endpoint = panel.findChild<QLineEdit*>("caTrustEndpoint");
     if (!endpoint) {
         throw std::runtime_error("CA Trust endpoint control is missing");

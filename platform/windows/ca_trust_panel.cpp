@@ -191,12 +191,18 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent) {
     });
     const auto remembered = advertisedCaCertificate();
     if (!remembered.isEmpty()) {
-        const auto result = inspect(remembered);
-        applyCertificate(remembered);
-        status_->setText(result.present ? tr("Trusted by the current user.")
-                                        : tr("Not present in Current User\\ROOT."));
-        install_->setEnabled(!result.present);
-        remove_->setEnabled(result.present);
+        try {
+            const auto result = inspect(remembered);
+            applyCertificate(remembered);
+            status_->setText(result.present ? tr("Trusted by the current user.")
+                                            : tr("Not present in Current User\\ROOT."));
+            install_->setEnabled(!result.present);
+            remove_->setEnabled(result.present);
+        } catch (const std::exception& error) {
+            // Saved public CA material must not prevent the rest of Skewer
+            // from starting. Keep the panel usable for a fresh download.
+            status_->setText(tr("Saved CA is unavailable: %1").arg(QString::fromUtf8(error.what())));
+        }
     }
     updateControls();
 }

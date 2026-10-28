@@ -1,4 +1,5 @@
 #include "client_report.hpp"
+#include "test_certificate.hpp"
 #include <windows.h>
 #include <wincrypt.h>
 #include <QCoreApplication>
@@ -15,22 +16,41 @@ struct StoreCloser {
     }
 };
 
-QByteArray firstCurrentUserRoot() {
+bool currentCa(const CERT_CONTEXT& certificate) {
+    const auto* extension = CertFindExtension(szOID_BASIC_CONSTRAINTS2,
+                                               certificate.pCertInfo->cExtension,
+                                               certificate.pCertInfo->rgExtension);
+    if (!extension || CertVerifyTimeValidity(nullptr, certificate.pCertInfo) != 0) return false;
+    CERT_BASIC_CONSTRAINTS2_INFO* decoded{};
+    DWORD size{};
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING, X509_BASIC_CONSTRAINTS2,
+                             extension->Value.pbData, extension->Value.cbData,
+                             CRYPT_DECODE_ALLOC_FLAG, nullptr, &decoded, &size)) return false;
+    std::unique_ptr<void, decltype(&LocalFree)> owner(decoded, LocalFree);
+    return decoded->fCA;
+}
+
+QByteArray firstCurrentUserCa() {
     std::unique_ptr<void, StoreCloser> store(CertOpenStore(
         CERT_STORE_PROV_SYSTEM_W, 0, 0,
         CERT_SYSTEM_STORE_CURRENT_USER | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG,
         L"ROOT"));
     if (!store) return {};
-    const auto certificate = CertEnumCertificatesInStore(static_cast<HCERTSTORE>(store.get()), nullptr);
-    if (!certificate) return {};
-    DWORD size{};
-    if (!CryptBinaryToStringA(certificate->pbCertEncoded, certificate->cbCertEncoded,
-                              CRYPT_STRING_BASE64HEADER, nullptr, &size)) return {};
-    QByteArray pem(static_cast<int>(size), '\0');
-    if (!CryptBinaryToStringA(certificate->pbCertEncoded, certificate->cbCertEncoded,
-                              CRYPT_STRING_BASE64HEADER, pem.data(), &size)) return {};
-    if (!pem.isEmpty() && pem.back() == '\0') pem.chop(1);
-    return pem;
+    PCCERT_CONTEXT certificate{};
+    while ((certificate = CertEnumCertificatesInStore(
+                static_cast<HCERTSTORE>(store.get()), certificate))) {
+        if (!currentCa(*certificate)) continue;
+        DWORD size{};
+        if (!CryptBinaryToStringA(certificate->pbCertEncoded, certificate->cbCertEncoded,
+                                  CRYPT_STRING_BASE64HEADER, nullptr, &size)) return {};
+        QByteArray pem(static_cast<int>(size), '\0');
+        if (!CryptBinaryToStringA(certificate->pbCertEncoded, certificate->cbCertEncoded,
+                                  CRYPT_STRING_BASE64HEADER, pem.data(), &size)) return {};
+        if (!pem.isEmpty() && pem.back() == '\0') pem.chop(1);
+        CertFreeCertificateContext(certificate);
+        return pem;
+    }
+    return {};
 }
 } // namespace
 
@@ -76,11 +96,28 @@ int main(int argc, char** argv) {
         std::fputs("Managed runtime trust observation was not reported exactly\n", stderr);
         return 1;
     }
-    const auto root = firstCurrentUserRoot();
+    const auto root = firstCurrentUserCa();
     if (root.isEmpty()) {
         std::fputs("Current User Root fixture unavailable\n", stderr);
         return 1;
     }
+    bool non_ca_rejected = false;
+    try {
+        skewer::windows::rememberAdvertisedCa(skewer::windows::test::nonCaCertificate());
+    } catch (const std::exception&) {
+        non_ca_rejected = true;
+    }
+    if (!non_ca_rejected) {
+        std::fputs("Structurally valid non-CA certificate was remembered as a CA\n", stderr);
+        return 1;
+    }
+    QSettings().setValue("windows/advertisedCa", skewer::windows::test::nonCaCertificate());
+    if (!skewer::windows::advertisedCaCertificate().isEmpty() ||
+        !skewer::windows::advertisedCaObservation().fingerprint.isEmpty()) {
+        std::fputs("Invalid saved CA was restored or advertised\n", stderr);
+        return 1;
+    }
+    QSettings().remove("windows/advertisedCa");
     skewer::windows::rememberAdvertisedCa(root);
     if (skewer::windows::advertisedCaCertificate() != root) {
         std::fputs("Validated advertised CA was not restored\n", stderr);

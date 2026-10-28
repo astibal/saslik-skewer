@@ -38,8 +38,29 @@ Context decode(const QByteArray& pem) {
     return certificate;
 }
 
+bool currentCa(const CERT_CONTEXT& certificate) {
+    const auto* extension = CertFindExtension(szOID_BASIC_CONSTRAINTS2,
+                                               certificate.pCertInfo->cExtension,
+                                               certificate.pCertInfo->rgExtension);
+    if (!extension || CertVerifyTimeValidity(nullptr, certificate.pCertInfo) != 0) {
+        return false;
+    }
+    CERT_BASIC_CONSTRAINTS2_INFO* decoded{};
+    DWORD size{};
+    if (!CryptDecodeObjectEx(X509_ASN_ENCODING, X509_BASIC_CONSTRAINTS2,
+                             extension->Value.pbData, extension->Value.cbData,
+                             CRYPT_DECODE_ALLOC_FLAG, nullptr, &decoded, &size)) {
+        return false;
+    }
+    std::unique_ptr<void, decltype(&LocalFree)> owner(decoded, LocalFree);
+    return decoded->fCA;
+}
+
 CaObservation inspect(const QByteArray& pem) {
     auto certificate = decode(pem);
+    if (!currentCa(*certificate)) {
+        throw std::runtime_error("The advertised certificate is not a currently valid CA");
+    }
     BYTE digest[32]{};
     DWORD digest_size = sizeof(digest);
     if (!CryptHashCertificate2(BCRYPT_SHA256_ALGORITHM, 0, nullptr,
@@ -59,6 +80,7 @@ CaObservation inspect(const QByteArray& pem) {
             std::memcmp(item->pbCertEncoded, certificate->pbCertEncoded,
                         certificate->cbCertEncoded) == 0) {
             present = true;
+            CertFreeCertificateContext(item);
             break;
         }
     }

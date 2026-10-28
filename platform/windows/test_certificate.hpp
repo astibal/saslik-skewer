@@ -1,0 +1,30 @@
+#pragma once
+
+#include <QByteArray>
+
+namespace skewer::windows::test {
+// Public, keyless X.509 fixture with a critical CA:FALSE constraint. It is
+// structurally valid so tests exercise CA policy rather than parser rejection.
+inline QByteArray nonCaCertificate() {
+    return QByteArrayLiteral(R"CERT(-----BEGIN CERTIFICATE-----
+MIIDKDCCAhCgAwIBAgIUbnlnyAZvXFlGfq56mbBg/0/AQZkwDQYJKoZIhvcNAQEL
+BQAwJTEjMCEGA1UEAwwaU2tld2VyIG5vbi1DQSB0ZXN0IGZpeHR1cmUwHhcNMjYx
+MDI4MjMyNjM3WhcNMzYxMDI1MjMyNjM3WjAlMSMwIQYDVQQDDBpTa2V3ZXIgbm9u
+LUNBIHRlc3QgZml4dHVyZTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+AMnk43TgkatrL/TkhyyTWgeLeZoeV6nl39sRb1obKgEtL30oJQA4A08N1/uod91m
+QO3IxEa8P/8KQTySzhFypyGHhVVJL0JMFXJqx9aM9MOfJ2Idh5jHoXIgWKxiUkXL
+ZRFkY8bwrkJhOn5ZBVCu6VTYn1mxglEQw/PCzNgqPXR/oKzaxplyhWycZykxrPo5
+rrLcGkDV4aScuRWlm/R05lr10QiECcqbzkouXM/PGnQuUFStq4HtD7oBo8ln62Gf
+imNB7m+DqXjmXKNk+N1QwQijiiS4H9x3WE62PP+B88uFgm77I7Tc5FsZXE6xibgs
+njQDppWrtN89+sU0AfjNdA0CAwEAAaNQME4wHQYDVR0OBBYEFJULOjNggPFhjRAJ
+Tj7JJjIH8h2mMB8GA1UdIwQYMBaAFJULOjNggPFhjRAJTj7JJjIH8h2mMAwGA1Ud
+EwEB/wQCMAAwDQYJKoZIhvcNAQELBQADggEBAJlJOgGIquWLXeB9jSIdot+WK3sk
+eTrxWnQ/nS9sljQHW59naL3Q3u4Y5BSKmpmsVh2rGtcQySgHjfp49mveqMrk49s/
+cYM3Kxgua3moePjX2yVXqBqbewJluSaFLv5MsF/0Fcs0ig3Ks7xdrzwLQMZ1uA4F
+NSL3QLawz5r4IAqLWU3wx1lkCHK+GcDjjnQKmrxGYXNGB0/T3JzDf6kT7e6jeOyY
+uXApCBoz9rCLi0Do52F8N0B3hp727bboO7dxKkPzF6vL3lbgMncdrwWOeoLWmm2f
+u54HZW2AyOYvdKZN6x9MhjOJl1ykaMyAyAEtAzEkVfGCYTwgz91fgUwxPpA=
+-----END CERTIFICATE-----
+)CERT");
+}
+} // namespace skewer::windows::test
