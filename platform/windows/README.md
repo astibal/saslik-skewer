@@ -332,6 +332,34 @@ Windows routing. No default route was changed.
 An immediate second run reused the saved Windows pairing without a new
 invitation and passed the same probes and cleanup (71 transmitted, 19 received).
 
+### Native routing-generation worker
+
+`runServiceTunnel` composes the adapter, authenticated address setup, paired
+transport and deferred native route plan under the existing guarded supervisor.
+It is suitable for a `RoutingController` runner. The trusted caller supplies an
+already armed capture guard and a route-plan factory, not arbitrary IPC route
+expressions. The plan is constructed only after authenticated addressing and
+transport health. Setup errors remain blocked until Stop. Cleanup joins the
+session, withdraws routes, then destroys address ownership and the adapter;
+unsuccessful route removal retains the guard and retries.
+
+`service_tunnel_live` exercises this composition with the real paired endpoint
+and `RoutingController`. Its fixed `false` capture filter deliberately blocks
+nothing: this is a lifecycle fixture, **not a traffic-isolation test**. It creates
+only `203.0.113.254/32` through the tunnel, never a default route. Run it through
+`tests/paired-tunnel-live.ps1 -ServiceWorker -WinDivertDirectory ...` with the
+usual paired-probe parameters; the script verifies Active, the owned route,
+address/MTU, payload transport, Stop/Idle and cleanup. `--reject-open` appended to
+the executable arguments injects a control-open failure and verifies Blocked
+persists until Stop. This does not yet install the production SCM runtime or
+connect the desktop's pairing handoff to that runtime.
+
+Windows VM verification on 2026-10-28 passed Active -> Stop -> Idle, the owned
+TEST-NET route, three pings and HTTPS through Smithproxy CONNECT (57 transmitted,
+36 received inner packets). Default routes were unchanged and adapter/route
+cleanup passed. The injected control rejection separately remained Blocked until
+Stop and left no fixture adapter or route.
+
 ### Authenticated selection boundary
 
 `authorizePipeSelection()` obtains the client's OS token from a server-side

@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Peer,
     [ValidateRange(0,65535)][int]$ConnectPort = 0,
     [switch]$WholeHostTest,
+    [switch]$ServiceWorker,
     [string]$WinDivertDirectory = '',
     [string]$Management = ''
 )
@@ -23,13 +24,13 @@ function DefaultRoutes {
 $before = DefaultRoutes
 $ownedRoutes = @()
 $guard = $readyEvent = $stopEvent = $null
-if ($WholeHostTest) {
-    if ($ConnectPort) { throw 'Whole-host test must not use an explicit proxy' }
-    $managementIp = $null
-    if (![System.Net.IPAddress]::TryParse($Management, [ref]$managementIp) -or
-        $managementIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
-        throw 'Whole-host test requires numeric IPv4 SSH management address'
+if ($ServiceWorker -and $WholeHostTest) { throw 'Service worker fixture is isolated from whole-host routing' }
+if ($ServiceWorker) {
+    if (Get-NetRoute -DestinationPrefix '203.0.113.254/32' -ErrorAction SilentlyContinue) {
+        throw 'Service fixture route already exists'
     }
+}
+if ($WholeHostTest -or $ServiceWorker) {
     $hashes = @{
         'WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'
         'WinDivert64.sys' = '8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2'
@@ -41,6 +42,14 @@ if ($WholeHostTest) {
     }
     if ((Get-AuthenticodeSignature (Join-Path $WinDivertDirectory 'WinDivert64.sys')).Status -ne 'Valid') {
         throw 'Untrusted WinDivert driver'
+    }
+}
+if ($WholeHostTest) {
+    if ($ConnectPort) { throw 'Whole-host test must not use an explicit proxy' }
+    $managementIp = $null
+    if (![System.Net.IPAddress]::TryParse($Management, [ref]$managementIp) -or
+        $managementIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+        throw 'Whole-host test requires numeric IPv4 SSH management address'
     }
     $testIp = (Resolve-DnsName example.com -Type A -DnsOnly |
         Where-Object Type -EQ A | Select-Object -First 1).IPAddress
@@ -59,7 +68,12 @@ $runId = [guid]::NewGuid().ToString('N')
 $stdout = Join-Path $Directory "paired-$runId.out"
 $stderr = Join-Path $Directory "paired-$runId.err"
 $binary = Join-Path $Directory 'paired_tunnel_live.exe'
-$process = Start-Process -FilePath $binary -ArgumentList @('--live', "`"$WintunDll`"", $Endpoint, $Peer) `
+$arguments = @('--live', "`"$WintunDll`"", $Endpoint, $Peer)
+if ($ServiceWorker) {
+    $binary = Join-Path $Directory 'service_tunnel_live.exe'
+    $arguments += "`"$(Join-Path $WinDivertDirectory 'WinDivert.dll')`""
+}
+$process = Start-Process -FilePath $binary -ArgumentList $arguments `
     -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
 $null = $process.Handle
 $name = "SkewerPaired-$($process.Id)"
@@ -68,7 +82,8 @@ try {
     $metadata = $null
     do {
         $line = Get-Content $stdout | Where-Object { $_.StartsWith('ENDPOINT ') } | Select-Object -Last 1
-        if ($line) { $metadata = $line.Substring(9) | ConvertFrom-Json; break }
+        $active = !$ServiceWorker -or ((Get-Content $stdout) -contains 'ACTIVE service worker')
+        if ($line -and $active) { $metadata = $line.Substring(9) | ConvertFrom-Json; break }
         if ($process.HasExited) { throw 'Probe exited before authenticated endpoint setup' }
         Start-Sleep -Milliseconds 100
     } while ((Get-Date) -lt $deadline)
@@ -83,6 +98,10 @@ try {
         throw 'Invalid tunnel address pair'
     }
     $adapter = Get-NetAdapter -Name $name
+    if ($ServiceWorker) {
+        $route = Get-NetRoute -DestinationPrefix '203.0.113.254/32' -InterfaceIndex $adapter.ifIndex
+        if ($route.NextHop -ne $server.ToString()) { throw 'Service fixture route has incorrect next hop' }
+    }
     $address = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress $client.ToString() -PolicyStore ActiveStore
     $interface = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -PolicyStore ActiveStore
     if ($address.AddressState -ne 'Preferred' -or $address.PrefixLength -ne 30 -or
@@ -170,6 +189,9 @@ try {
     Get-Content $stdout
     Get-Content $stderr
     if ((DefaultRoutes) -ne $before) { throw 'Default routing changed' }
+    if ($ServiceWorker -and (Get-NetRoute -DestinationPrefix '203.0.113.254/32' -ErrorAction SilentlyContinue)) {
+        throw 'Service worker left its owned test route behind'
+    }
     if (Get-NetAdapter -Name $name -IncludeHidden -ErrorAction SilentlyContinue) {
         throw "Paired test adapter remains: $name"
     }
