@@ -27,6 +27,10 @@ try {
         -WinDivertDirectory $DriverDirectory -WintunDll $WintunDll -OwnerSid $owner `
         -Endpoint $Endpoint -Peer $Peer -Name $name
     $created=$true
+    $installed=Get-CimInstance Win32_Service -Filter "Name='$name'"
+    if ($installed.StartMode -ne 'Auto' -or $installed.State -ne 'Running') {
+        throw "Installed routing service is not an automatic idle service"
+    }
     & (Join-Path $Directory 'routed_launch_test.exe') $name
     if ($LASTEXITCODE -ne 0) { throw 'Rejected routed launch executed child code' }
     & $client pair $name $Endpoint

@@ -82,10 +82,16 @@ VerifyDrivers '' $sources
 $exe = Join-Path $root 'skewer-routing-service.exe'
 $command = '"' + $exe + '" --service ' + $Name + ' ' + $OwnerSid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer
 if ($Management) { $command += ' ' + $Management }
-$operation = if ($Upgrade) { "Stop and upgrade $Name, then restart it without routing" } else { "Install demand-start $Name service for $OwnerSid without starting routing" }
+$operation = if ($Upgrade) { "Stop and upgrade $Name, then restart it without routing" } else { "Install automatic idle $Name service for $OwnerSid without starting routing" }
 if (!$PSCmdlet.ShouldProcess($root, $operation)) { return }
 if ($Upgrade) {
     $oldService = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+    $oldStartMode = switch ($oldService.StartMode) {
+        'Auto' { 'Automatic' }
+        'Manual' { 'Manual' }
+        'Disabled' { 'Disabled' }
+        default { throw "Unsupported existing service start mode: $($oldService.StartMode)" }
+    }
     $backup = Join-Path ([IO.Path]::GetTempPath()) ('skewer-upgrade-' + [Guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $backup
     try {
@@ -97,21 +103,27 @@ if ($Upgrade) {
         try {
             foreach ($file in $sources.Keys) { CopyRuntimeFile $sources[$file] (Join-Path $root $file) }
             VerifyDrivers $root $sources
-            $changed = Invoke-CimMethod -InputObject $oldService -MethodName Change -Arguments @{ PathName=$command }
+            $changed = Invoke-CimMethod -InputObject $oldService -MethodName Change -Arguments @{
+                PathName=$command
+                StartMode='Automatic'
+            }
             if ($changed.ReturnValue -ne 0) { throw "Service configuration update failed ($($changed.ReturnValue))" }
             Start-Service $Name
         } catch {
             foreach ($file in $files + @('wintun.dll','WinDivert.dll','WinDivert64.sys')) {
                 CopyRuntimeFile (Join-Path $backup $file) (Join-Path $root $file)
             }
-            $restored = Invoke-CimMethod -InputObject $oldService -MethodName Change -Arguments @{ PathName=$oldService.PathName }
+            $restored = Invoke-CimMethod -InputObject $oldService -MethodName Change -Arguments @{
+                PathName=$oldService.PathName
+                StartMode=$oldStartMode
+            }
             if ($restored.ReturnValue -eq 0) { Start-Service $Name }
             throw
         }
     } finally {
         Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
     }
-    [pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Manual'; Updated=$true }
+    [pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Automatic'; Updated=$true }
     return
 }
 $null = New-Item -ItemType Directory -Path $root
@@ -123,9 +135,9 @@ foreach ($file in $sources.Keys) { Copy-Item -LiteralPath $sources[$file] -Desti
 VerifyDrivers $root $sources
 $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
     Name=$Name; DisplayName='Skewer routing service'; PathName=$command; ServiceType=[byte]16
-    ErrorControl=[byte]1; StartMode='Manual'; StartName='LocalSystem'
+    ErrorControl=[byte]1; StartMode='Automatic'; StartName='LocalSystem'
 }
 if ($result.ReturnValue -ne 0) { throw "Service creation failed ($($result.ReturnValue)); files retained at $root" }
 # SCM RUNNING is not routing Active. Pairing and explicit Start are still required.
 Start-Service $Name
-[pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Manual' }
+[pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Automatic' }

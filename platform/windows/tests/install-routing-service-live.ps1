@@ -19,7 +19,7 @@ try {
     }
     & $installer @arguments
     $service = Get-CimInstance Win32_Service | Where-Object Name -eq $name
-    if ($service.StartMode -ne 'Manual' -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Running') {
+    if ($service.StartMode -ne 'Auto' -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Running') {
         throw 'Unexpected service installation state'
     }
     $control = Join-Path $root 'skewer-routing-control.exe'
@@ -41,7 +41,8 @@ try {
     if (!$rejected) { throw 'Installer overwrote an existing installation' }
     & $installer @arguments -Upgrade
     $updated = Get-CimInstance Win32_Service | Where-Object Name -eq $name
-    if ($updated.State -ne 'Running' -or (& $control status $name | ConvertFrom-Json).phase -ne 0) {
+    if ($updated.StartMode -ne 'Auto' -or $updated.State -ne 'Running' -or
+        (& $control status $name | ConvertFrom-Json).phase -ne 0) {
         throw 'Explicit upgrade did not restart in Idle'
     }
     Write-Output 'PASS: dry-run, protected installation, overwrite rejection and explicit Idle upgrade'

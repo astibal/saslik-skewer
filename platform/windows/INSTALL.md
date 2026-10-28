@@ -48,8 +48,9 @@ from an already verified cross-build. It stages an allowlisted file set rather
 than archiving a development directory, so test logs, pairing state and local
 credentials cannot enter the artifact accidentally.
 
-The LocalSystem service uses Manual startup. Installation starts its IPC server
-in **Idle**, not routing. In the GUI Routing tab, send the stored pairing and
+The LocalSystem service starts automatically with Windows in **Idle**, never
+routing. This keeps authenticated IPC available after reboot without silently
+changing network policy. In the GUI Routing tab, send the stored pairing and
 explicitly start routing. Closing the GUI does not stop the service or routing.
 Credentials are handed over through authenticated IPC and remain memory-only in
 the service. A service restart requires sending pairing again.
