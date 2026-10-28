@@ -86,7 +86,7 @@ void throughService(const std::wstring& executable, const std::vector<std::wstri
     DWORD exit{};
     require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0,
             "Service-routed curl HTTPS failed");
-    QTextStream(stdout) << "PASS: independently launched curl HTTPS through selected SCM service\n";
+    QTextStream(stdout) << "PASS: independently launched selected process through SCM service\n";
 }
 } // namespace
 
@@ -97,9 +97,11 @@ int main(int argc, char** argv) {
     app.setOrganizationName("Saslik");
     app.setApplicationName("Skewer");
     const auto args = app.arguments();
-    if (args.size() != 5 && args.size() != 6) {
+    if (args.size() < 5 || args.size() > 7 ||
+        (args.size() == 7 && args[6] != "--udp")) {
         QTextStream(stderr)
-            << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST [SERVICE]\n";
+            << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
+               "[SERVICE [--udp]|--udp]\n";
         return 2;
     }
     try {
@@ -119,24 +121,29 @@ int main(int argc, char** argv) {
         } cleanup;
         Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         require(bool(stop), "Create stop event");
+        const bool udp_probe = (args.size() == 6 && args[5] == "--udp") || args.size() == 7;
         wchar_t system[MAX_PATH]{};
         const auto length = GetSystemDirectoryW(system, MAX_PATH);
         require(length && length < MAX_PATH, "Resolve system directory");
-        const auto executable = std::wstring(system) + L"\\curl.exe";
-        if (args.size() == 6) {
-            throughService(executable,
-                           {L"--noproxy", L"*", L"-4", L"-k", L"--fail", L"--silent", L"--show-error",
-                            L"--max-time", L"20", L"--output", L"NUL", L"--resolve",
-                            (args[4] + ":443:" + args[3]).toStdWString(),
-                            ("https://" + args[4] + "/").toStdWString()},
-                           args[5].toStdWString());
+        const auto executable = std::wstring(system) + (udp_probe ? L"\\nslookup.exe" : L"\\curl.exe");
+        if ((args.size() == 6 && !udp_probe) || args.size() == 7) {
+            const auto child_arguments = udp_probe
+                ? std::vector<std::wstring>{args[4].toStdWString(), args[3].toStdWString()}
+                : std::vector<std::wstring>{L"--noproxy", L"*", L"-4", L"-k", L"--fail",
+                                            L"--silent", L"--show-error", L"--max-time", L"20",
+                                            L"--output", L"NUL", L"--resolve",
+                                            (args[4] + ":443:" + args[3]).toStdWString(),
+                                            ("https://" + args[4] + "/").toStdWString()};
+            throughService(executable, child_arguments, args[5].toStdWString());
             return 0;
         }
-        auto command =
-            (QString::fromStdWString(L"\"" + executable + L"\"") +
-             " --noproxy * -4 -k --fail --silent --show-error --max-time 20 --output NUL --resolve " +
-             args[4] + ":443:" + args[3] + " https://" + args[4] + "/")
-                .toStdWString();
+        auto command = udp_probe
+            ? (QString::fromStdWString(L"\"" + executable + L"\"") + " " + args[4] + " " + args[3])
+                  .toStdWString()
+            : (QString::fromStdWString(L"\"" + executable + L"\"") +
+               " --noproxy * -4 -k --fail --silent --show-error --max-time 20 --output NUL --resolve " +
+               args[4] + ":443:" + args[3] + " https://" + args[4] + "/")
+                  .toStdWString();
         Child child;
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
@@ -146,8 +153,10 @@ int main(int argc, char** argv) {
                 "Create suspended curl");
         const auto identity = processKey(child.process.hProcess, child.process.dwProcessId);
         const auto dll = QDir::toNativeSeparators(app.applicationDirPath() + "/WinDivert.dll").toStdWString();
-        traffic::PacketCapture capture(dll, "outbound and ip and tcp and ip.DstAddr == " +
-                                                args[3].toStdString() + " and tcp.DstPort == 443");
+        traffic::PacketCapture capture(
+            dll, "outbound and ip and " + std::string(udp_probe ? "udp" : "tcp") +
+                     " and ip.DstAddr == " + args[3].toStdString() +
+                     (udp_probe ? " and udp.DstPort == 53" : " and tcp.DstPort == 443"));
         struct StopBeforeCaptureRelease {
             Child& child;
             ~StopBeforeCaptureRelease() { child.stop(); }
@@ -193,7 +202,8 @@ int main(int argc, char** argv) {
                     counters.rx,
                 "Selected curl did not complete through the tunnel");
         QTextStream(stdout)
-            << "PASS: separate selected curl HTTPS via shared paired session (trust unchecked)"
+            << "PASS: separate selected " << (udp_probe ? "DNS UDP" : "curl HTTPS")
+            << " via shared paired session" << (udp_probe ? "" : " (trust unchecked)")
             << " selected=" << selected << " direct=" << direct << " tx=" << counters.tx
             << " rx=" << counters.rx << '\n';
         return 0;
