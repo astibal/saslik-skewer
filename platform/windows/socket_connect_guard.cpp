@@ -1,5 +1,6 @@
 #include "socket_connect_guard.hpp"
 #include "windivert_api.hpp"
+#include <ws2tcpip.h>
 #include <bit>
 #include <vector>
 #include <system_error>
@@ -19,7 +20,13 @@ template <typename T> T resolve(HMODULE module, const char* name) {
 } // namespace
 class SocketConnectGuard::Impl final {
 public:
-    Impl(const std::wstring& dll, const ProcessTarget& target, Mode mode) {
+    Impl(const std::wstring& dll, const ProcessTarget& target, Mode mode, const std::string& control_peer,
+         std::uint16_t control_port) {
+        IN_ADDR control_address{};
+        if (control_peer.empty() != (control_port == 0) ||
+            (!control_peer.empty() && InetPtonA(AF_INET, control_peer.c_str(), &control_address) != 1)) {
+            throw std::invalid_argument("Invalid socket guard control endpoint");
+        }
         const bool drive =
             !dll.empty() && ((dll[0] >= L'A' && dll[0] <= L'Z') || (dll[0] >= L'a' && dll[0] <= L'z'));
         if (!drive || dll.size() < 4 || dll[1] != L':' || dll[2] != L'\\' ||
@@ -43,11 +50,15 @@ public:
         // SOCKET ipv6 predicates did not block IPv6 TCP in the 2.2.2 VM
         // regression. Match the normalized endpoint outside the IPv4-mapped
         // range instead; verify both rejection and preserved IPv4 TCP in tests.
-        const std::vector<std::string> filters =
+        std::vector<std::string> filters =
             mode == Mode::All ? std::vector<std::string>{base}
                               : std::vector<std::string>{
                                     base + " and (remoteAddr < ::ffff:0:0 or remoteAddr > ::ffff:ffff:ffff)",
                                     base + " and protocol != TCP"};
+        if (!control_peer.empty()) {
+            filters.push_back(base + " and protocol == TCP and remoteAddr == " + control_peer +
+                              " and remotePort == " + std::to_string(control_port));
+        }
         handles_.reserve(filters.size());
         try {
             for (const auto& filter : filters) {
@@ -79,7 +90,8 @@ private:
     decltype(&WinDivertClose) close_{};
     std::vector<HANDLE> handles_;
 };
-SocketConnectGuard::SocketConnectGuard(const std::wstring& dll, const ProcessTarget& target, Mode mode)
-    : impl_(std::make_unique<Impl>(dll, target, mode)) {}
+SocketConnectGuard::SocketConnectGuard(const std::wstring& dll, const ProcessTarget& target, Mode mode,
+                                       std::string control_peer, std::uint16_t control_port)
+    : impl_(std::make_unique<Impl>(dll, target, mode, control_peer, control_port)) {}
 SocketConnectGuard::~SocketConnectGuard() = default;
 } // namespace skewer::windows::traffic

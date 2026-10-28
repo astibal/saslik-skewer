@@ -448,9 +448,8 @@ Services without an installed selected runner reject the operation.
 
 The native SCM fixture verifies a selected-start lifetime, stale process birth,
 duplicate start, stale generation and explicit Stop. That fixture deliberately
-reports Blocked and changes no traffic policy. The installed application still
-has no selected runner wired in; this IPC test is not proof of production
-per-application routing.
+reports Blocked and changes no traffic policy. This synthetic IPC test alone
+is not proof of production per-application routing.
 
 `SocketConnectGuard` is the reusable form of the fresh-attempt blocker. It
 accepts only a pinned, already-authorized process and one of two fixed policies:
@@ -471,3 +470,35 @@ yet attributed to a specific upstream defect. Do not substitute that predicate
 without rerunning the matrix. IPv4-mapped destinations retain the IPv4 path.
 The independent curl fixture also installs this unsupported-protocol guard
 before resuming its child, and terminates the child before releasing the guard.
+
+## Experimental selected process through the installed service
+
+The installed SCM service now registers a selected runner. The explicit CLI
+command `start-process SERVICE GENERATION PID BIRTH` starts one authenticated,
+pinned process; it never substitutes whole-host routing. The service owns the
+process handle, capture, guards and paired session after the requesting IPC
+connection closes. GUI application controls are not enabled by this milestone.
+
+An all-CONNECT startup guard precedes pairing. Active is published only after
+authenticated transport readiness, packet-path checks and removal of that
+startup guard. Separate guards continue rejecting new IPv6/non-TCP attempts and
+connections to the control endpoint. Only that fixed endpoint bypasses broad
+IPv4 TCP capture so control renewal/close cannot deadlock on its own worker.
+The selected process cannot use that exemption for new direct connections.
+On tunnel failure the service retains capture and independently classifies
+unrelated Direct traffic until explicit Stop or the selected process exits.
+
+`tests/selected-service-live.ps1` installs a uniquely named disposable service,
+hands it existing user pairing, and launches system curl suspended. The fixture
+passes PID/birth through the real IPC, disconnects, waits for Active and resumes
+curl. HTTPS through Saslik passed in the Windows VM; route and DNS snapshots
+remained unchanged, and the fixture removed its own service. The native packet
+regression also verifies that the control-endpoint socket guard denies exactly
+its configured port while another IPv4 TCP port remains usable.
+
+This remains fresh IPv4 TCP for one process, not full application routing.
+Existing sockets, descendants, shared DNS and UDP transport are not covered.
+The HTTPS fixture supplies IPv4 resolution and disables certificate validation
+for that request only. Attribution failures hold packets rather than guessing
+Direct, so unrelated traffic can stall when attribution is unavailable. Service
+exit/crash removes interception, as documented for the lab-only WinDivert model.

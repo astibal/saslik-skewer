@@ -10,7 +10,8 @@ namespace skewer::windows::traffic {
 class SocketConnectGuard final {
 public:
     enum class Mode { All, UnsupportedForIpv4Tcp };
-    SocketConnectGuard(const std::wstring& dll, const ProcessTarget& target, Mode mode);
+    SocketConnectGuard(const std::wstring& dll, const ProcessTarget& target, Mode mode,
+                       std::string control_peer = {}, std::uint16_t control_port = 0);
     ~SocketConnectGuard();
     SocketConnectGuard(const SocketConnectGuard&) = delete;
     SocketConnectGuard& operator=(const SocketConnectGuard&) = delete;

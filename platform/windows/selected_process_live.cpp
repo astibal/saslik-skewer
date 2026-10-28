@@ -1,6 +1,7 @@
 #include "selected_session_packets.hpp"
 #include "tcp_selection_resolver.hpp"
 #include "socket_connect_guard.hpp"
+#include "routing_client.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QTextStream>
@@ -57,6 +58,52 @@ private:
     HANDLE stop_;
     bool resumed_{};
 };
+void throughService(Child& child, ProcessKey identity, const std::wstring& name) {
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(bool(cancel), "Create service fixture cancellation");
+    const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
+        auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+        return exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
+    };
+    const auto initial = command(RoutingCommand::Status, 0);
+    require(initial.phase == RoutingPhase::Idle, "Fixture service is not idle");
+    auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+    const auto started =
+        exchangeSelectedRouting(pipe->get(), name, identity, initial.generation, cancel.get(), 3000);
+    pipe.reset();
+    require(started.result == RoutingResult::Ok, "Selected service start rejected");
+    struct Release {
+        Child& child;
+        std::function<void()> stop;
+        ~Release() {
+            child.stop();
+            try {
+                stop();
+            } catch (...) {
+            }
+        }
+    } release{child, [&] { command(RoutingCommand::Stop, started.generation); }};
+    const auto deadline = GetTickCount64() + 20000;
+    bool active = false;
+    while (GetTickCount64() < deadline) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.generation == started.generation && state.phase != RoutingPhase::Failed &&
+                    state.phase != RoutingPhase::Blocked,
+                "Selected service failed before readiness");
+        if (state.phase == RoutingPhase::Active) {
+            active = true;
+            break;
+        }
+        Sleep(100);
+    }
+    require(active && ResumeThread(child.process.hThread) == 1, "Selected service did not become active");
+    require(WaitForSingleObject(child.process.hProcess, 25000) == WAIT_OBJECT_0,
+            "Service-routed curl timed out");
+    DWORD exit{};
+    require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0,
+            "Service-routed curl HTTPS failed");
+    QTextStream(stdout) << "PASS: independently launched curl HTTPS through selected SCM service\n";
+}
 } // namespace
 
 // Elevated, bounded development fixture: real independent curl process, pinned
@@ -66,8 +113,9 @@ int main(int argc, char** argv) {
     app.setOrganizationName("Saslik");
     app.setApplicationName("Skewer");
     const auto args = app.arguments();
-    if (args.size() != 5) {
-        QTextStream(stderr) << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST\n";
+    if (args.size() != 5 && args.size() != 6) {
+        QTextStream(stderr)
+            << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST [SERVICE]\n";
         return 2;
     }
     try {
@@ -104,6 +152,10 @@ int main(int argc, char** argv) {
                                &child.process),
                 "Create suspended curl");
         const auto identity = processKey(child.process.hProcess, child.process.dwProcessId);
+        if (args.size() == 6) {
+            throughService(child, identity, args[5].toStdWString());
+            return 0;
+        }
         const auto dll = QDir::toNativeSeparators(app.applicationDirPath() + "/WinDivert.dll").toStdWString();
         traffic::PacketCapture capture(dll, "outbound and ip and tcp and ip.DstAddr == " +
                                                 args[3].toStdString() + " and tcp.DstPort == 443");
@@ -113,8 +165,8 @@ int main(int argc, char** argv) {
         };
         traffic::TcpSelectionResolver resolver(dll, std::make_unique<ProcessTarget>(identity));
         ProcessTarget pinned(identity);
-        traffic::SocketConnectGuard unsupported(
-            dll, pinned, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp);
+        traffic::SocketConnectGuard unsupported(dll, pinned,
+                                                traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp);
         StopBeforeCaptureRelease stopChild{child};
         std::atomic_bool ready{};
         std::uint64_t selected{}, direct{};

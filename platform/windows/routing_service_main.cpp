@@ -1,6 +1,7 @@
 #include "routing_service.hpp"
 #include "service_host.hpp"
 #include "whole_host_policy.hpp"
+#include "selected_service_tunnel.hpp"
 #include <QCoreApplication>
 #include <QDir>
 #include <QTextStream>
@@ -57,6 +58,17 @@ int main(int argc, char** argv) {
                     if (result.worker.unexpected_session_exit) {
                         throw std::runtime_error("Tunnel exited without Stop");
                     }
+                },
+                [&](const PairingHandoff& pairing, std::unique_ptr<ProcessTarget> target,
+                    HANDLE cancel, RoutingSignals& state) {
+                    if (QUrl(QString::fromStdString(pairing.endpoint)) != endpoint) {
+                        throw std::invalid_argument("Pairing does not match the configured service endpoint");
+                    }
+                    PskTunnelControl control(
+                        endpoint, peer, QByteArray::fromStdString(pairing.identity),
+                        QByteArray(reinterpret_cast<const char*>(pairing.key.data()), pairing.key.size()));
+                    runSelectedServiceTunnel(divert, std::move(target), control, peer,
+                                             endpoint.port(), cancel, state);
                 });
             return 0;
         });

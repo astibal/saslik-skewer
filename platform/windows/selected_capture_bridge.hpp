@@ -27,6 +27,7 @@ public:
     // Retire this tunnel epoch without releasing interception or unrelated
     // Direct traffic. Recovery requires a fresh device and bridge.
     void blockTunnel();
+    bool tunnelBlocked() const { return stopped_ || tunnel_blocked_; }
     void stop();
 
 private:

@@ -175,6 +175,21 @@ bool readable(SOCKET socket, long milliseconds) {
 void socketProtocolGuard(const std::wstring& path) {
     using namespace skewer::windows;
     ProcessTarget target(processKey(GetCurrentProcess(), GetCurrentProcessId()));
+    {
+        Socket control(AF_INET, true), other(AF_INET, true), blocked(AF_INET, true), allowed(AF_INET, true);
+        const auto controlAddress = bindLoopback(control.value, AF_INET);
+        const auto otherAddress = bindLoopback(other.value, AF_INET);
+        require(listen(control.value, 1) == 0 && listen(other.value, 1) == 0,
+                "Listen for control endpoint guard");
+        traffic::SocketConnectGuard guard(path, target,
+            traffic::SocketConnectGuard::Mode::UnsupportedForIpv4Tcp, "127.0.0.1", port(controlAddress));
+        require(connect(blocked.value, reinterpret_cast<const sockaddr*>(&controlAddress),
+                        sizeof(sockaddr_in)) == SOCKET_ERROR,
+                "Selected process escaped through control endpoint exemption");
+        require(connect(allowed.value, reinterpret_cast<const sockaddr*>(&otherAddress),
+                        sizeof(sockaddr_in)) == 0,
+                "Control endpoint guard blocked another port");
+    }
     for (int mode : {2, 1, 0}) {
         for (int family : {AF_INET, AF_INET6}) {
             for (bool tcp : {false, true}) {
