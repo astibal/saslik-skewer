@@ -1,12 +1,20 @@
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type @'
+using System.Runtime.InteropServices;
+public static class SkewerMouse {
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
+}
+'@
 $directory='C:\SkewerDev\skewer-windows-app'
 $service=(Get-Content 'C:\SkewerDev\routed-service-name.txt' -Raw).Trim()
 $log=Join-Path $env:USERPROFILE 'skewer-routed-application-smoke.log'
 $settings='HKCU:\Software\Saslik\Skewer\windows'
 $old=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
 $launchedPid=0
+$manualPid=0
 function FindWindow {
     $condition=[System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::NameProperty, 'Skewer')
@@ -88,7 +96,73 @@ try {
             Out-File $log -Append
         throw 'Reopened GUI did not recover authoritative selected routing state'
     }
-    "PASS: GUI routed PID $launchedPid only after Active; closing and reopening retained generation $generation and restored Routed/Release" |
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while ($reply.phase -notin @(0,5) -and (Get-Date) -lt $deadline)
+    if ($reply.phase -notin @(0,5) -or $reply.scope -ne 0) {
+        throw 'Release did not retire selected routing'
+    }
+    if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) {
+        throw 'Release terminated the selected application'
+    }
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 200
+        $processCell=FindNamed $window 'skewer.exe'
+    } while (!$processCell -and (Get-Date) -lt $deadline)
+    if (!$processCell) {
+        "Application tree after Release:`n$(WindowText $window)" | Out-File $log -Append
+        throw 'Skewer process is missing from its own application tree'
+    }
+    $candidate=$processCell
+    $selected=$false
+    for ($i=0; $i -lt 4 -and $candidate; ++$i) {
+        try {
+            $candidate.GetCurrentPattern(
+                [System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+            $selected=$true
+            break
+        } catch {
+            $candidate=[System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($candidate)
+        }
+    }
+    if (!$selected) { throw 'Application tree row does not expose selection automation' }
+    $bounds=$processCell.Current.BoundingRectangle
+    if ($bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'Selected application row is not visible' }
+    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $attach=FindNamed $window 'Attach to Skewer'
+    } while ((!$attach -or !$attach.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$attach -or !$attach.Current.IsEnabled) { throw 'Attach did not enable for selected process' }
+    $attach.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (($reply.phase -ne 2 -or $reply.scope -ne 2) -and (Get-Date) -lt $deadline)
+    if ($reply.phase -ne 2 -or $reply.scope -ne 2 -or !$reply.selected.pid) {
+        throw 'Manual Attach did not activate routing for the selected process'
+    }
+    $manualPid=[int]$reply.selected.pid
+    $release=FindNamed $window 'Release'
+    if (!$release -or !$release.Current.IsEnabled) { throw 'Manual Attach did not enable Release' }
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while ($reply.phase -notin @(0,5) -and (Get-Date) -lt $deadline)
+    if ($reply.scope -ne 0 -or !(Get-Process -Id $manualPid -ErrorAction SilentlyContinue)) {
+        throw 'Release after manual Attach did not preserve the application'
+    }
+    "PASS: routed launch, activation recovery, Release and manual Attach all retained the selected application" |
         Out-File $log -Append
     'Exit: 0' | Out-File $log -Append
 } catch {

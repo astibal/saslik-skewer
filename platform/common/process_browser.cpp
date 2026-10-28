@@ -42,6 +42,29 @@ QStringList ProcessBrowser::launchSuggestions() const {
     return paths;
 }
 
+std::optional<ProcessRecord> ProcessBrowser::selectedProcess() const {
+    QModelIndex index;
+    const auto selected_rows = tree_->selectionModel()->selectedRows(0);
+    if (!selected_rows.isEmpty()) {
+        index = selected_rows.front();
+    } else {
+        const auto selected_indexes = tree_->selectionModel()->selectedIndexes();
+        if (!selected_indexes.isEmpty()) {
+            index = selected_indexes.front().siblingAtColumn(0);
+        } else {
+            index = tree_->currentIndex();
+        }
+    }
+    if (!index.isValid()) {
+        return std::nullopt;
+    }
+    const auto identity = index.siblingAtColumn(0).data(IdentityRole).toString();
+    const auto found = std::find_if(records_.cbegin(), records_.cend(), [&](const auto& record) {
+        return record.identity() == identity;
+    });
+    return found == records_.cend() ? std::nullopt : std::optional<ProcessRecord>(*found);
+}
+
 void ProcessBrowser::setFilterText(const QString& text) {
     filter_ = text;
     std::function<bool(const QModelIndex&)> visit = [&](const QModelIndex& parent) {

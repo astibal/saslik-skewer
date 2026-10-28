@@ -23,6 +23,7 @@
 #include <QLocalSocket>
 #include <QCryptographicHash>
 #include <QMessageBox>
+#include <QItemSelectionModel>
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
 #include "routing_panel.hpp"
@@ -231,7 +232,8 @@ private:
 
         auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
                                          "releases it only after routing is ready. "
-                                         "Existing instances, descendants, UDP and IPv6 are not routed yet. "
+                                         "Attach can move a running process, but its existing sockets keep "
+                                         "their old route. Descendants, UDP and IPv6 are not routed yet. "
                                          "Whole-host routing is controlled on the Routing tab."),
                                       page_);
         disclaimer->setWordWrap(true);
@@ -241,10 +243,16 @@ private:
         connect(page_->search, &QLineEdit::textChanged, browser_, &skewer::ui::ProcessBrowser::setFilterText);
         page_->action_status->setText(tr("Checking authoritative routing state…"));
         page_->attach->setEnabled(false);
-        page_->attach->setToolTip(tr("Attaching an already running process is not implemented yet."));
+        page_->attach->setToolTip(
+            tr("Route new IPv4 TCP connections from the selected running process."));
         page_->release->setEnabled(false);
         page_->release->setToolTip(tr("Stop the currently selected-process routing session."));
 #ifdef SKEWER_WINDOWS_PAIRING
+        connect(browser_->tree()->selectionModel(), &QItemSelectionModel::currentChanged, this,
+                [this] { updateApplicationActions(); });
+        connect(browser_->tree()->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+                [this] { updateApplicationActions(); });
+        connect(page_->attach, &QPushButton::clicked, this, [this] { attachSelected(); });
         connect(page_->release, &QPushButton::clicked, this, [this] {
             page_->release->setEnabled(false);
             page_->action_status->setText(tr("Stopping selected-process routing…"));
@@ -370,6 +378,8 @@ private:
 
 #ifdef SKEWER_WINDOWS_PAIRING
     void routingStateChanged(bool known, const skewer::windows::RoutingReply& state) {
+        routing_known_ = known;
+        routing_state_ = state;
         const bool selected = known && state.scope == skewer::windows::RoutingScope::SelectedProcess &&
                               state.selected.has_value();
         const bool retained = state.phase == skewer::windows::RoutingPhase::Starting ||
@@ -381,8 +391,7 @@ private:
                                         QString::number(state.selected->created)
                                   : QString{};
         browser_->setRoutingState(known, selected && retained ? identity : QString{});
-        page_->release->setEnabled(selected && retained &&
-                                   state.phase != skewer::windows::RoutingPhase::Stopping);
+        updateApplicationActions();
         if (!known) {
             page_->action_status->setText(tr("Routing service unavailable; process state is unknown."));
         } else if (selected && retained) {
@@ -399,6 +408,32 @@ private:
         } else {
             page_->action_status->setText(tr("No process is individually routed."));
         }
+    }
+
+    void updateApplicationActions() {
+        const bool idle = routing_known_ &&
+                          (routing_state_.phase == skewer::windows::RoutingPhase::Idle ||
+                           routing_state_.phase == skewer::windows::RoutingPhase::Failed);
+        const bool selected = routing_known_ &&
+                              routing_state_.scope == skewer::windows::RoutingScope::SelectedProcess &&
+                              routing_state_.selected.has_value();
+        const bool retained = routing_state_.phase == skewer::windows::RoutingPhase::Starting ||
+                              routing_state_.phase == skewer::windows::RoutingPhase::Active ||
+                              routing_state_.phase == skewer::windows::RoutingPhase::Blocked;
+        page_->attach->setEnabled(idle && browser_->selectedProcess().has_value());
+        page_->release->setEnabled(selected && retained);
+    }
+
+    void attachSelected() {
+        const auto process = browser_->selectedProcess();
+        if (!process || !page_->attach->isEnabled()) {
+            return;
+        }
+        page_->attach->setEnabled(false);
+        page_->action_status->setText(
+            tr("Attaching PID %1. Existing sockets remain on their previous route…").arg(process->pid));
+        routing_panel_->startSelected(
+            {static_cast<DWORD>(process->pid), static_cast<std::uint64_t>(process->created)});
     }
 #endif
 
@@ -457,6 +492,8 @@ private:
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};
     skewer::windows::RoutingPanel* routing_panel_{};
+    skewer::windows::RoutingReply routing_state_{};
+    bool routing_known_{};
 #endif
     skewer::ui::LaunchCatalog* suggestions_{};
     QLabel* launch_status_{};

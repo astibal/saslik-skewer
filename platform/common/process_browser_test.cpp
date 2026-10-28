@@ -47,6 +47,8 @@ int main(int argc, char** argv) {
         auto index = apps->child(0)->index();
         browser.tree()->expand(index);
         browser.tree()->setCurrentIndex(index);
+        require(browser.selectedProcess() && browser.selectedProcess()->pid == 2,
+                "Selected process identity was not resolved");
         QPersistentModelIndex stable(index);
         QSignalSpy removed(browser.model(), &QAbstractItemModel::rowsRemoved);
         browser.setProcesses(records);
@@ -59,6 +61,7 @@ int main(int argc, char** argv) {
         records[1].created = 25;
         browser.setProcesses(records);
         require(!browser.tree()->currentIndex().isValid(), "Reused PID inherited old selection");
+        require(!browser.selectedProcess(), "Invalid selection resolved to a process");
         browser.setProcesses({{10, 10, 11, "cycle-a", "a", {}},
                               {11, 10, 10, "cycle-b", "b", {}},
                               {12, 5, 10, "old-child", "c", {}},

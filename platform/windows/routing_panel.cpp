@@ -130,6 +130,21 @@ void RoutingPanel::setServiceName(const QString& service) {
         service_->setText(normalized);
     }
 }
+void RoutingPanel::startSelected(ProcessKey process) {
+    if (!process.pid || !process.created) {
+        return;
+    }
+    Request request{4, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,
+                    process, epoch_};
+    action_busy_ = true;
+    updateControls();
+    status_->setText(tr("Starting selected-process routing…"));
+    if (watcher_.isRunning()) {
+        pending_ = request;
+    } else {
+        dispatch(std::move(request));
+    }
+}
 void RoutingPanel::stopCurrent() { submit(2); }
 RoutingPanel::~RoutingPanel() {
     timer_.stop();
@@ -150,7 +165,7 @@ void RoutingPanel::updateControls() {
 }
 void RoutingPanel::submit(int action) {
     Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(), state_.generation,
-                    epoch_};
+                    std::nullopt, epoch_};
     if (action) {
         action_busy_ = true;
         updateControls();
@@ -175,10 +190,16 @@ void RoutingPanel::dispatch(Request request) {
                 sendStoredPairing(pipe->get(), name, QUrl(request.endpoint), cancel->get(), 2000);
             }
             auto pipe = connectRoutingService(name, false, cancel->get(), 1000);
-            const auto command =
-                request.action == 3 ? RoutingCommand::Status : static_cast<RoutingCommand>(request.action);
-            result.reply =
-                exchangeRoutingCommand(pipe->get(), name, command, request.generation, cancel->get(), 2000);
+            if (request.selected) {
+                result.reply = exchangeSelectedRouting(pipe->get(), name, *request.selected,
+                                                       request.generation, cancel->get(), 2000);
+            } else {
+                const auto command = request.action == 3
+                                         ? RoutingCommand::Status
+                                         : static_cast<RoutingCommand>(request.action);
+                result.reply = exchangeRoutingCommand(pipe->get(), name, command, request.generation,
+                                                      cancel->get(), 2000);
+            }
         } catch (const std::exception& error) {
             result.error = QString::fromUtf8(error.what());
         }

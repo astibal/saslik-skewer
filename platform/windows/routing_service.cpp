@@ -17,7 +17,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
     RoutingScope scope{RoutingScope::None};
     std::optional<ProcessKey> selected_identity;
     const auto describe = [&](RoutingReply state) {
-        if (state.phase == RoutingPhase::Idle) {
+        if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) {
             scope = RoutingScope::None;
             selected_identity.reset();
         }

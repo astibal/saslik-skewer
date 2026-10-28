@@ -544,6 +544,11 @@ cleanup; it never sends Stop for an already active generation or terminates a
 released process. The page states the current single-process/IPv4-TCP limits
 instead of presenting this milestone as application-tree parity.
 
+The page can also Attach one already running process selected in the process
+tree and Release the service-owned generation without terminating that process.
+PID plus creation time remains the authorization boundary. Existing sockets
+keep their previous route; only fresh supported connections are intercepted.
+
 The LocalSystem routing service publishes only
 `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE` on its own process object to
 the administrator-configured owner SID, before creating IPC pipes. This is
@@ -555,7 +560,9 @@ The added ACE grants no terminate, VM, token, handle-duplication or DACL rights.
 
 The interactive VM fixture sets the disposable service name in user QSettings,
 invokes `Launch through Skewer` through UI Automation and waits for the visible
-PID/generation result. It then closes the GUI, verifies both the child and the
-same Active service generation remain, and terminates only its own test child.
-The fixture restores the prior setting, reopens the GUI, removes its scheduled
-test task, and the outer test deletes its uniquely named service.
+PID/generation result. It verifies tray close and activation retain the child,
+generation, Routed badge and Release action. It then releases that generation,
+selects a running process in the real Qt tree, exercises manual Attach and
+Release, and verifies neither action terminates the selected application. The
+fixture restores the prior setting, removes its scheduled task, and the outer
+test deletes its uniquely named service.

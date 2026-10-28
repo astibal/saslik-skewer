@@ -17,6 +17,7 @@ public:
     ~RoutingPanel() override;
     void setStateCallback(StateCallback callback);
     void setServiceName(const QString& service);
+    void startSelected(ProcessKey process);
     void stopCurrent();
 
 private:
@@ -24,6 +25,7 @@ private:
         int action{};
         QString service, endpoint;
         std::uint64_t generation{};
+        std::optional<ProcessKey> selected;
         unsigned epoch{};
     };
     struct Result {

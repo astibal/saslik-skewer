@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QWidget>
 #include <QSet>
+#include <optional>
 
 namespace skewer::ui {
 
@@ -26,6 +27,7 @@ public:
     void setRoutingState(bool available, const QString& routed_identity = {});
     void setFilterText(const QString& text);
     QStringList launchSuggestions() const;
+    std::optional<ProcessRecord> selectedProcess() const;
     QTreeView* tree() const { return tree_; }
     QStandardItemModel* model() { return &model_; }
 
