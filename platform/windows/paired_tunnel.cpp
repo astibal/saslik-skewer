@@ -47,7 +47,8 @@ void PskTunnelControl::close(const Tuntom::Endpoint& endpoint) {
 
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,
                                      const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready,
-                                     TunnelRoutePolicy* routes, TunnelPacketWorker* packets) {
+                                     TunnelRoutePolicy* routes, TunnelPacketWorker* packets,
+                                     std::atomic_bool* blocked) {
     ready.store(false);
     validatePeer(numeric_peer);
     if (cancelled(stop)) {
@@ -157,6 +158,7 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
         // Route installation may take time. Never publish stale lease health.
         now = TunnelPump::Clock::now();
         ready.store(healthy && !cancelled(stop) && lease.valid(now) && pump.healthy(now));
+        if (blocked && ready.load()) blocked->store(false);
         if (packets && ready.load()) {
             packets->poll();
             // Packet processing may query the OS. Never keep stale readiness

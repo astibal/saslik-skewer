@@ -24,6 +24,8 @@ Transport milestones verified independently of the remaining service/UI gates:
   service and tunnel control traffic from interception.
 - [x] Keep selected traffic blocked during tunnel loss while the service lives;
   verify readiness before resuming forwarding.
+- [x] Retry selected-process and whole-host transport with bounded backoff while
+  retaining interception. Publish Active only after a fresh healthy generation.
 - [ ] Test physical egress for TCP/UDP and IPv4/IPv6, initial packets, existing
   sockets, descendants, shared DNS, reconnect and GUI restart. Reject unsupported
   cases visibly rather than claiming they are routed.

@@ -1,7 +1,15 @@
 #include "service_tunnel.hpp"
+#include <algorithm>
 
 namespace skewer::windows {
 namespace {
+bool cancelled(HANDLE event) {
+    const auto state = WaitForSingleObject(event, 0);
+    if (state != WAIT_OBJECT_0 && state != WAIT_TIMEOUT) {
+        throw std::runtime_error("Cannot inspect service tunnel cancellation");
+    }
+    return state == WAIT_OBJECT_0;
+}
 class DeferredRoutes final : public TunnelRoutePolicy {
 public:
     DeferredRoutes(ServiceRoutePlan plan, const std::unique_ptr<WintunDevice>& device)
@@ -20,6 +28,10 @@ public:
         }
     }
     bool clean() const noexcept { return !routes_ || routes_->clean(); }
+    void reset() {
+        if (!clean()) throw std::runtime_error("Cannot replace routes before protected cleanup");
+        routes_.reset();
+    }
 
 private:
     ServiceRoutePlan plan_;
@@ -48,8 +60,30 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
             if (!device) {
                 device = std::make_unique<WintunDevice>(api, adapter_name);
             }
-            addressed = std::make_unique<AddressedTunnelControl>(control, *device, cancel, dns);
-            result.counters = runPairedTunnel(*device, *addressed, peer, cancel, ready, &routes);
+            unsigned failures{};
+            while (!cancelled(cancel)) {
+                try {
+                    addressed = std::make_unique<AddressedTunnelControl>(control, *device, cancel, dns);
+                    result.counters = runPairedTunnel(*device, *addressed, peer, cancel, ready, &routes,
+                                                       nullptr, &blocked);
+                    return;
+                } catch (...) {
+                    ready.store(false);
+                    blocked.store(true);
+                    routes.withdraw();
+                    if (!routes.clean()) throw;
+                    addressed.reset();
+                    routes.reset();
+                    const auto shift = std::min(failures, 4U);
+                    if (failures < 4U) ++failures;
+                    const auto delay = static_cast<DWORD>(250U << shift);
+                    const auto wait = WaitForSingleObject(cancel, delay);
+                    if (wait == WAIT_OBJECT_0) return;
+                    if (wait != WAIT_TIMEOUT) {
+                        throw std::runtime_error("Cannot wait for service tunnel retry");
+                    }
+                }
+            }
         },
         [&] {
             // The worker has joined. Keep the adapter until every owned route

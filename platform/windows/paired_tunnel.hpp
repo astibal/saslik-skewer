@@ -60,7 +60,8 @@ public:
 TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& control,
                                      const QString& numeric_peer, HANDLE stop, std::atomic_bool& ready,
                                      TunnelRoutePolicy* routes = nullptr,
-                                     TunnelPacketWorker* packets = nullptr);
+                                     TunnelPacketWorker* packets = nullptr,
+                                     std::atomic_bool* blocked = nullptr);
 inline TunnelPump::Counters runPairedTunnel(PacketDevice& device, PskTunnelControl& control, HANDLE stop,
                                             std::atomic_bool& ready) {
     // Pin both control and transport to the same resolved peer for this lifetime.

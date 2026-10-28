@@ -134,7 +134,8 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
     unsigned failures{};
     for (;;) {
         try {
-            runPairedTunnel(runtime, control, peer, cancel, transport_ready, nullptr, &runtime);
+            runPairedTunnel(runtime, control, peer, cancel, transport_ready, nullptr, &runtime,
+                            &state.blocked);
             return;
         } catch (...) {
             transport_ready = false;

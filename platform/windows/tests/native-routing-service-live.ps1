@@ -122,13 +122,18 @@ try {
             --connect-timeout 2 --max-time 3 http://example.com/ | Out-Null
         if ($LASTEXITCODE -eq 0) { throw 'Direct fallback succeeded after tunnel loss' }
         Write-Output 'PASS: lost tunnel stays Blocked and public HTTP cannot fall back directly'
+        Enable-NetAdapter -Name $adapter.Name -Confirm:$false
+        $active = Await 2
+        $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
+            --resolve "example.com:443:$testIp" --connect-timeout 5 --max-time 15 https://example.com/
+        if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') {
+            throw 'Recovered whole-host tunnel did not carry HTTPS'
+        }
+        Write-Output 'PASS: replacement lease returns Blocked routing to Active without direct fallback'
     }
     & $client stop $name $active.generation
     if ($LASTEXITCODE -ne 0) { throw 'Stop failed' }
-    # Cleanup completes but the controller deliberately retains the failed
-    # session outcome instead of disguising the tunnel failure as success.
-    if ($TestTunnelLoss) { $null = Await 5 }
-    else { $null = Await 0 }
+    $null = Await 0
 } finally {
     if ($created) {
         Stop-Service $name

@@ -10,12 +10,12 @@ namespace {
 class RejectedControl final : public TunnelControl {
 public:
     PairedTunnel open() override {
-        opened = true;
+        ++opens;
         throw std::runtime_error("Injected control rejection");
     }
     void renew(const Tuntom::Endpoint&) override { throw std::logic_error("Unexpected renewal"); }
     void close(const Tuntom::Endpoint&) override { throw std::logic_error("Unexpected close"); }
-    bool opened{}; // Read only after the session worker has joined.
+    unsigned opens{}; // Read only after the session worker has joined.
 };
 } // namespace
 
@@ -56,9 +56,9 @@ int main(int argc, char** argv) {
                     },
                     stop, state_flags.ready, state_flags.blocked);
                 if (reject_open) {
-                    if (!rejected_control.opened || !result.worker.session_error ||
-                        !result.worker.unexpected_session_exit) {
-                        throw std::runtime_error("Missing injected setup failure");
+                    if (rejected_control.opens < 2 || result.worker.session_error ||
+                        result.worker.unexpected_session_exit) {
+                        throw std::runtime_error("Setup rejection did not retry safely until Stop");
                     }
                     return;
                 }
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
         if ((reject_open ? !blocked || active : !active) || state.phase != RoutingPhase::Idle) {
             throw std::runtime_error("Service worker did not complete Active -> Stop -> Idle");
         }
-        QTextStream(stdout) << (reject_open ? "PASS: setup failure stays Blocked until Stop\n"
+        QTextStream(stdout) << (reject_open ? "PASS: setup failure retries while Blocked until Stop\n"
                                             : "PASS: service worker Active -> Stop -> Idle\n");
         return 0;
     } catch (const std::exception& error) {
