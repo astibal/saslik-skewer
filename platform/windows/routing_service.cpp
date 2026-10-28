@@ -3,11 +3,15 @@
 namespace skewer::windows {
 void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE stop,
                          PairedRoutingRunner runner) {
+    serveRoutingService(name, ServiceOwner::fromToken(owner_token), stop, std::move(runner));
+}
+void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HANDLE stop,
+                         PairedRoutingRunner runner) {
     if (!runner) {
         throw std::invalid_argument("Routing service requires a session runner");
     }
-    auto commands = createSelectionPipe(name, owner_token);
-    auto pairings = createSelectionPipe(name + L"-pair", owner_token);
+    auto commands = createSelectionPipe(name, owner);
+    auto pairings = createSelectionPipe(name + L"-pair", owner);
     std::unique_ptr<PairingHandoff> pairing;
     // Declared after pairing: cancel/join the runner before wiping credentials.
     RoutingController controller(
@@ -22,7 +26,7 @@ void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE st
         }
         try {
             acceptSelection(commands->get(), stop, 100);
-            serveRoutingCommand(commands->get(), owner_token, stop, 2000,
+            serveRoutingCommand(commands->get(), owner, stop, 2000,
                                 [&](RoutingCommand command, std::uint64_t generation) {
                                     if (command == RoutingCommand::Start && !pairing) {
                                         throw std::runtime_error("Pair before starting routing");
@@ -41,7 +45,7 @@ void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE st
             if (state.phase != RoutingPhase::Idle && state.phase != RoutingPhase::Failed) {
                 throw std::runtime_error("Cannot replace pairing during a routing generation");
             }
-            pairing = receivePairingHandoff(pairings->get(), owner_token, stop, 2000);
+            pairing = receivePairingHandoff(pairings->get(), owner, stop, 2000);
             finishSelection(pairings->get(), stop, 500);
         } catch (const std::exception&) {
             // Failed handoff preserves the previous complete credential set.

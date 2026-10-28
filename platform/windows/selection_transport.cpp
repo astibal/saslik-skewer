@@ -91,28 +91,17 @@ private:
 } // namespace
 
 std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, HANDLE user_token) {
+    return createSelectionPipe(suffix, ServiceOwner::fromToken(user_token));
+}
+std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, const ServiceOwner& owner) {
     if (suffix.empty() || suffix.size() > 80 ||
         suffix.find_first_not_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
             std::wstring_view::npos) {
         throw std::invalid_argument("Invalid local pipe identifier");
     }
-    DWORD size{};
-    GetTokenInformation(user_token, TokenUser, nullptr, 0, &size);
-    if (!size || size > 65536) {
-        throw std::invalid_argument("Cannot query pipe owner token");
-    }
-    std::vector<unsigned char> storage(size);
-    if (!GetTokenInformation(user_token, TokenUser, storage.data(), size, &size)) {
-        throw std::runtime_error("Cannot read pipe owner token");
-    }
-    LPWSTR raw_sid{};
-    if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(storage.data())->User.Sid, &raw_sid)) {
-        throw std::runtime_error("Cannot encode pipe owner SID");
-    }
-    std::unique_ptr<wchar_t, decltype(&LocalFree)> sid(raw_sid, LocalFree);
     // Specific read/write rights exclude FILE_CREATE_PIPE_INSTANCE (0x4),
     // unlike GENERIC_WRITE. SYSTEM retains endpoint administration rights.
-    const auto sddl = std::wstring(L"D:P(A;;GA;;;SY)(A;;0x0012019b;;;") + sid.get() + L")";
+    const auto sddl = std::wstring(L"D:P(A;;GA;;;SY)(A;;0x0012019b;;;") + owner.sid() + L")";
     PSECURITY_DESCRIPTOR raw_descriptor{};
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &raw_descriptor,
                                                               nullptr)) {
@@ -337,6 +326,10 @@ void sendPairingHandoff(HANDLE pipe, const std::wstring& service_name, const Pai
 
 std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, HANDLE owner_token, HANDLE cancel,
                                                       DWORD timeout_ms) {
+    return receivePairingHandoff(pipe, ServiceOwner::fromToken(owner_token), cancel, timeout_ms);
+}
+std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel,
+                                                      DWORD timeout_ms) {
     const auto deadline = handoffDeadline(cancel, timeout_ms);
     SelectionRequest hello{};
     handoffTransfer(pipe, hello.data(), hello.size(), false, cancel, deadline);
@@ -348,7 +341,7 @@ std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, HANDLE owner_
     auto client = authorizePipeSelection(pipe, key);
     // The pipe ACL includes SYSTEM administration. Do not let that substitute
     // for the intended user's ownership at this credential boundary.
-    ProcessTarget owner_bound(key, owner_token);
+    ProcessTarget owner_bound(key, owner);
     auto ack = handoff_ready;
     handoffTransfer(pipe, ack.data(), ack.size(), true, cancel, deadline);
     HandoffWire wire;
@@ -393,6 +386,10 @@ std::uint64_t getGeneration(const std::uint8_t* bytes) {
 } // namespace
 void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler) {
+    serveRoutingCommand(pipe, ServiceOwner::fromToken(owner_token), cancel, timeout_ms, handler);
+}
+void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
+                         const RoutingHandler& handler) {
     if (!handler) {
         throw std::invalid_argument("Missing routing handler");
     }
@@ -408,7 +405,7 @@ void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD t
         throw std::runtime_error("Routing caller identity mismatch");
     }
     auto client = authorizePipeSelection(pipe, key);
-    ProcessTarget owner_bound(key, owner_token);
+    ProcessTarget owner_bound(key, owner);
     if (!client->running() || !owner_bound.running()) {
         throw std::runtime_error("Routing caller exited");
     }

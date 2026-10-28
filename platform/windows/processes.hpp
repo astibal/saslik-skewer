@@ -53,6 +53,20 @@ private:
 // it neither changes network policy nor grants terminate/inject privileges.
 // The handle remains bound to that process object after exit; it never follows
 // a recycled PID. Separate consumers can use this identity without a tunnel.
+// Stable, administrator-configured owner for a service. Never accept this SID
+// from a pipe request. Unlike an installer PID/token it survives logon changes.
+class ServiceOwner final {
+public:
+    explicit ServiceOwner(const std::wstring& sid);
+    static ServiceOwner fromToken(HANDLE token);
+    const std::wstring& sid() const { return text_; }
+
+private:
+    friend class ProcessTarget;
+    std::wstring text_;
+    std::vector<unsigned char> bytes_;
+};
+
 class ProcessTarget final {
 public:
     explicit ProcessTarget(ProcessKey expected);
@@ -60,6 +74,7 @@ public:
     // request fields or a caller-supplied SID/PID. Borrowed only during validation.
     // The service's own account is deliberately not used as the caller identity.
     ProcessTarget(ProcessKey expected, HANDLE authenticated_user_token);
+    ProcessTarget(ProcessKey expected, const ServiceOwner& configured_owner);
     ProcessTarget(const ProcessTarget&) = delete;
     ProcessTarget& operator=(const ProcessTarget&) = delete;
 

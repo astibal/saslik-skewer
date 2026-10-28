@@ -44,6 +44,8 @@ using RoutingHandler = std::function<RoutingReply(RoutingCommand, std::uint64_t)
 // checked before invoking the handler. Status is authenticated too.
 void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler);
+void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
+                         const RoutingHandler& handler);
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
                                     std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
 } // namespace skewer::windows

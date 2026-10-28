@@ -7,6 +7,7 @@ namespace skewer::windows {
 // closed if another server already owns the name. Caller keeps this handle
 // alive for the endpoint lifetime; GUI must still authenticate its server.
 std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, HANDLE user_token);
+std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, const ServiceOwner& owner);
 void acceptSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms);
 
 // Verify a connected client pipe against a trusted, pinned server identity.

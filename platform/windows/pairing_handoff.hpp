@@ -24,4 +24,6 @@ void sendPairingHandoff(HANDLE pipe, const std::wstring& service_name, const Pai
                         HANDLE cancel, DWORD timeout_ms);
 std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, HANDLE owner_token, HANDLE cancel,
                                                       DWORD timeout_ms);
+std::unique_ptr<PairingHandoff> receivePairingHandoff(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel,
+                                                      DWORD timeout_ms);
 } // namespace skewer::windows

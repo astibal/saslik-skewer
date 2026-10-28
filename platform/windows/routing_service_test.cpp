@@ -20,7 +20,7 @@ std::uint64_t number(const wchar_t* text) {
 // deliberately failed session: never installs routes or claims active traffic.
 int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc != 3 && argc != 5) {
+        if (argc != 3 && argc != 4 && argc != 5) {
             return 2;
         }
         const std::wstring mode(argv[1]), name(argv[2]);
@@ -30,7 +30,7 @@ int wmain(int argc, wchar_t** argv) {
             throw std::invalid_argument("Invalid fixture service name");
         }
         if (mode == L"--client" || mode == L"--pair") {
-            if ((mode == L"--pair") != (argc == 3)) {
+            if ((mode == L"--pair" && argc != 3) || (mode == L"--client" && argc != 5)) {
                 return 2;
             }
             const auto path = L"\\\\.\\pipe\\SkewerSelection-" + name + (mode == L"--pair" ? L"-pair" : L"");
@@ -79,13 +79,10 @@ int wmain(int argc, wchar_t** argv) {
                       << response.generation << "\"}\n";
             return 0;
         }
-        if (mode != L"--service" || argc != 5) {
+        if (mode != L"--service" || argc != 4) {
             return 2;
         }
-        const auto pid = number(argv[3]), birth = number(argv[4]);
-        if (!pid || pid > MAXDWORD || !birth) {
-            return 2;
-        }
+        const ServiceOwner configured_owner(argv[3]);
         wchar_t module[32768]{};
         const auto length = GetModuleFileNameW(nullptr, module, 32768);
         if (!length || length >= 32768) {
@@ -93,16 +90,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         const auto dll = std::filesystem::path(module).parent_path() / L"WinDivert.dll";
         return runService(name, [=](HANDLE stop) -> DWORD {
-            Handle owner(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, DWORD(pid)));
-            if (!owner || processKey(owner.get(), DWORD(pid)) != ProcessKey{DWORD(pid), birth}) {
-                return 51;
-            }
-            HANDLE raw{};
-            if (!OpenProcessToken(owner.get(), TOKEN_QUERY, &raw)) {
-                return 52;
-            }
-            Handle token(raw);
-            serveRoutingService(name, token.get(), stop,
+            serveRoutingService(name, configured_owner, stop,
                                 [&](const PairingHandoff& pairing, HANDLE cancel, RoutingSignals& signals) {
                                     if (pairing.identity != "public-fixture" || pairing.key[0] != 0x5a) {
                                         throw std::runtime_error("Missing fixture pairing");

@@ -40,8 +40,8 @@ function AwaitPhase([int]$phase) {
 }
 $created = $false
 try {
-    $birth = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToFileTimeUtc()
-    $command = '"' + $exe + '" --service ' + $name + ' ' + $PID + ' ' + $birth
+    $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $command = '"' + $exe + '" --service ' + $name + ' ' + $ownerSid
     $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
         Name=$name; DisplayName=$name; PathName=$command; ServiceType=[byte]16
         ErrorControl=[byte]1; StartMode='Manual'; StartName='LocalSystem'
@@ -94,6 +94,13 @@ try {
     $service = Get-Service $name
     try { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10)) } finally { $service.Dispose() }
     if ((Get-CimInstance Win32_Service -Filter "Name='$name'").ExitCode -ne 0) { throw 'Unclean service shutdown' }
+    # Persistent owner configuration has no launcher PID/birth dependency.
+    Start-Service $name
+    $restarted = AwaitPhase 0
+    if ($restarted.generation -eq $second.generation) { throw 'SCM restart reused routing generation' }
+    & $exe --pair $name
+    if ($LASTEXITCODE -ne 0) { throw 'Owner could not reconnect after SCM restart' }
+    Stop-Service $name
     Write-Output 'PASS: pairing -> authenticated start/status/stop -> guard; client exit, duplicate start, stale stop, restart and SCM cleanup'
 } finally {
     if ($created) {

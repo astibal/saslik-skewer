@@ -9,4 +9,6 @@ namespace skewer::windows {
 using PairedRoutingRunner = std::function<void(const PairingHandoff&, HANDLE, RoutingSignals&)>;
 void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE stop,
                          PairedRoutingRunner runner);
+void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HANDLE stop,
+                         PairedRoutingRunner runner);
 } // namespace skewer::windows

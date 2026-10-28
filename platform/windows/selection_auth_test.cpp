@@ -360,6 +360,22 @@ void pipeTest(const ProcessKey* foreign = nullptr) {
 } // namespace
 int main(int argc, char** argv) {
     try {
+        HANDLE raw{};
+        require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw), "Open stable owner token");
+        std::wstring owner_text;
+        {
+            Handle token(raw);
+            owner_text = ServiceOwner::fromToken(token.get()).sid();
+        }
+        const ServiceOwner owner(owner_text);
+        const auto self = processKey(GetCurrentProcess(), GetCurrentProcessId());
+        ProcessTarget persistent(self, owner);
+        require(persistent.running(), "Stable owner failed after source token closed");
+        const ServiceOwner other(owner_text == L"S-1-5-18" ? L"S-1-5-19" : L"S-1-5-18");
+        rejects([&] { ProcessTarget denied(self, other); }, "Foreign configured owner accepted");
+        for (const auto* invalid : {L"", L"SY", L"S-1-5-18)(A;;GA;;;WD)", L"not-a-sid"}) {
+            rejects([&] { ServiceOwner bad(invalid); }, "Invalid configured SID accepted");
+        }
         test();
         requestTest();
         transportTest();

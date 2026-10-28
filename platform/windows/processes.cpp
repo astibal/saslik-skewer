@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <stdexcept>
 #include <unordered_map>
+#include <sddl.h>
+#include <memory>
 
 namespace skewer::windows {
 namespace {
@@ -149,6 +151,42 @@ ProcessKey processKey(HANDLE process, DWORD pid) {
 
 ProcessTarget::ProcessTarget(ProcessKey expected) : process_(openTarget(expected)), key_(expected) {
     validateOwner(userSid(GetCurrentProcess()));
+}
+
+ServiceOwner::ServiceOwner(const std::wstring& sid) {
+    PSID raw{};
+    if (sid.empty() || sid.size() > 184 || !ConvertStringSidToSidW(sid.c_str(), &raw)) {
+        throw std::invalid_argument("Invalid service owner SID");
+    }
+    std::unique_ptr<void, decltype(&LocalFree)> parsed(raw, LocalFree);
+    LPWSTR encoded{};
+    if (!IsValidSid(raw) || !ConvertSidToStringSidW(raw, &encoded)) {
+        throw std::invalid_argument("Invalid service owner SID");
+    }
+    std::unique_ptr<wchar_t, decltype(&LocalFree)> canonical(encoded, LocalFree);
+    if (sid != encoded) {
+        throw std::invalid_argument("Service owner SID must be canonical");
+    }
+    text_ = sid;
+    bytes_.resize(GetLengthSid(raw));
+    if (!CopySid(static_cast<DWORD>(bytes_.size()), bytes_.data(), raw)) {
+        fail("Copy service owner SID");
+    }
+}
+
+ServiceOwner ServiceOwner::fromToken(HANDLE token) {
+    auto bytes = authenticatedSid(token);
+    LPWSTR encoded{};
+    if (bytes.empty() || !ConvertSidToStringSidW(bytes.data(), &encoded)) {
+        throw std::invalid_argument("Cannot read service owner token");
+    }
+    std::unique_ptr<wchar_t, decltype(&LocalFree)> text(encoded, LocalFree);
+    return ServiceOwner(text.get());
+}
+
+ProcessTarget::ProcessTarget(ProcessKey expected, const ServiceOwner& owner)
+    : process_(openTarget(expected)), key_(expected) {
+    validateOwner(owner.bytes_);
 }
 
 ProcessTarget::ProcessTarget(ProcessKey expected, HANDLE authenticated_user_token)

@@ -45,12 +45,21 @@ and SCM cleanup passed. The fixture did not open a real tunnel. Shared snapshot
 tests passed on Windows and the Linux regression suite passed 39/39.
 
 `serveRoutingService` is the shared service command loop, independent of the
-test executable. The installed host supplies its trusted owner token, stop event
+test executable. The installed host supplies its trusted `ServiceOwner`, stop event
 and paired runner. The loop owns both authenticated pipes and the memory-only
 pairing snapshot. It refuses Start before pairing and replacement credentials
 while a generation is running or stopping. Its controller is destroyed before
 credentials, so SCM stop joins the runner before wiping the pairing. Client
 disconnects and malformed requests do not stop an active generation.
+
+`ServiceOwner` stores a canonical Windows SID from administrator-owned service
+configuration. It needs no live installer process, logon token or stored user
+password. Both the pipe ACL and each authenticated request enforce that SID;
+SYSTEM's pipe administration permission does not authorize another owner's
+commands. The token overload snapshots the same identity for existing callers.
+Never source the configured SID from client request fields. Windows tests cover
+closed source tokens, foreign owner rejection, malformed/alias SID rejection,
+and reconnecting/pairing after an actual SCM stop/start with the same SID.
 
 `RoutingController` owns an asynchronous runtime independently of IPC clients.
 Authenticated start/stop/status commands report Idle, Starting, Active, Blocked,
