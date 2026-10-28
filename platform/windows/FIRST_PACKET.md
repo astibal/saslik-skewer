@@ -437,3 +437,17 @@ explicit IPv4 resolution and curl's per-request insecure TLS option; it proves
 neither DNS nor certificate-store integration, UDP/IPv6 protection or general
 application-tree selection. Its own child is terminated before capture cleanup
 on failure. No host routes, adapter configuration or DNS settings are changed.
+
+The routing IPC now has a separate selected-start operation. After authenticating
+the actual pipe caller against the configured service owner, it reads a complete
+PID/birth identity, authorizes that process against both caller and owner, and
+passes the retained process handle to an optional selected runner. The command
+uses the existing generation/busy checks and never falls back to whole-host
+Start. Disconnecting the requesting client does not end the selected runner.
+Services without an installed selected runner reject the operation.
+
+The native SCM fixture verifies a selected-start lifetime, stale process birth,
+duplicate start, stale generation and explicit Stop. That fixture deliberately
+reports Blocked and changes no traffic policy. The installed application still
+has no selected runner wired in; this IPC test is not proof of production
+per-application routing.

@@ -20,7 +20,7 @@ std::uint64_t number(const wchar_t* text) {
 // deliberately failed session: never installs routes or claims active traffic.
 int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc != 3 && argc != 4 && argc != 5) {
+        if (argc < 3 || argc > 6) {
             return 2;
         }
         const std::wstring mode(argv[1]), name(argv[2]);
@@ -29,8 +29,9 @@ int wmain(int argc, wchar_t** argv) {
                 std::wstring::npos) {
             throw std::invalid_argument("Invalid fixture service name");
         }
-        if (mode == L"--client" || mode == L"--pair") {
-            if ((mode == L"--pair" && argc != 3) || (mode == L"--client" && argc != 5)) {
+        if (mode == L"--client" || mode == L"--pair" || mode == L"--select") {
+            if ((mode == L"--pair" && argc != 3) || (mode == L"--client" && argc != 5) ||
+                (mode == L"--select" && argc != 6)) {
                 return 2;
             }
             const auto path = L"\\\\.\\pipe\\SkewerSelection-" + name + (mode == L"--pair" ? L"-pair" : L"");
@@ -67,13 +68,17 @@ int wmain(int argc, wchar_t** argv) {
                 sendPairingHandoff(pipe.get(), name, pairing, cancel.get(), 3000);
                 return 0;
             }
-            const auto operation = number(argv[3]);
-            if (operation > 2) {
+            const auto operation = mode == L"--select" ? 0 : number(argv[3]);
+            if (operation > 2 || (mode == L"--select" && number(argv[4]) > MAXDWORD)) {
                 return 2;
             }
             const auto response =
-                exchangeRoutingCommand(pipe.get(), name, static_cast<RoutingCommand>(operation),
-                                       number(argv[4]), cancel.get(), 3000);
+                mode == L"--select"
+                    ? exchangeSelectedRouting(pipe.get(), name,
+                                              {static_cast<DWORD>(number(argv[4])), number(argv[5])},
+                                              number(argv[3]), cancel.get(), 3000)
+                    : exchangeRoutingCommand(pipe.get(), name, static_cast<RoutingCommand>(operation),
+                                             number(argv[4]), cancel.get(), 3000);
             std::cout << "{\"result\":" << unsigned(response.result)
                       << ",\"phase\":" << unsigned(response.phase) << ",\"generation\":\""
                       << response.generation << "\"}\n";
@@ -100,6 +105,15 @@ int wmain(int argc, wchar_t** argv) {
                                         guard, cancel,
                                         [](HANDLE) { throw std::runtime_error("Fixture tunnel failed"); },
                                         [] { return true; }, &signals.blocked);
+                                },
+                                [](const PairingHandoff&, std::unique_ptr<ProcessTarget> target,
+                                   HANDLE cancel, RoutingSignals& signals) {
+                                    if (!target || !target->running()) {
+                                        throw std::runtime_error("Selected fixture target unavailable");
+                                    }
+                                    // Bookkeeping fixture only: no traffic is rerouted.
+                                    signals.blocked = true;
+                                    WaitForSingleObject(cancel, INFINITE);
                                 });
             return 0; // Controller cancels and joins before SCM sees STOPPED.
         });

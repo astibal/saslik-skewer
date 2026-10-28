@@ -100,7 +100,28 @@ try {
     if ($restarted.generation -eq $second.generation) { throw 'SCM restart reused routing generation' }
     & $exe --pair $name
     if ($LASTEXITCODE -ne 0) { throw 'Owner could not reconnect after SCM restart' }
+    $self = Get-Process -Id $PID
+    $birth = $self.StartTime.ToUniversalTime().ToFileTimeUtc()
+    $text = & $exe --select $name $restarted.generation $PID ($birth + 1)
+    if ($LASTEXITCODE -eq 0) { throw 'Stale process birth accepted' }
+    if ((Command 0 0).phase -ne 0) { throw 'Rejected target changed service state' }
+    $text = & $exe --select $name $restarted.generation $PID $birth
+    if ($LASTEXITCODE -ne 0) { throw 'Authorized selected start rejected' }
+    $selected = $text | ConvertFrom-Json
+    if ($selected.result -ne 0) { throw 'Selected start not accepted' }
+    $null = AwaitPhase 3
+    $text = & $exe --select $name $selected.generation $PID $birth
+    if ($LASTEXITCODE -ne 0 -or ($text | ConvertFrom-Json).result -ne 2) {
+        throw 'Duplicate selected start not rejected as busy'
+    }
+    $null = Command 2 $selected.generation
+    $null = AwaitPhase 0
+    $text = & $exe --select $name $restarted.generation $PID $birth
+    if ($LASTEXITCODE -ne 0 -or ($text | ConvertFrom-Json).result -ne 1) {
+        throw 'Stale selected start not rejected'
+    }
     Stop-Service $name
+    Write-Output 'PASS: owner-bound selected target, stale birth/generation, busy and explicit stop'
     Write-Output 'PASS: pairing -> authenticated start/status/stop -> guard; client exit, duplicate start, stale stop, restart and SCM cleanup'
 } finally {
     if ($created) {

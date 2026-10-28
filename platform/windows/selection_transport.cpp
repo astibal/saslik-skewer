@@ -389,7 +389,7 @@ void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD t
     serveRoutingCommand(pipe, ServiceOwner::fromToken(owner_token), cancel, timeout_ms, handler);
 }
 void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
-                         const RoutingHandler& handler) {
+                         const RoutingHandler& handler, const SelectedRoutingHandler& selected) {
     if (!handler) {
         throw std::invalid_argument("Missing routing handler");
     }
@@ -397,7 +397,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 2 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 3 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -409,7 +409,25 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     if (!client->running() || !owner_bound.running()) {
         throw std::runtime_error("Routing caller exited");
     }
-    const auto result = handler(static_cast<RoutingCommand>(request[22]), getGeneration(request.data() + 24));
+    RoutingReply result;
+    if (request[22] == 3) {
+        if (!selected) {
+            throw std::runtime_error("Selected routing is not supported by this service");
+        }
+        SelectionRequest selection{};
+        handoffTransfer(pipe, selection.data(), selection.size(), false, cancel, deadline);
+        const auto target_key = decodeSelectionRequest(selection);
+        auto target = authorizePipeSelection(pipe, target_key);
+        // Bind both caller and selected process to the configured owner. SYSTEM
+        // pipe access does not authorize selecting another user's application.
+        ProcessTarget target_owner(target_key, owner);
+        if (!client->running() || !owner_bound.running() || !target->running() || !target_owner.running()) {
+            throw std::runtime_error("Selected routing identity exited during authorization");
+        }
+        result = selected(std::move(target), getGeneration(request.data() + 24));
+    } else {
+        result = handler(static_cast<RoutingCommand>(request[22]), getGeneration(request.data() + 24));
+    }
     if (result.result > RoutingResult::Busy || result.phase > RoutingPhase::Failed) {
         throw std::logic_error("Invalid routing backend response");
     }
@@ -424,11 +442,10 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     putGeneration(response.data() + 8, result.generation);
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
-RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
-                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
-    if (command > RoutingCommand::Stop) {
-        throw std::invalid_argument("Unknown routing command");
-    }
+namespace {
+RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std::uint8_t operation,
+                             std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
+                             const SelectionRequest* selection) {
     const auto deadline = handoffDeadline(cancel, timeout_ms);
     auto server = verifySelectionService(pipe, service_name);
     std::array<std::uint8_t, 32> request{};
@@ -436,9 +453,13 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
     std::copy(identity.begin(), identity.end(), request.begin());
     request[20] = 'R';
     request[21] = 1;
-    request[22] = static_cast<std::uint8_t>(command);
+    request[22] = operation;
     putGeneration(request.data() + 24, generation);
     handoffTransfer(pipe, request.data(), request.size(), true, cancel, deadline);
+    if (selection) {
+        auto bytes = *selection;
+        handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
+    }
     std::array<std::uint8_t, 16> response{};
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
@@ -448,5 +469,19 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
     }
     return {static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
             getGeneration(response.data() + 8)};
+}
+} // namespace
+RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
+                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+    if (command > RoutingCommand::Stop) {
+        throw std::invalid_argument("Unknown routing command");
+    }
+    return exchangeRouting(pipe, service_name, static_cast<std::uint8_t>(command), generation,
+                           cancel, timeout_ms, nullptr);
+}
+RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
+                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+    const auto selection = encodeSelectionRequest(target);
+    return exchangeRouting(pipe, service_name, 3, generation, cancel, timeout_ms, &selection);
 }
 } // namespace skewer::windows

@@ -6,16 +6,48 @@ void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE st
     serveRoutingService(name, ServiceOwner::fromToken(owner_token), stop, std::move(runner));
 }
 void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HANDLE stop,
-                         PairedRoutingRunner runner) {
+                         PairedRoutingRunner runner, SelectedRoutingRunner selected) {
     if (!runner) {
         throw std::invalid_argument("Routing service requires a session runner");
     }
     auto commands = createSelectionPipe(name, owner);
     auto pairings = createSelectionPipe(name + L"-pair", owner);
     std::unique_ptr<PairingHandoff> pairing;
+    std::unique_ptr<ProcessTarget> target;
     // Declared after pairing: cancel/join the runner before wiping credentials.
-    RoutingController controller(
-        [&](HANDLE cancel, RoutingSignals& state) { runner(*pairing, cancel, state); });
+    RoutingController controller([&](HANDLE cancel, RoutingSignals& state) {
+        if (target) {
+            selected(*pairing, std::move(target), cancel, state);
+        } else {
+            runner(*pairing, cancel, state);
+        }
+    });
+    SelectedRoutingHandler startSelected;
+    if (selected) {
+        startSelected = [&](std::unique_ptr<ProcessTarget> next, std::uint64_t generation) {
+            // Status joins a finished generation before replacing its pinned
+            // target. Only this command thread may start or replace a session.
+            auto state = controller.command(RoutingCommand::Status, 0);
+            if (generation != state.generation) {
+                state.result = RoutingResult::Stale;
+                return state;
+            }
+            if (state.phase != RoutingPhase::Idle && state.phase != RoutingPhase::Failed) {
+                state.result = RoutingResult::Busy;
+                return state;
+            }
+            if (!pairing || !next || !next->running()) {
+                throw std::runtime_error("Pair and select a live process before routing");
+            }
+            target = std::move(next);
+            try {
+                return controller.command(RoutingCommand::Start, generation);
+            } catch (...) {
+                target.reset();
+                throw;
+            }
+        };
+    }
     for (;;) {
         const auto wait = WaitForSingleObject(stop, 0);
         if (wait == WAIT_OBJECT_0) {
@@ -32,7 +64,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                                         throw std::runtime_error("Pair before starting routing");
                                     }
                                     return controller.command(command, generation);
-                                });
+                                }, startSelected);
             finishSelection(commands->get(), stop, 500);
         } catch (const std::exception&) {
             // Malformed, disconnected and unauthorized clients affect only
