@@ -18,6 +18,7 @@ public:
     };
     using CertificateCallback = std::function<void(const QByteArray&)>;
     explicit CaTrustPanel(QWidget* parent = nullptr);
+    void setPairedEndpoint(const QString& endpoint);
     void setCertificateCallback(CertificateCallback callback);
 
 private:

@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QtConcurrent>
+#include <utility>
 
 namespace skewer::windows {
 namespace {
@@ -275,8 +276,18 @@ void RoutingPanel::setServiceName(const QString& service) {
 }
 void RoutingPanel::setPairedEndpoint(const QString& endpoint) {
     const auto normalized = endpoint.trimmed();
-    if (!normalized.isEmpty() && endpoint_->text() != normalized) {
+    if (normalized.isEmpty()) {
+        return;
+    }
+    const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
+    if (!routingServiceInstalled(service_->text().trimmed()) || (idle && !action_busy_)) {
+        pending_endpoint_.clear();
         endpoint_->setText(normalized);
+    } else {
+        // An active or not-yet-inspected installed service may belong to the
+        // previous endpoint. Keep its visible configuration stable until the
+        // user explicitly stops that authoritative generation.
+        pending_endpoint_ = normalized;
     }
 }
 void RoutingPanel::startSelected(ProcessKey process) {
@@ -325,6 +336,10 @@ void RoutingPanel::updateControls() {
     // Changing the service/endpoint or upgrading SCM while that generation is
     // live could orphan routing from this panel or terminate it outside Stop.
     const bool configuration_editable = !known_ || idle;
+    if (!action_busy_ && !pending_endpoint_.isEmpty() &&
+        ((known_ && idle) || !routingServiceInstalled(service_->text().trimmed()))) {
+        endpoint_->setText(std::exchange(pending_endpoint_, QString{}));
+    }
     const auto requested = transport_->currentData().toInt();
     const bool direct = requested == static_cast<int>(RoutingTransport::Direct);
     const bool automatic = requested == AutoTransport;

@@ -430,6 +430,12 @@ end-to-end checks and the locally advertised CA fingerprint. **Open Saslik** and
 are rewritten to the paired Saslik host. The application never opens them
 automatically.
 
+Successful in-GUI pairing or reporting also synchronizes the validated endpoint
+with CA Trust and Routing. CA Trust adopts it immediately. Routing defers a new
+endpoint while an installed service generation is active or still being
+inspected, then applies it only after the authoritative service is Idle; it
+never retargets a running generation.
+
 The device list is populated by reports, not enrollment alone. Reports contain
 the hostname, Skewer version and an exact CryptoAPI observation of the last CA
 downloaded from Saslik in `Current User\\ROOT`. If the exact same CA is present

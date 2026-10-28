@@ -31,6 +31,7 @@ $tests = @(
     @{ Name = 'windows_tunnel_dns'; File = 'tunnel_dns_test.exe' },
     @{ Name = 'windows_service_installer'; File = 'service_installer_test.exe' },
     @{ Name = 'windows_runtime_trust'; File = 'runtime_trust_test.exe' },
+    @{ Name = 'windows_ca_trust_panel'; File = 'ca_trust_panel_test.exe' },
     @{ Name = 'windows_routing_panel'; File = 'routing_panel_test.exe' },
     @{ Name = 'windows_direct_host_policy'; File = 'direct_host_policy_test.exe' },
     @{ Name = 'windows_whole_host_policy'; File = 'whole_host_policy_test.exe' },

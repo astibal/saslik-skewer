@@ -249,6 +249,7 @@ private:
             }
             endpoint_->setText(result.first);
             QSettings().setValue("windows/saslikEndpoint", result.first);
+            ca_trust_->setPairedEndpoint(result.first);
             if (routing_panel_) {
                 routing_panel_->setPairedEndpoint(result.first);
             }
@@ -279,6 +280,10 @@ private:
                 return;
             }
             QSettings().setValue("windows/saslikEndpoint", endpoint_->text().trimmed());
+            ca_trust_->setPairedEndpoint(endpoint_->text());
+            if (routing_panel_) {
+                routing_panel_->setPairedEndpoint(endpoint_->text());
+            }
             report_status_->setText(tr("Report accepted at %1. Routing status is independent.")
                                         .arg(QDateTime::currentDateTime().toString("HH:mm:ss")));
             refreshPairedStatus();
@@ -401,11 +406,11 @@ private:
         page_ = new skewer::ui::ApplicationPage(this);
         pages()->addTab(page_, tr("Applications"));
 #ifdef SKEWER_WINDOWS_PAIRING
-        auto* ca_trust = new skewer::windows::CaTrustPanel(this);
+        ca_trust_ = new skewer::windows::CaTrustPanel(this);
         auto* runtime_trust = new skewer::windows::RuntimeTrustPanel(this);
-        ca_trust->setCertificateCallback(
+        ca_trust_->setCertificateCallback(
             [runtime_trust](const QByteArray& pem) { runtime_trust->setCertificate(pem); });
-        pages()->addTab(ca_trust, tr("CA Trust"));
+        pages()->addTab(ca_trust_, tr("CA Trust"));
         pages()->addTab(runtime_trust, tr("Runtime Trust"));
 #else
         addUnavailablePage(tr("CA Trust"), tr("This build has no paired CA support."));
@@ -732,6 +737,7 @@ private:
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};
     skewer::windows::RoutingPanel* routing_panel_{};
+    skewer::windows::CaTrustPanel* ca_trust_{};
     QLabel* routing_status_bar_{};
     skewer::windows::ConnectionsPanel* connections_{};
     skewer::windows::RoutingReply routing_state_{};

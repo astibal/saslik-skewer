@@ -99,6 +99,19 @@ int main(int argc, char** argv) {
                 service->isEnabled() || endpoint->isEnabled() || install->isEnabled()) {
                 throw std::runtime_error("Auto did not publish authoritative Direct state");
             }
+            const auto active_endpoint = endpoint->text();
+            const QString replacement = "skewer://198.51.100.10:8766/pair";
+            panel->setPairedEndpoint(replacement);
+            if (endpoint->text() != active_endpoint) {
+                throw std::runtime_error("Active generation adopted a different paired endpoint");
+            }
+            stop->click();
+            wait("Idle");
+            if (endpoint->text() != replacement || !endpoint->isEnabled()) {
+                throw std::runtime_error("Idle panel did not adopt the deferred paired endpoint");
+            }
+            start->click();
+            wait("Active");
             panel.reset();
             settings.clear(); settings.sync();
             std::cout << "PASS: GUI Auto selected Direct; panel closed without Stop\n";

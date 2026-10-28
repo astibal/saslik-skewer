@@ -142,6 +142,7 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent) {
     const QSettings settings;
     endpoint_ = new QLineEdit(settings.value("windows/saslikEndpoint",
                                              settings.value("windows/routingEndpoint")).toString(), this);
+    endpoint_->setObjectName("caTrustEndpoint");
     endpoint_->setAccessibleName(tr("Paired Saslik endpoint"));
     endpoint_->setPlaceholderText("skewer://HOST:8766/pair");
     layout->addWidget(endpoint_);
@@ -198,6 +199,13 @@ CaTrustPanel::CaTrustPanel(QWidget* parent) : QWidget(parent) {
         remove_->setEnabled(result.present);
     }
     updateControls();
+}
+
+void CaTrustPanel::setPairedEndpoint(const QString& endpoint) {
+    const auto normalized = endpoint.trimmed();
+    if (!normalized.isEmpty() && endpoint_->text() != normalized) {
+        endpoint_->setText(normalized);
+    }
 }
 
 void CaTrustPanel::setCertificateCallback(CertificateCallback callback) {
