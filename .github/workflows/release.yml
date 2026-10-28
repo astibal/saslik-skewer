@@ -64,18 +64,32 @@ jobs:
         run: |
           $archive = @(Get-ChildItem -LiteralPath dist/windows -Filter 'skewer-windows-amd64-*.zip')
           if ($archive.Count -ne 1) { throw "Expected one Windows archive, found $($archive.Count)" }
-          $sidecar = Get-Content -LiteralPath ($archive[0].FullName + '.sha256') -Raw
-          if ($sidecar -notmatch '^([0-9a-f]{64})\s+\*?([^\r\n]+)\s*$') {
-            throw 'Invalid Windows checksum sidecar'
+          $tests = @(Get-ChildItem -LiteralPath dist/windows -Filter 'skewer-windows-tests-amd64-*.zip')
+          if ($tests.Count -ne 1) { throw "Expected one Windows test archive, found $($tests.Count)" }
+          function Test-ArchiveChecksum([System.IO.FileInfo]$item) {
+            $sidecar = Get-Content -LiteralPath ($item.FullName + '.sha256') -Raw
+            if ($sidecar -notmatch '^([0-9a-f]{64})\s+\*?([^\r\n]+)\s*$') {
+              throw "Invalid checksum sidecar: $($item.Name)"
+            }
+            if ($Matches[2] -ne $item.Name) { throw "Checksum names a different archive: $($item.Name)" }
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $item.FullName).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) { throw "Archive checksum mismatch: $($item.Name)" }
           }
-          if ($Matches[2] -ne $archive[0].Name) { throw 'Checksum names a different archive' }
-          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive[0].FullName).Hash.ToLowerInvariant()
-          if ($actual -ne $Matches[1]) { throw 'Windows archive checksum mismatch' }
+          Test-ArchiveChecksum $archive[0]
+          Test-ArchiveChecksum $tests[0]
           if ($archive[0].BaseName -notmatch '^skewer-windows-amd64-(\d+(?:\.\d+){3})$') {
             throw 'Windows archive has an invalid versioned name'
           }
+          $version = $Matches[1]
+          if ($tests[0].BaseName -ne "skewer-windows-tests-amd64-$version") {
+            throw 'Windows package and test bundle versions differ'
+          }
+          $testRoot = Join-Path $env:RUNNER_TEMP 'skewer-native-tests'
+          Expand-Archive -LiteralPath $tests[0].FullName -DestinationPath $testRoot
+          $testPackage = Join-Path $testRoot $tests[0].BaseName
+          & (Join-Path $testPackage 'run-tests.ps1') -Root $testPackage
           ./packaging/test-windows-package.ps1 -Archive $archive[0].FullName `
-            -ExpectedVersion $Matches[1] -TestRoot (Join-Path $env:RUNNER_TEMP 'skewer-release-smoke')
+            -ExpectedVersion $version -TestRoot (Join-Path $env:RUNNER_TEMP 'skewer-release-smoke')
   install:
     needs: package
     runs-on: ubuntu-24.04
@@ -123,5 +137,7 @@ jobs:
           cp "${windows[0]}" dist/windows/skewer-windows-amd64.zip
           (cd dist/windows && sha256sum skewer-windows-amd64.zip > skewer-windows-amd64.zip.sha256)
           gh release create "$RELEASE_TAG" dist/linux/*.deb dist/linux/SHA256SUMS \
-            dist/windows/*.zip dist/windows/*.zip.sha256 --verify-tag \
+            "${windows[0]}" "${windows[0]}.sha256" \
+            dist/windows/skewer-windows-amd64.zip dist/windows/skewer-windows-amd64.zip.sha256 \
+            --verify-tag \
             --title "Skewer $RELEASE_TAG" --notes-file packaging/RELEASE.md

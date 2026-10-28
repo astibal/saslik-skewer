@@ -17,8 +17,9 @@ case "$version" in *[!0-9.]*|'') echo "Invalid project version: $version" >&2; e
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 root="$stage/skewer-windows-amd64-$version"
+tests="$stage/skewer-windows-tests-amd64-$version"
 mkdir -p "$root/platforms" "$root/styles" "$root/tls" "$root/networkinformation" \
-    "$root/imageformats" "$root/licenses" "$output"
+    "$root/imageformats" "$root/licenses" "$tests/platforms" "$output"
 
 for file in skewer.exe skewer-routing-service.exe skewer-routing-control.exe skewer-control.exe; do
     install -m 0755 "$build/platform/windows/$file" "$root/$file"
@@ -53,7 +54,38 @@ install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-rout
 install -m 0644 platform/windows/remove-routing-service.ps1 "$root/remove-routing-service.ps1"
 install -m 0644 platform/windows/INSTALL.md "$root/INSTALL.md"
 
+windows_tests='process_group_test selection_registry_test routing_control_test selection_auth_test
+selected_packet_epoch_test udp_owners_test tcp_owners_test app_egress_guard_test udp_endpoint_test
+selected_tunnel_device_test tunnel_pump_test tuntom_udp_test skewer-process-probe wintun_device_test
+flow_tracking_test skewer-flow-watch pairing_snapshot_test client_report_test pairing_storage_test
+paired_tunnel_test tunnel_dns_test service_installer_test runtime_trust_test'
+traffic_tests='tunnel_flows_test packet_rewrite_test tunnel_lease_test routing_scope_test
+owner_evidence_test packet_tuple_test flow_index_test pending_packets_test selected_packets_test'
+ui_tests='tunnel_contract_test process_browser_test launch_catalog_test application_shell_test'
+for file in $windows_tests; do
+    install -m 0755 "$build/platform/windows/$file.exe" "$tests/$file.exe"
+done
+for file in $traffic_tests; do
+    install -m 0755 "$build/platform/windows/portable-traffic/$file.exe" "$tests/$file.exe"
+done
+for file in $ui_tests; do
+    install -m 0755 "$build/platform/windows/portable-ui/$file.exe" "$tests/$file.exe"
+done
+for file in Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Concurrent.dll Qt6Network.dll Qt6Svg.dll Qt6Test.dll; do
+    install -m 0644 "$qt/bin/$file" "$tests/$file"
+done
+install -m 0644 "$qt/plugins/platforms/qoffscreen.dll" "$tests/platforms/qoffscreen.dll"
+for file in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll libssp-0.dll; do
+    path=$($cxx -print-file-name="$file")
+    install -m 0644 "$path" "$tests/$file"
+done
+install -m 0644 packaging/test-windows-unit.ps1 "$tests/run-tests.ps1"
+
 archive="$output/skewer-windows-amd64-$version.zip"
 (cd "$stage" && cmake -E tar cf "$archive" --format=zip "$(basename "$root")")
 (cd "$output" && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
+test_archive="$output/skewer-windows-tests-amd64-$version.zip"
+(cd "$stage" && cmake -E tar cf "$test_archive" --format=zip "$(basename "$tests")")
+(cd "$output" && sha256sum "$(basename "$test_archive")" > "$(basename "$test_archive").sha256")
 echo "$archive"
+echo "$test_archive"
