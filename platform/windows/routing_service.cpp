@@ -30,6 +30,8 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         state.transport = transport;
         state.selected = selected_identity;
         state.paired = bool(pairing);
+        state.tunnel_available = bool(runner);
+        state.direct_available = bool(direct);
         return state;
     };
     // Declared after pairing: cancel/join the runner before wiping credentials.

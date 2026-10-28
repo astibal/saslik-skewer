@@ -105,6 +105,6 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
         }
     }
     return {result, phase, generation_, RoutingScope::None, RoutingTransport::None,
-            std::nullopt, detail};
+            std::nullopt, detail, false, false, false};
 }
 } // namespace skewer::windows

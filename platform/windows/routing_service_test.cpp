@@ -96,7 +96,9 @@ int wmain(int argc, wchar_t** argv) {
                       << ",\"scope\":" << unsigned(response.scope) << ",\"generation\":\""
                       << response.generation << "\",\"transport\":" << unsigned(response.transport)
                       << ",\"paired\":"
-                      << (response.paired ? "true" : "false");
+                      << (response.paired ? "true" : "false")
+                      << ",\"tunnelAvailable\":" << (response.tunnel_available ? "true" : "false")
+                      << ",\"directAvailable\":" << (response.direct_available ? "true" : "false");
             if (response.selected) {
                 std::cout << ",\"selected\":{\"pid\":" << response.selected->pid
                           << ",\"birth\":\"" << response.selected->created << "\"}";

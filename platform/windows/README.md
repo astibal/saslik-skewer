@@ -66,6 +66,9 @@ service configuration. That service rejects pairing, selected-process routing
 and tunnel Start, while retaining authenticated owner-bound status, Direct
 Start/Stop and independent GUI lifetime. An explicit Upgrade with a numeric
 paired endpoint enables the tunnel runners later; credentials remain memory-only.
+Versioned status replies advertise Direct and tunnel capabilities independently;
+the GUI disables impossible Pair/Attach/Launch actions and labels a Direct-only
+Idle service instead of presenting a late generic request failure.
 `tests/service-upgrade-live.ps1` verifies the installed SCM command, clean
 service restart, unpaired Idle state and protected-runtime removal across that
 upgrade transition.

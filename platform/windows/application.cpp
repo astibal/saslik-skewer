@@ -513,8 +513,12 @@ private:
             text = tr("PID %1 routed").arg(state.selected->pid);
             color = QStringLiteral("#41b879");
         } else {
-            text = state.paired ? tr("Routing idle") : tr("Routing needs pairing");
-            if (!state.paired) color = QStringLiteral("#d8a93f");
+            if (!state.tunnel_available && state.direct_available) {
+                text = tr("Routing idle — Direct only");
+            } else {
+                text = state.paired ? tr("Routing idle") : tr("Routing needs pairing");
+                if (!state.paired) color = QStringLiteral("#d8a93f");
+            }
         }
         routing_status_bar_->setText(text);
         routing_status_bar_->setStyleSheet(QStringLiteral("color:%1; padding:0 6px").arg(color));
@@ -531,11 +535,11 @@ private:
         const bool retained = routing_state_.phase == skewer::windows::RoutingPhase::Starting ||
                               routing_state_.phase == skewer::windows::RoutingPhase::Active ||
                               routing_state_.phase == skewer::windows::RoutingPhase::Blocked;
-        page_->attach->setEnabled(idle && routing_state_.paired &&
+        page_->attach->setEnabled(idle && routing_state_.tunnel_available && routing_state_.paired &&
                                   browser_->selectedProcess().has_value());
         page_->release->setEnabled(selected && retained);
         if (!launch_watcher_.isRunning()) {
-            routed_start_->setEnabled(idle && routing_state_.paired);
+            routed_start_->setEnabled(idle && routing_state_.tunnel_available && routing_state_.paired);
         }
     }
 

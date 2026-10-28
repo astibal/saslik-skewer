@@ -81,6 +81,9 @@ try {
     $created = $true
     Start-Service $name
     $state = Await 0
+    if (!$state.tunnelAvailable -or !$state.directAvailable) {
+        throw 'Tunnel-ready service did not report both routing capabilities'
+    }
     if ($GuiClient) {
         & (Join-Path $Directory 'routing_panel_test.exe') --live $name $Endpoint
         if ($LASTEXITCODE -ne 0) { throw 'GUI pairing/start test failed' }

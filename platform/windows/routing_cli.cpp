@@ -106,7 +106,9 @@ int main(int argc, char** argv) {
                            {"generation", QString::number(response.generation)},
                            {"scope", static_cast<int>(response.scope)},
                            {"transport", static_cast<int>(response.transport)},
-                           {"paired", response.paired}};
+                           {"paired", response.paired},
+                           {"tunnelAvailable", response.tunnel_available},
+                           {"directAvailable", response.direct_available}};
         if (response.selected) {
             output["selected"] = QJsonObject{{"pid", static_cast<qint64>(response.selected->pid)},
                                                {"birth", QString::number(response.selected->created)}};

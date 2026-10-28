@@ -3,7 +3,8 @@ param(
     [string]$DriverDirectory = 'C:\SkewerDev\flow-test',
     [string]$WintunDll = 'C:\SkewerDev\wintun-test\wintun.dll',
     [Parameter(Mandatory=$true)][string]$Gateway,
-    [string]$PairingFixture = ''
+    [string]$PairingFixture = '',
+    [string]$GuiTestDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,10 +44,33 @@ try {
         -WinDivertDirectory $DriverDirectory -WintunDll $WintunDll -OwnerSid $owner -Name $name
     $created = $true
     $initial = AwaitPhase 0
-    if ($initial.paired) { throw 'Fresh direct fixture unexpectedly retained pairing' }
+    if ($initial.paired -or $initial.tunnelAvailable -or !$initial.directAvailable) {
+        throw 'Fresh Direct-only fixture reported invalid capabilities or pairing'
+    }
     $configuration = Get-CimInstance Win32_Service -Filter "Name='$name'"
     if ($configuration.PathName -match 'skewer://') {
         throw 'Direct-only service unexpectedly retained tunnel configuration'
+    }
+    if ($GuiTestDirectory) {
+        $previousPlatform = $env:QT_QPA_PLATFORM
+        $previousPath = $env:PATH
+        try {
+            $env:QT_QPA_PLATFORM = 'offscreen'
+            $env:PATH = "$GuiTestDirectory;$previousPath"
+            & (Join-Path $GuiTestDirectory 'routing_panel_test.exe') `
+                --live-direct $name $Gateway
+            if ($LASTEXITCODE -ne 0) { throw 'Direct-only GUI capability test failed' }
+        } finally {
+            $env:QT_QPA_PLATFORM = $previousPlatform
+            $env:PATH = $previousPath
+        }
+        $active = AwaitPhase 2
+        if ($active.transport -ne 2 -or $active.tunnelAvailable -or !$active.directAvailable) {
+            throw 'Direct-only GUI did not retain authoritative capability state'
+        }
+        $null = & $client stop $name $active.generation | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw 'Direct-only GUI generation Stop failed' }
+        $initial = AwaitPhase 0
     }
     if ($PairingFixture) {
         & $PairingFixture --pair $name

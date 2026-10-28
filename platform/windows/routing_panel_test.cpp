@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
             auto* status = panel->findChild<QLabel*>("routingStatus");
             auto* transport = panel->findChild<QComboBox*>("routingTransport");
             auto* gateway = panel->findChild<QLineEdit*>("routingGateway");
+            auto* pair = panel->findChild<QPushButton*>("routingPair");
             auto* start = panel->findChild<QPushButton*>("routingStart");
             auto* stop = panel->findChild<QPushButton*>("routingStop");
             auto wait = [&](const QString& text) {
@@ -79,6 +80,7 @@ int main(int argc, char** argv) {
             };
             wait("Idle");
             if (transport->currentIndex() != 2 || gateway->text() != QString::fromLocal8Bit(argv[3]) ||
+                !status->text().contains("Direct-only") || pair->isEnabled() ||
                 !start->isEnabled() || stop->isEnabled()) {
                 throw std::runtime_error("Auto did not admit the valid unpaired direct gateway");
             }

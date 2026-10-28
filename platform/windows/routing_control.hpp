@@ -22,6 +22,8 @@ struct RoutingReply {
     std::optional<ProcessKey> selected;
     std::string detail;
     bool paired{};
+    bool tunnel_available{};
+    bool direct_available{};
 };
 enum class RoutingStage : std::uint8_t { None, Preparing, Connecting, Intercepting, StartingSession };
 struct RoutingSignals {

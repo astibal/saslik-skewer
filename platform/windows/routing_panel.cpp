@@ -190,8 +190,13 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
                 if (state_.phase == RoutingPhase::Idle) {
-                    status_->setText(state_.paired ? tr("Idle — paired control ready")
-                                                   : tr("Idle — restoring paired control…"));
+                    if (!state_.tunnel_available) {
+                        status_->setText(
+                            tr("Idle — Direct-only service ready; upgrade to enable tunnel routing"));
+                    } else {
+                        status_->setText(state_.paired ? tr("Idle — paired control ready")
+                                                       : tr("Idle — restoring paired control…"));
+                    }
                 }
                 if (!state_.detail.empty()) {
                     status_->setText(status_->text() + tr(": %1").arg(QString::fromUtf8(state_.detail)));
@@ -236,7 +241,8 @@ RoutingPanel::RoutingPanel(QWidget* parent)
             dispatch(std::move(request));
         }
         updateControls();
-        if (known_ && !state_.paired && !automatic_pairing_attempted_ && !action_busy_ && !pending_ &&
+        if (known_ && state_.tunnel_available && !state_.paired && !automatic_pairing_attempted_ &&
+            !action_busy_ && !pending_ &&
             nextStartRequiresPairing() &&
             !endpoint_->text().trimmed().isEmpty() &&
             (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed)) {
@@ -274,7 +280,7 @@ void RoutingPanel::setPairedEndpoint(const QString& endpoint) {
     }
 }
 void RoutingPanel::startSelected(ProcessKey process) {
-    if (!process.pid || !process.created || !known_ || !state_.paired) {
+    if (!process.pid || !process.created || !known_ || !state_.tunnel_available || !state_.paired) {
         return;
     }
     Request request{4, service_->text().trimmed(), endpoint_->text().trimmed(), {},
@@ -320,11 +326,12 @@ void RoutingPanel::updateControls() {
     const bool automatic = requested == AutoTransport;
     const auto gateway_text = gateway_->text().trimmed();
     const bool valid_gateway = validDirectGateway();
-    const bool transport_ready = direct ? valid_gateway
-                                        : automatic ? (gateway_text.isEmpty() ? state_.paired
-                                                                              : valid_gateway)
-                                                    : state_.paired;
-    pair_->setEnabled(idle && !action_busy_);
+    const bool transport_ready = direct ? (state_.direct_available && valid_gateway)
+                                        : automatic ? (gateway_text.isEmpty()
+                                                           ? (state_.tunnel_available && state_.paired)
+                                                           : (state_.direct_available && valid_gateway))
+                                                    : (state_.tunnel_available && state_.paired);
+    pair_->setEnabled(idle && state_.tunnel_available && !action_busy_);
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
     service_->setEnabled(!action_busy_);
