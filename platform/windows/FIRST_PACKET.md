@@ -270,3 +270,19 @@ tunnel address and restoring replies, not an enabled per-application backend.
 Flow allocation, collision handling, lifetime tracking, return-path reinjection
 and service integration still have to use this primitive. Translation does not
 authenticate a process or turn diagnostic ownership evidence into authority.
+
+`TunnelFlows` now provides a bounded, single-worker translation table. Keys
+include process birth, socket identity and the original tuple, so one UDP socket
+may use multiple peers. Replies must match the entire translated reverse tuple;
+matching only a port never suffices. Socket release removes all its peer mappings.
+Idle expiry, explicit stop and backwards-clock detection invalidate mappings.
+The integration must call expiry periodically and validate the returned pinned
+owner before reinjection; the table itself cannot inspect OS process liveness.
+
+Ports are never reused within a tunnel epoch, including after expiry. Exhaustion
+rejects new flows rather than allowing delayed packets into a replacement socket.
+A replacement table requires a fresh authenticated tunnel/receive epoch, not just
+clearing the table while old replies may still arrive. Idle timeout is configurable
+and can interrupt idle TCP sessions; automatic TCP lifecycle policy and epoch
+renewal are not implemented yet. The table is tested on Linux and Windows but is
+not yet connected to the live selected-application packet pump.
