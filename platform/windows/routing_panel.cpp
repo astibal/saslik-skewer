@@ -15,7 +15,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     auto* note = new QLabel(tr("Whole-host IPv4 routing through an installed Skewer service. Closing this "
                                "window does not stop routing. "
-                               "Selected-application routing is not available yet. WinDivert protection does "
+                               "Selected-process routing is currently experimental and CLI-only. WinDivert protection does "
                                "not survive a service crash."),
                             this);
     note->setWordWrap(true);
@@ -31,7 +31,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     layout->addLayout(form);
     auto* buttons = new QHBoxLayout;
     pair_ = new QPushButton(tr("Send pairing"), this);
-    start_ = new QPushButton(tr("Start routing"), this);
+    start_ = new QPushButton(tr("Start whole-host routing"), this);
     stop_ = new QPushButton(tr("Stop routing"), this);
     pair_->setObjectName("routingPair");
     start_->setObjectName("routingStart");
@@ -76,7 +76,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                 state_ = result.reply;
                 const QStringList phases{tr("Idle"),
                                          tr("Starting"),
-                                         tr("Active — whole host"),
+                                         tr("Active — service routing"),
                                          tr("Blocked — tunnel failed, protection retained"),
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};

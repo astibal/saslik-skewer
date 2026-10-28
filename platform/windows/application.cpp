@@ -207,7 +207,7 @@ private:
         addUnavailablePage(tr("Connections"),
                            tr("Windows per-process connection inspection is not available yet."));
 
-        auto* disclaimer = new QLabel(tr("Selected-application routing is not implemented yet. Whole-host routing is controlled on the Routing tab. "
+        auto* disclaimer = new QLabel(tr("Selected-application routing is not available from this page yet. Whole-host routing is controlled on the Routing tab. "
                                          "Programs launched here follow the current host routing policy."),
                                       page_);
         disclaimer->setWordWrap(true);
