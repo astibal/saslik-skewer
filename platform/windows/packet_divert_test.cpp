@@ -366,13 +366,14 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
               << (physical ? "physical interface" : "loopback") << ")\n";
 }
 
-void directBridgePacket(const std::wstring& path) {
+void directBridgePacket(const std::wstring& path, int family) {
     using namespace skewer::windows;
-    Socket source(AF_INET), destination(AF_INET);
-    const auto local = bindLoopback(source.value, AF_INET);
-    const auto remote = bindLoopback(destination.value, AF_INET);
+    Socket source(family), destination(family);
+    const auto local = bindLoopback(source.value, family);
+    const auto remote = bindLoopback(destination.value, family);
     traffic::PacketCapture capture(
-        path, "outbound and loopback and ip and udp and udp.SrcPort == " +
+        path, std::string("outbound and loopback and ") +
+                  (family == AF_INET ? "ip" : "ipv6") + " and udp and udp.SrcPort == " +
                   std::to_string(port(local)) + " and udp.DstPort == " + std::to_string(port(remote)));
     Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancel), "Create direct capture cancellation");
@@ -392,8 +393,9 @@ void directBridgePacket(const std::wstring& path) {
     // An explicit Direct decision must not enqueue or truncate this packet.
     std::array<char, 1400> payload{};
     payload.fill('d');
+    const int address_size = family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
     require(sendto(source.value, payload.data(), payload.size(), 0,
-                   reinterpret_cast<const sockaddr*>(&remote), sizeof(sockaddr_in)) == payload.size(),
+                   reinterpret_cast<const sockaddr*>(&remote), address_size) == payload.size(),
             "Send direct bridge fixture");
     auto held = capture.next(cancel.get(), 2000);
     require(held.packet.has_value(), "Direct bridge packet not captured");
@@ -414,7 +416,7 @@ void directBridgePacket(const std::wstring& path) {
                           SelectedCaptureBridge::Disposition::Direct}) {
         disposition = decision;
         require(sendto(source.value, payload.data(), 64, 0,
-                       reinterpret_cast<const sockaddr*>(&remote), sizeof(sockaddr_in)) == 64,
+                       reinterpret_cast<const sockaddr*>(&remote), address_size) == 64,
                 "Send post-failure fixture");
         auto packet = capture.next(cancel.get(), 2000);
         require(packet.packet.has_value(), "Post-failure packet not captured");
@@ -429,8 +431,10 @@ void directBridgePacket(const std::wstring& path) {
         // A later healthy observation must not resurrect the retired epoch.
         healthy = true;
     }
-    std::cout << "PASS: explicit direct decision preserves packets larger than tunnel MTU\n";
-    std::cout << "PASS: tunnel failure blocks selected/unknown traffic but preserves explicit direct traffic\n";
+    std::cout << "PASS: explicit " << (family == AF_INET ? "IPv4" : "IPv6")
+              << " direct decision preserves packets larger than tunnel MTU\n";
+    std::cout << "PASS: tunnel failure blocks selected/unknown traffic but preserves explicit "
+              << (family == AF_INET ? "IPv4" : "IPv6") << " direct traffic\n";
 }
 
 void tcpTunnel(const std::wstring& path, int family) {
@@ -850,7 +854,8 @@ int wmain(int argc, wchar_t** argv) {
         translatedUdpSocket(path);
         translatedUdpSocket(path, true);
         socketProtocolGuard(path);
-        directBridgePacket(path);
+        directBridgePacket(path, AF_INET);
+        directBridgePacket(path, AF_INET6);
         tcpTunnel(path, AF_INET);
         tcpTunnel(path, AF_INET6);
 #endif

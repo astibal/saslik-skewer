@@ -34,13 +34,34 @@ private:
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        if (app.arguments().size() == 2 && app.arguments()[1] == "--child") {
+            Sleep(20000);
+            return 0;
+        }
         Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         if (!cancel) throw std::runtime_error("Cannot create fixture cancellation event");
-        const auto identity = processKey(GetCurrentProcess(), GetCurrentProcessId());
+        const auto child = launch(app.applicationFilePath().toStdWString(), {L"--child"});
+        Handle child_process(child.hProcess), child_thread(child.hThread);
+        struct StopChild {
+            HANDLE process;
+            ~StopChild() {
+                if (WaitForSingleObject(process, 0) == WAIT_TIMEOUT) {
+                    TerminateProcess(process, 0);
+                    WaitForSingleObject(process, 2000);
+                }
+            }
+        } stop_child{child_process.get()};
+        const auto identity = processKey(child_process.get(), child.dwProcessId);
+        HANDLE token_raw{};
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token_raw)) {
+            throw std::runtime_error("Cannot open fixture token");
+        }
+        Handle token(token_raw);
+        const auto owner = ServiceOwner::fromToken(token.get());
         FailingControl control(cancel.get());
         RoutingSignals state;
         const auto dll = QDir::toNativeSeparators(app.applicationDirPath() + "/WinDivert.dll").toStdWString();
-        runSelectedServiceTunnel(dll, std::make_unique<ProcessTarget>(identity), control,
+        runSelectedServiceTunnel(dll, std::make_unique<ProcessTarget>(identity), owner, control,
                                  QStringLiteral("127.0.0.1"), 8766, cancel.get(), state);
         if (control.opens < 3 || control.closes < 2 || state.ready.load() || !state.blocked.load()) {
             throw std::runtime_error("Reconnect did not preserve blocked state and retry ownership");

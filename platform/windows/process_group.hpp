@@ -15,7 +15,9 @@ public:
     ProcessGroup& operator=(const ProcessGroup&) = delete;
 
     const ProcessKey& root() const { return root_; }
+    bool running() const;
     bool contains(DWORD pid) const;
+    std::unique_ptr<ProcessTarget> member(DWORD pid) const;
 
     // Returns one newly observed, owner-validated process. Notifications are
     // advisory; callers must still use the retained ProcessTarget identity.

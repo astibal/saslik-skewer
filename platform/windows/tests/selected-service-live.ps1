@@ -48,6 +48,8 @@ try {
     }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
+    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--descendant'
+    if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant test failed' }
     & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected UDP process test failed' }
     & curl.exe --noproxy '*' -4 -k --fail --silent --show-error --max-time 12 `
@@ -79,4 +81,4 @@ try {
     Write-Output "Fixture files retained in Program Files\$name"
 }
 if ((NetworkState) -cne $before) { throw 'Selected fixture changed routes or DNS' }
-Write-Output 'PASS: paired SCM selected HTTPS and DNS UDP, explicit cleanup, unchanged routes and DNS'
+Write-Output 'PASS: paired SCM selected root/descendant HTTPS and DNS UDP, explicit cleanup, unchanged routes and DNS'

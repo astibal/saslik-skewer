@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
                     PskTunnelControl control(
                         endpoint, peer, QByteArray::fromStdString(pairing.identity),
                         QByteArray(reinterpret_cast<const char*>(pairing.key.data()), pairing.key.size()));
-                    runSelectedServiceTunnel(divert, std::move(target), control, peer, endpoint.port(),
+                    runSelectedServiceTunnel(divert, std::move(target), owner, control, peer, endpoint.port(),
                                              cancel, state);
                 });
             return 0;

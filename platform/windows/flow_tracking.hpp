@@ -48,6 +48,7 @@ class TrackedSocketObserver final {
 public:
     TrackedSocketObserver(const std::wstring& dll, ProcessKey process);
     TrackedSocketObserver(const std::wstring& dll, std::unique_ptr<ProcessTarget> process);
+    bool running() const { return observer_.targetRunning(); }
     FlowObserver::Result next(HANDLE cancellation, DWORD timeout_ms);
     skewer::traffic::FlowIndex::Match lookup(skewer::traffic::PacketTuple tuple);
     std::optional<skewer::traffic::FlowIdentity> lookupFlow(skewer::traffic::PacketTuple tuple);

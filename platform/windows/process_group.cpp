@@ -48,6 +48,32 @@ bool ProcessGroup::contains(DWORD pid) const {
     return member != FALSE;
 }
 
+bool ProcessGroup::running() const {
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+    if (!QueryInformationJobObject(job_.get(), JobObjectBasicAccountingInformation,
+                                   &accounting, sizeof(accounting), nullptr)) {
+        fail("Query process job accounting");
+    }
+    return accounting.ActiveProcesses != 0;
+}
+
+std::unique_ptr<ProcessTarget> ProcessGroup::member(DWORD pid) const {
+    if (!pid) return {};
+    Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid));
+    if (!process) return {};
+    BOOL member{};
+    if (!IsProcessInJob(process.get(), job_.get(), &member)) fail("Query process job membership");
+    if (!member) return {};
+    const auto identity = processKey(process.get(), pid);
+    try {
+        return std::make_unique<ProcessTarget>(identity, owner_);
+    } catch (const std::runtime_error&) {
+        // The PID may have exited/recycled between the membership query and
+        // reopening. The expected creation time prevents adopting its reuse.
+        return {};
+    }
+}
+
 std::unique_ptr<ProcessTarget> ProcessGroup::next(DWORD timeout_ms) {
     for (;;) {
         DWORD message{};

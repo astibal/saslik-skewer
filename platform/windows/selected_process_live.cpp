@@ -75,6 +75,23 @@ int runUdpChild(const QString& host, const QString& destination) {
             "UDP child DNS response failed");
     return 0;
 }
+int runHttpsDescendant(const QString& host, const QString& destination) {
+    wchar_t system[MAX_PATH]{};
+    const auto length = GetSystemDirectoryW(system, MAX_PATH);
+    require(length && length < MAX_PATH, "Resolve descendant system directory");
+    const auto curl = std::wstring(system) + L"\\curl.exe";
+    const auto child = launch(curl,
+                              {L"--noproxy", L"*", L"-4", L"-k", L"--fail", L"--silent",
+                               L"--show-error", L"--max-time", L"20", L"--output", L"NUL",
+                               L"--resolve", (host + ":443:" + destination).toStdWString(),
+                               ("https://" + host + "/").toStdWString()});
+    Handle process(child.hProcess), thread(child.hThread);
+    require(WaitForSingleObject(process.get(), 25000) == WAIT_OBJECT_0,
+            "Descendant curl timed out");
+    DWORD exit{};
+    require(GetExitCodeProcess(process.get(), &exit), "Read descendant curl exit code");
+    return static_cast<int>(exit);
+}
 // Own only the child created by this fixture; never terminate a discovered PID.
 struct Child {
     PROCESS_INFORMATION process{};
@@ -165,11 +182,19 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (args.size() == 4 && args[1] == "--https-descendant") {
+        try {
+            return runHttpsDescendant(args[2], args[3]);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
-        (args.size() == 7 && args[6] != "--udp")) {
+        (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant")) {
         QTextStream(stderr)
             << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
-               "[SERVICE [--udp]|--udp]\n";
+               "[SERVICE [--udp|--descendant]|--udp]\n";
         return 2;
     }
     try {
@@ -189,14 +214,21 @@ int main(int argc, char** argv) {
         } cleanup;
         Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
         require(bool(stop), "Create stop event");
-        const bool udp_probe = (args.size() == 6 && args[5] == "--udp") || args.size() == 7;
+        const bool udp_probe = (args.size() == 6 && args[5] == "--udp") ||
+                               (args.size() == 7 && args[6] == "--udp");
         wchar_t system[MAX_PATH]{};
         const auto length = GetSystemDirectoryW(system, MAX_PATH);
         require(length && length < MAX_PATH, "Resolve system directory");
         const auto executable = udp_probe ? app.applicationFilePath().toStdWString()
                                           : std::wstring(system) + L"\\curl.exe";
         if ((args.size() == 6 && !udp_probe) || args.size() == 7) {
-            const auto child_arguments = udp_probe
+            const bool descendant_probe = args.size() == 7 && args[6] == "--descendant";
+            const auto service_executable = descendant_probe ? app.applicationFilePath().toStdWString()
+                                                              : executable;
+            const auto child_arguments = descendant_probe
+                ? std::vector<std::wstring>{L"--https-descendant", args[4].toStdWString(),
+                                            args[3].toStdWString()}
+                : udp_probe
                 ? std::vector<std::wstring>{L"--udp-child", args[4].toStdWString(),
                                             args[3].toStdWString()}
                 : std::vector<std::wstring>{L"--noproxy", L"*", L"-4", L"-k", L"--fail",
@@ -204,7 +236,7 @@ int main(int argc, char** argv) {
                                             L"--output", L"NUL", L"--resolve",
                                             (args[4] + ":443:" + args[3]).toStdWString(),
                                             ("https://" + args[4] + "/").toStdWString()};
-            throughService(executable, child_arguments, args[5].toStdWString());
+            throughService(service_executable, child_arguments, args[5].toStdWString());
             return 0;
         }
         auto command = udp_probe

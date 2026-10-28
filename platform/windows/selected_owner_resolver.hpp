@@ -17,6 +17,7 @@ public:
         Disposition disposition{Disposition::Hold};
     };
     SelectedOwnerResolver(const std::wstring& dll, std::unique_ptr<ProcessTarget> target);
+    bool running() const { return observer_.running(); }
     Result resolve(skewer::traffic::PacketTuple tuple, HANDLE cancel);
 
 private:

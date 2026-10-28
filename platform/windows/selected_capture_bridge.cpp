@@ -35,8 +35,8 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
         blockTunnel();
     }
     const auto tuple = skewer::traffic::parsePacketTuple(packet.bytes);
-    if (!tuple.tuple || tuple.tuple->ipv6 ||
-        packet.address.Layer != WINDIVERT_LAYER_NETWORK || !packet.address.Outbound || packet.address.IPv6 ||
+    if (!tuple.tuple || packet.address.Layer != WINDIVERT_LAYER_NETWORK || !packet.address.Outbound ||
+        packet.address.IPv6 != tuple.tuple->ipv6 ||
         (!packet.address.Loopback && !packet.address.Network.IfIdx)) {
         return false;
     }
@@ -50,6 +50,11 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
         // The resolver remains authoritative even when the tunnel is blocked.
         capture_.reinject(std::move(packet));
         return true;
+    }
+    if (tuple.tuple->ipv6) {
+        // The selected tunnel is IPv4-only. Selected/ambiguous IPv6 is held;
+        // positively unrelated IPv6 was already reinjected above.
+        return false;
     }
     if (decision.disposition != Disposition::Tunnel || tunnel_blocked_) {
         return false;

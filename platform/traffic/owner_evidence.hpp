@@ -9,6 +9,7 @@ namespace skewer::traffic {
 // Keep this type separate from PacketOwner so callers cannot accidentally
 // release packets merely because independent diagnostic sources agree.
 enum class OwnerEvidence {
+    GroupCorroborated,
     Corroborated,
     MissingLifecycle,
     ConflictingLifecycle,

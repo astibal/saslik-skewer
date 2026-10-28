@@ -1,28 +1,33 @@
 #include "selected_service_tunnel.hpp"
 #include "selected_session_packets.hpp"
 #include "socket_connect_guard.hpp"
-#include "selected_owner_resolver.hpp"
+#include "selected_group_resolver.hpp"
 #include <algorithm>
 #include <exception>
+#include <vector>
 
 namespace skewer::windows {
 namespace {
 class Runtime final : public PacketDevice, public TunnelPacketWorker {
 public:
-    Runtime(const std::wstring& dll, std::unique_ptr<ProcessTarget> target, std::string peer,
-            std::uint16_t port, HANDLE cancel, std::atomic_bool& ready, std::atomic_bool& published,
+    Runtime(const std::wstring& dll, std::unique_ptr<ProcessTarget> target, const ServiceOwner& owner,
+            std::string peer, std::uint16_t port, HANDLE cancel, std::atomic_bool& ready,
+            std::atomic_bool& published,
             std::atomic_bool& blocked, std::atomic<RoutingStage>& stage,
             std::atomic<std::shared_ptr<const std::string>>& retry_error)
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
           published_(published), blocked_(blocked), stage_(stage), retry_error_(retry_error),
-          target_(target.get()), identity_(target->key()),
-          resolver_(dll, std::move(target)),
-          unsupported_(dll, *target_, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp, peer_,
-                       port_) {
-        startup_ = std::make_unique<traffic::SocketConnectGuard>(dll, *target_,
-                                                                 traffic::SocketConnectGuard::Mode::All);
-    }
-    bool running() const { return target_->running(); }
+          identity_(target->key()),
+          resolver_(dll, std::move(target), owner, [this](const ProcessTarget& member) {
+              unsupported_.push_back(std::make_unique<traffic::SocketConnectGuard>(
+                  dll_, member, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp,
+                  peer_, port_));
+              if (member.key() == identity_) {
+                  startup_ = std::make_unique<traffic::SocketConnectGuard>(
+                      dll_, member, traffic::SocketConnectGuard::Mode::All);
+              }
+          }) {}
+    bool running() const { return resolver_.running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
         stage_ = RoutingStage::Intercepting;
         if (packets_ && !packets_->blocked()) {
@@ -34,7 +39,7 @@ public:
             // do not capture unrelated host packets during the first control
             // handshake. Once opened, keep interception across all reconnects.
             capture_ = std::make_unique<traffic::PacketCapture>(
-                dll_, "outbound and ip and ((ip.DstAddr == " + peer_ +
+                dll_, "outbound and (ip or ipv6) and ((ip and ip.DstAddr == " + peer_ +
                           " and ((udp.DstPort >= 40001 and udp.DstPort <= 40255) or tcp.DstPort == " +
                           std::to_string(port_) + ")) ? false : true)");
         }
@@ -50,8 +55,7 @@ public:
                 return SelectedCaptureBridge::Resolution{action, result.flow};
             },
             [&](auto flow) {
-                return flow.process == skewer::traffic::ProcessIdentity{identity_.pid, identity_.created} &&
-                       running();
+                return resolver_.contains(flow.process) && running();
             },
             cancel_, ready_);
         try {
@@ -123,24 +127,24 @@ private:
     std::atomic_bool& blocked_;
     std::atomic<RoutingStage>& stage_;
     std::atomic<std::shared_ptr<const std::string>>& retry_error_;
-    const ProcessTarget* target_; // Owned by resolver_, never reopened under SYSTEM.
     ProcessKey identity_;
-    traffic::SelectedOwnerResolver resolver_;
-    traffic::SocketConnectGuard unsupported_;
+    std::vector<std::unique_ptr<traffic::SocketConnectGuard>> unsupported_;
     std::unique_ptr<traffic::SocketConnectGuard> startup_;
+    traffic::SelectedGroupResolver resolver_;
     std::unique_ptr<traffic::PacketCapture> capture_;
     std::unique_ptr<SelectedSessionPackets> packets_;
 };
 } // namespace
 void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTarget> target,
-                              TunnelControl& control, const QString& peer, std::uint16_t control_port,
+                              const ServiceOwner& owner, TunnelControl& control, const QString& peer,
+                              std::uint16_t control_port,
                               HANDLE cancel, RoutingSignals& state) {
     if (!target || !target->running() || !control_port) {
         throw std::invalid_argument("Selected runtime requires a live authorized target and control port");
     }
     state.stage = RoutingStage::Preparing;
     std::atomic_bool transport_ready{};
-    Runtime runtime(dll, std::move(target), peer.toStdString(), control_port, cancel, transport_ready,
+    Runtime runtime(dll, std::move(target), owner, peer.toStdString(), control_port, cancel, transport_ready,
                     state.ready, state.blocked, state.stage, state.retry_error);
     state.stage = RoutingStage::Connecting;
     unsigned failures{};
