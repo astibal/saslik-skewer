@@ -88,8 +88,13 @@ jobs:
           Expand-Archive -LiteralPath $tests[0].FullName -DestinationPath $testRoot
           $testPackage = Join-Path $testRoot $tests[0].BaseName
           & (Join-Path $testPackage 'run-tests.ps1') -Root $testPackage
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'skewer-release-smoke'
           ./packaging/test-windows-package.ps1 -Archive $archive[0].FullName `
-            -ExpectedVersion $version -TestRoot (Join-Path $env:RUNNER_TEMP 'skewer-release-smoke')
+            -ExpectedVersion $version -TestRoot $smokeRoot
+          $package = Join-Path $smokeRoot "skewer-windows-amd64-$version"
+          ./platform/windows/tests/install-routing-service-live.ps1 `
+            -Directory $package -WinDivertDirectory $package `
+            -WintunDll (Join-Path $package 'wintun.dll')
   install:
     needs: package
     runs-on: ubuntu-24.04

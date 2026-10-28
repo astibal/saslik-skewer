@@ -3,6 +3,15 @@ Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
 
 ### 0.9.50.6
 
+- Windows 11 now ships the native Qt application, per-user pairing and CA trust,
+  managed runtime trust, process browser, selected-process routing and explicit
+  whole-host routing through either Tuntom or a directly reachable Saslik.
+- The privileged Windows routing service is independent of the GUI, starts in
+  Idle, retains fail-closed routing during tunnel loss, and uses bounded SCM
+  crash recovery without automatically reactivating routing.
+- Windows release verification covers the signed Wintun/WinDivert dependencies,
+  41 native tests, route ownership, package install/uninstall, GUI startup and a
+  real service crash/restart/upgrade/removal lifecycle.
 - Shell status recognizes active Tuntom routes instead of comparing their
   gateway with Saslik's direct gateway. Missing routes and inactive tunnel
   interfaces still fail the status check.
