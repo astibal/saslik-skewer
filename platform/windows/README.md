@@ -422,15 +422,18 @@ offline after its report timeout (currently thirty seconds).
 
 The device list is populated by reports, not enrollment alone. Reports contain
 the hostname, Skewer version and an exact CryptoAPI observation of the last CA
-downloaded from Saslik in `Current User\\ROOT`. No other Windows or
-application-private store is claimed. Online presence must not be interpreted
-as active application routing. Invitations can be consumed by the protected
+downloaded from Saslik in `Current User\\ROOT`. If the exact same CA is present
+in Skewer's private runtime-trust input, the report also advertises the generic
+managed runtime bundle used for newly launched Python/OpenSSL, Requests, curl,
+pip and Node processes. It sends neither certificate contents nor local paths.
+No other Windows or application-private store is claimed. Online presence must
+not be interpreted as active application routing. Invitations can be consumed by the protected
 field on the Saslik tab or by the pairing command's stdin; they must never be
 placed in the endpoint field or command-line arguments.
 
 `client_report_test` covers the minimal report schema, a real Current User Root
-observation, and rejection of invitation-bearing endpoints without leaking
-their contents.
+observation, an exact managed-runtime CA match, and rejection of
+invitation-bearing endpoints without leaking their contents.
 `tests/client-report-smoke.ps1` runs on the interactive Windows desktop and
 checks accepted reports, renewal while minimized, and stop/start controls.
 

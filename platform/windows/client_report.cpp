@@ -20,6 +20,19 @@ QJsonObject clientReport(const QString& hostname, const QString& version,
                                   {"detail", "Windows CryptoAPI exact certificate match"},
                                   {"matches", observation.current_user_root ? 1 : 0},
                                   {"application_id", "system"}});
+        if (observation.managed_runtime) {
+            applications.append(QJsonObject{{"id", "managed-runtime"},
+                                            {"alias", "Managed runtimes"},
+                                            {"recognized", true}, {"icon", ""}});
+            stores.append(QJsonObject{{"key", "windows-managed-runtime"},
+                                      {"label", "Managed runtime bundle"},
+                                      {"path", "Skewer managed trust"},
+                                      {"system", false}, {"available", true},
+                                      {"installed", true},
+                                      {"detail", "Exact advertised CA in the Skewer-managed runtime bundle"},
+                                      {"matches", 1},
+                                      {"application_id", "managed-runtime"}});
+        }
     }
     return {
         {"version", 1},

@@ -4,6 +4,7 @@
 #include <wincrypt.h>
 #include <bcrypt.h>
 #include <QSettings>
+#include <QFile>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -61,7 +62,24 @@ CaObservation inspect(const QByteArray& pem) {
             break;
         }
     }
-    return {QByteArray(reinterpret_cast<const char*>(digest), sizeof(digest)).toHex(), present};
+    return {QByteArray(reinterpret_cast<const char*>(digest), sizeof(digest)).toHex(), present, false};
+}
+
+bool managedRuntimeMatches(const QByteArray& advertised) {
+    const auto path = QSettings().value("windows/runtimeTrustCa").toString();
+    QFile input(path);
+    if (path.isEmpty() || !input.open(QIODevice::ReadOnly) || input.size() > 1024 * 1024) {
+        return false;
+    }
+    try {
+        const auto expected = decode(advertised);
+        const auto managed = decode(input.readAll());
+        return expected->cbCertEncoded == managed->cbCertEncoded &&
+               std::memcmp(expected->pbCertEncoded, managed->pbCertEncoded,
+                           expected->cbCertEncoded) == 0;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 } // namespace
 
@@ -85,6 +103,11 @@ QByteArray advertisedCaCertificate() {
 
 CaObservation advertisedCaObservation() {
     const auto pem = advertisedCaCertificate();
-    return pem.isEmpty() ? CaObservation{} : inspect(pem);
+    if (pem.isEmpty()) {
+        return {};
+    }
+    auto observation = inspect(pem);
+    observation.managed_runtime = managedRuntimeMatches(pem);
+    return observation;
 }
 } // namespace skewer::windows

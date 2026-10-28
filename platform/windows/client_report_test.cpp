@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QJsonArray>
 #include <QSettings>
+#include <QTemporaryFile>
 #include <cstdio>
 #include <memory>
 
@@ -61,6 +62,20 @@ int main(int argc, char** argv) {
         std::fputs("Windows trust observation was not reported exactly\n", stderr);
         return 1;
     }
+    const auto managed = skewer::windows::clientReport(
+        "SKEWER-WIN11", "test-version", {"0123456789abcdef", true, true});
+    const auto managed_ca = managed.value("ca").toObject();
+    const auto managed_stores = managed_ca.value("stores").toArray();
+    const auto managed_applications = managed_ca.value("applications").toArray();
+    if (managed_stores.size() != 2 || managed_applications.size() != 2 ||
+        managed_stores.last().toObject().value("key").toString() !=
+            "windows-managed-runtime" ||
+        !managed_stores.last().toObject().value("installed").toBool() ||
+        managed_applications.last().toObject().value("id").toString() !=
+            "managed-runtime") {
+        std::fputs("Managed runtime trust observation was not reported exactly\n", stderr);
+        return 1;
+    }
     const auto root = firstCurrentUserRoot();
     if (root.isEmpty()) {
         std::fputs("Current User Root fixture unavailable\n", stderr);
@@ -71,13 +86,22 @@ int main(int argc, char** argv) {
         std::fputs("Validated advertised CA was not restored\n", stderr);
         return 1;
     }
+    QTemporaryFile managed_ca_file;
+    if (!managed_ca_file.open() || managed_ca_file.write(root) != root.size() ||
+        !managed_ca_file.flush()) {
+        std::fputs("Cannot create managed runtime CA fixture\n", stderr);
+        return 1;
+    }
+    QSettings().setValue("windows/runtimeTrustCa", managed_ca_file.fileName());
     const auto observed_ca = skewer::windows::clientReport("SKEWER-WIN11", "test-version")
                                  .value("ca").toObject();
     const auto observed_stores = observed_ca.value("stores").toArray();
     if (observed_ca.value("fingerprint").toString().size() != 64 ||
-        observed_stores.size() != 1 ||
-        !observed_stores.first().toObject().value("installed").toBool()) {
-        std::fputs("Persisted Windows Root observation was not reported\n", stderr);
+        observed_stores.size() != 2 ||
+        !observed_stores.first().toObject().value("installed").toBool() ||
+        observed_stores.last().toObject().value("key").toString() !=
+            "windows-managed-runtime") {
+        std::fputs("Persisted Windows trust observations were not reported\n", stderr);
         return 1;
     }
     const auto error = skewer::windows::sendClientReport(

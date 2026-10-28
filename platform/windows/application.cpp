@@ -162,7 +162,8 @@ private:
         auto* explanation =
             new QLabel(tr("Report this paired Windows client to Saslik. "
                           "Online presence does not mean that application routing is active. "
-                          "This build does not report certificate-store installation status."),
+                          "Current User Root and Skewer-managed runtime trust are reported "
+                          "for the exact advertised CA."),
                        page);
         explanation->setWordWrap(true);
         layout->addWidget(explanation);
