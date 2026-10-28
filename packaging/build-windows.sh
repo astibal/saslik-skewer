@@ -77,7 +77,8 @@ if [ ! -f "$work/openssl/lib/libssl.a" ] || [ ! -f "$work/openssl/lib/libcrypto.
         -v "$root:/src:ro" \
         -v "$work:/work" \
         skewer-windows-cross \
-        /src/platform/windows/build-openssl.sh "/work/downloads/openssl-$openssl_version.tar.gz" /work/openssl
+        sh /src/platform/windows/build-openssl.sh \
+            "/work/downloads/openssl-$openssl_version.tar.gz" /work/openssl
 fi
 
 docker run --rm -v "$work:/work" skewer-windows-cross rm -rf /work/build
