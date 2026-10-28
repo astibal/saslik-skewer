@@ -10,6 +10,11 @@
 #include <type_traits>
 
 namespace skewer::windows::traffic {
+bool excludesSelectedTcpOwner(std::span<const std::uint32_t> candidates, std::uint32_t selected) {
+    return selected && !candidates.empty() &&
+           std::all_of(candidates.begin(), candidates.end(),
+                       [&](auto pid) { return pid && pid != selected; });
+}
 namespace {
 template <typename Table, typename Convert>
 void appendTable(ULONG family, std::vector<TcpOwnerRow>& rows, Convert convert) {

@@ -382,3 +382,28 @@ recomputes checksums. Before the clamp the TLS probe timed out; after it the
 same probe returned HTTP 200. Fragmented and unsupported input remains rejected.
 The probe still owns its exclusive source socket; general GUI selection, other
 application lifetimes, DNS and service-mode policy are not yet provided by it.
+
+### Concurrent direct TCP traffic (developer probe)
+
+The optional `--broad` flag captures outbound IPv4 TCP rather than only the
+probe's own tuple. The resolver returns an explicit Tunnel, Direct or Hold
+decision. Direct requires a fresh, nonempty native TCP owner-table result with
+no unknown or selected PID and no conflicting selected socket lifecycle entry.
+Missing, stale or unreliable evidence remains Hold (drop, not a deferred queue).
+This is non-atomic lab attribution, not a security boundary or unique ownership
+proof. Direct reinjection preserves the host MTU; only tunneled packets are
+subject to the 1280-byte transport limit.
+
+`tests/selected-tcp-live.ps1` waits for the probe's capture-ready message before
+starting an independent curl process. It requires both HTTPS operations to
+succeed and a nonzero explicit Direct decision count. The selected probe uses
+the paired Saslik; the unrelated process keeps its ordinary route. Both TLS
+requests skip certificate validation solely in this diagnostic test. Diagnostic
+logs are retained in a unique temporary directory.
+
+Run this broad probe only in the development VM. It does not install routes or
+change DNS, but unknown traffic is dropped while interception exists. A failed
+tunnel retires the entire bridge, including direct reinjection, until its
+supervisor closes the capture handle. Production per-application failure
+isolation, UDP, IPv6 and process-tree lifecycle integration remain unfinished;
+this flag is not exposed by the installed service or GUI.

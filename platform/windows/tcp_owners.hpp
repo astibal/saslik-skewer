@@ -24,4 +24,7 @@ TcpOwnerSnapshot captureTcpOwners();
 // PID reuse, compartments and concurrent socket changes remain external checks.
 std::vector<std::uint32_t> tcpOwnerCandidates(std::span<const TcpOwnerRow> rows,
                                               const skewer::traffic::PacketTuple& tuple);
+// Candidate predicate only. Freshness, selected process liveness and lifecycle
+// disagreement must still be checked by the policy before any direct delivery.
+bool excludesSelectedTcpOwner(std::span<const std::uint32_t> candidates, std::uint32_t selected);
 } // namespace skewer::windows::traffic

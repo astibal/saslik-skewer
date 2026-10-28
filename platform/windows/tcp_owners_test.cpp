@@ -10,6 +10,12 @@ void require(bool ok, const char* message) {
 }
 int main() {
     try {
+        require(!excludesSelectedTcpOwner({}, 42), "Unknown owner bypassed");
+        const std::vector<std::uint32_t> selected{42}, mixed{99, 42}, unknown{99, 0}, other{99};
+        require(!excludesSelectedTcpOwner(selected, 42) && !excludesSelectedTcpOwner(mixed, 42) &&
+                    !excludesSelectedTcpOwner(unknown, 42) && !excludesSelectedTcpOwner(other, 0) &&
+                    excludesSelectedTcpOwner(other, 42),
+                "Incorrect unselected candidate decision");
         for (bool ipv6 : {false, true}) {
             skewer::traffic::PacketTuple tuple;
             tuple.protocol = 6;

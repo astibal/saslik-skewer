@@ -27,16 +27,20 @@ struct Socket {
 };
 } // namespace
 // Explicit elevated lab probe. No host routes or global filters are installed.
-// Only this exclusively bound source port and the supplied destination are held.
+// Default scope is one exclusively bound source port. --broad is a bounded
+// VM-only experiment intercepting all outbound IPv4 TCP, not a service mode.
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     app.setOrganizationName("Saslik");
     app.setApplicationName("Skewer");
     const auto args = app.arguments();
-    const bool tls = args.size() == 6 && args[5] == "--tls";
-    if (args.size() != 5 && !tls) {
+    const bool tls = args.mid(5).contains("--tls");
+    const bool broad = args.mid(5).contains("--broad");
+    if (args.size() < 5 || args.size() > 7 ||
+        std::any_of(args.begin() + std::min(5, int(args.size())), args.end(),
+                    [](const auto& arg) { return arg != "--tls" && arg != "--broad"; })) {
         QTextStream(stderr)
-            << "Usage: selected_tcp_live PAIRED_ENDPOINT PEER_IPV4 HTTP_IPV4 HTTP_HOST [--tls]\n";
+            << "Usage: selected_tcp_live PAIRED_ENDPOINT PEER_IPV4 HTTP_IPV4 HTTP_HOST [--tls] [--broad]\n";
         return 2;
     }
     try {
@@ -92,9 +96,11 @@ int main(int argc, char** argv) {
         require(getsockname(source.value, reinterpret_cast<sockaddr*>(&local), &localSize) == 0,
                 "Read TCP port");
         traffic::PacketCapture capture(
-            dll, "outbound and ip and tcp and tcp.SrcPort == " + std::to_string(ntohs(local.sin_port)) +
-                     " and ip.DstAddr == " + args[3].toStdString() +
-                     " and tcp.DstPort == " + std::to_string(destinationPort));
+            dll, broad
+                     ? "outbound and ip and tcp"
+                     : "outbound and ip and tcp and tcp.SrcPort == " + std::to_string(ntohs(local.sin_port)) +
+                           " and ip.DstAddr == " + args[3].toStdString() +
+                           " and tcp.DstPort == " + std::to_string(destinationPort));
         // Close the source before interception is destroyed, including exception paths.
         struct CloseBeforeGuard {
             Socket& socket;
@@ -133,10 +139,29 @@ int main(int argc, char** argv) {
             Sleep(2);
         }
         require(healthy(), "Paired tunnel handshake failed");
+        std::uint64_t direct{}, held{};
         SelectedCaptureBridge bridge(
-            capture, device, [&](auto tuple) { return resolver.resolve(tuple, stop.get()).flow; }, live,
-            healthy);
+            capture, device,
+            [&](auto tuple) {
+                const auto result = resolver.resolve(tuple, stop.get());
+                using Source = traffic::TcpSelectionResolver::Disposition;
+                using Target = SelectedCaptureBridge::Disposition;
+                const auto action = result.disposition == Source::Tunnel   ? Target::Tunnel
+                                    : result.disposition == Source::Direct ? Target::Direct
+                                                                           : Target::Hold;
+                if (action == Target::Direct) {
+                    ++direct;
+                }
+                if (action == Target::Hold) {
+                    ++held;
+                }
+                return SelectedCaptureBridge::Resolution{action, result.flow};
+            },
+            live, healthy);
         u_long nonblocking = 1;
+        if (broad) {
+            QTextStream(stdout) << "CAPTURE READY: outbound IPv4 TCP lab policy" << Qt::endl;
+        }
         require(ioctlsocket(source.value, FIONBIO, &nonblocking) == 0, "Set nonblocking socket");
         require(connect(source.value, reinterpret_cast<const sockaddr*>(&destination), sizeof(destination)) ==
                         SOCKET_ERROR &&
@@ -229,9 +254,20 @@ int main(int argc, char** argv) {
         }
         require(sent == request.size() && response.startsWith("HTTP/") && response.contains("\r\n\r\n"),
                 "No complete HTTP response over selected tunnel");
+        if (broad) {
+            // Keep the policy alive briefly so the integration script can run
+            // an independent, unselected client at the same time.
+            const auto until = std::min(deadline, TunnelPump::Clock::now() + std::chrono::seconds(5));
+            while (TunnelPump::Clock::now() < until) {
+                pump.step(TunnelPump::Clock::now());
+                require(healthy(), "Tunnel lost health during unrelated-client test");
+                bridge.step(stop.get(), 2);
+            }
+        }
         QTextStream(stdout) << "PASS: selected " << (tls ? "HTTPS (trust not checked)" : "HTTP")
                             << " through paired Saslik: " << response.left(response.indexOf("\r\n"))
-                            << " tx=" << pump.counters().tx << " rx=" << pump.counters().rx << Qt::endl;
+                            << " tx=" << pump.counters().tx << " rx=" << pump.counters().rx
+                            << " direct=" << direct << " held=" << held << Qt::endl;
         source.close();
         bridge.stop();
         return 0;

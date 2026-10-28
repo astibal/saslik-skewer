@@ -32,12 +32,33 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
         return false;
     }
     const auto tuple = skewer::traffic::parsePacketTuple(packet.bytes);
-    if (!tuple.tuple || tuple.tuple->ipv6 || packet.bytes.size() > 1280 ||
+    if (!tuple.tuple || tuple.tuple->ipv6 ||
         packet.address.Layer != WINDIVERT_LAYER_NETWORK || !packet.address.Outbound || packet.address.IPv6 ||
         (!packet.address.Loopback && !packet.address.Network.IfIdx)) {
         return false;
     }
-    const auto owner = resolve_(*tuple.tuple);
+    const auto decision = resolve_(*tuple.tuple);
+    const auto owner = decision.owner;
+    if (decision.disposition == Disposition::Direct) {
+        if (owner) {
+            throw std::logic_error("Direct decision must not carry a selected owner");
+        }
+        // Explicit independent policy, never fallback after a failed tunnel.
+        if (!healthy_()) {
+            stop();
+            return false;
+        }
+        capture_.reinject(std::move(packet));
+        return true;
+    }
+    if (decision.disposition != Disposition::Tunnel) {
+        return false;
+    }
+    // Only selected traffic is constrained by the encrypted transport MTU.
+    // Direct traffic keeps the original host interface's packet size.
+    if (packet.bytes.size() > 1280) {
+        return false;
+    }
     if (!owner || !live_(*owner)) {
         return false;
     }

@@ -246,11 +246,11 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
     const auto expected = *skewer::traffic::parsePacketTuple(held.packet->bytes).tuple;
     SelectedCaptureBridge bridge(
         capture, device,
-        [&](const auto& tuple) -> std::optional<decltype(owner)> {
+        [&](const auto& tuple) -> SelectedCaptureBridge::Resolution {
             if (tuple == expected && pinned.running()) {
-                return owner;
+                return {SelectedCaptureBridge::Disposition::Tunnel, owner};
             }
-            return std::nullopt;
+            return {};
         },
         [&](auto candidate) { return candidate == owner && pinned.running(); }, [&] { return healthy; });
     require(bridge.accept(*held.packet), "Captured packet not accepted by bridge");
@@ -298,6 +298,43 @@ void translatedUdpSocket(const std::wstring& path, bool physical = false) {
     require(!bridge.accept(*held.packet), "Lost health accepted captured packet");
     std::cout << "PASS: captured UDP socket -> translated encrypted tunnel -> restored socket reply ("
               << (physical ? "physical interface" : "loopback") << ")\n";
+}
+
+void directBridgePacket(const std::wstring& path) {
+    using namespace skewer::windows;
+    Socket source(AF_INET), destination(AF_INET);
+    const auto local = bindLoopback(source.value, AF_INET);
+    const auto remote = bindLoopback(destination.value, AF_INET);
+    traffic::PacketCapture capture(
+        path, "outbound and loopback and ip and udp and udp.SrcPort == " +
+                  std::to_string(port(local)) + " and udp.DstPort == " + std::to_string(port(remote)));
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(static_cast<bool>(cancel), "Create direct capture cancellation");
+    SelectedTunnelDevice device({10, 253, 0, 10}, [](auto) { return false; }, [] { return true; });
+    SelectedCaptureBridge bridge(
+        capture, device,
+        [](const auto&) -> SelectedCaptureBridge::Resolution {
+            return {SelectedCaptureBridge::Disposition::Direct, std::nullopt};
+        },
+        [](auto) { return false; }, [] { return true; });
+
+    // Larger than the tunnel MTU, but valid for the unchanged host path.
+    // An explicit Direct decision must not enqueue or truncate this packet.
+    std::array<char, 1400> payload{};
+    payload.fill('d');
+    require(sendto(source.value, payload.data(), payload.size(), 0,
+                   reinterpret_cast<const sockaddr*>(&remote), sizeof(sockaddr_in)) == payload.size(),
+            "Send direct bridge fixture");
+    auto held = capture.next(cancel.get(), 2000);
+    require(held.packet.has_value(), "Direct bridge packet not captured");
+    require(!readable(destination.value, 20), "Direct fixture escaped capture");
+    require(bridge.accept(std::move(*held.packet)), "Explicit direct packet rejected");
+    require(readable(destination.value, 2000), "Direct packet did not reach destination");
+    std::array<char, 1500> received{};
+    const auto count = recv(destination.value, received.data(), received.size(), 0);
+    require(count == payload.size() && std::equal(payload.begin(), payload.end(), received.begin()),
+            "Direct bridge changed payload");
+    std::cout << "PASS: explicit direct decision preserves packets larger than tunnel MTU\n";
 }
 
 void tcpTunnel(const std::wstring& path, int family) {
@@ -691,6 +728,7 @@ int wmain(int argc, wchar_t** argv) {
 #ifdef SKEWER_TEST_TUNNEL_PATH
         translatedUdpSocket(path);
         translatedUdpSocket(path, true);
+        directBridgePacket(path);
         tcpTunnel(path, AF_INET);
         tcpTunnel(path, AF_INET6);
 #endif

@@ -10,7 +10,12 @@ namespace skewer::windows {
 class SelectedCaptureBridge final {
 public:
     using Identity = SelectedTunnelDevice::Identity;
-    using Resolver = std::function<std::optional<Identity>(const skewer::traffic::PacketTuple&)>;
+    enum class Disposition { Hold, Tunnel, Direct };
+    struct Resolution {
+        Disposition disposition{Disposition::Hold};
+        std::optional<Identity> owner;
+    };
+    using Resolver = std::function<Resolution(const skewer::traffic::PacketTuple&)>;
     SelectedCaptureBridge(traffic::PacketCapture& capture, SelectedTunnelDevice& device, Resolver resolve,
                           SelectedTunnelDevice::Live live, std::function<bool()> healthy,
                           std::size_t capacity = 4096);
