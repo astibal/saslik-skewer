@@ -58,6 +58,9 @@ int main(int argc, char** argv) {
             settings.setValue("windows/routingService", QString::fromLocal8Bit(argv[2]));
             settings.setValue("windows/routingTransport", 2);
             settings.setValue("windows/directGateway", QString::fromLocal8Bit(argv[3]));
+            // A stale tunnel endpoint must not interfere with a Direct
+            // activation, which intentionally needs no pairing.
+            settings.setValue("windows/routingEndpoint", "skewer://192.0.2.1:8766/pair");
             auto panel = std::make_unique<skewer::windows::RoutingPanel>();
             panel->show();
             auto* status = panel->findChild<QLabel*>("routingStatus");

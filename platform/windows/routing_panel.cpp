@@ -90,11 +90,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
         submit(3);
     });
     connect(start_, &QPushButton::clicked, this, [this] {
-        const auto requested = transport_->currentData().toInt();
-        const bool direct = requested == static_cast<int>(RoutingTransport::Direct) ||
-                            (requested == AutoTransport &&
-                             canonicalIpv4(gateway_->text().trimmed()));
-        submit(direct ? 5 : 1);
+        submit(nextStartUsesDirect() ? 5 : 1);
     });
     connect(stop_, &QPushButton::clicked, this, [this] { submit(2); });
     connect(install_, &QPushButton::clicked, this, [this] {
@@ -241,6 +237,7 @@ RoutingPanel::RoutingPanel(QWidget* parent)
         }
         updateControls();
         if (known_ && !state_.paired && !automatic_pairing_attempted_ && !action_busy_ && !pending_ &&
+            nextStartRequiresPairing() &&
             !endpoint_->text().trimmed().isEmpty() &&
             (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed)) {
             // Pairing handoff changes only service memory. It never starts a
@@ -303,13 +300,26 @@ RoutingPanel::~RoutingPanel() {
     install_watcher_.waitForFinished();
     remove_watcher_.waitForFinished();
 }
+bool RoutingPanel::validDirectGateway() const {
+    return canonicalIpv4(gateway_->text().trimmed());
+}
+bool RoutingPanel::nextStartUsesDirect() const {
+    const auto requested = transport_->currentData().toInt();
+    return requested == static_cast<int>(RoutingTransport::Direct) ||
+           (requested == AutoTransport && validDirectGateway());
+}
+bool RoutingPanel::nextStartRequiresPairing() const {
+    const auto requested = transport_->currentData().toInt();
+    return requested == static_cast<int>(RoutingTransport::Tunnel) ||
+           (requested == AutoTransport && gateway_->text().trimmed().isEmpty());
+}
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
     const auto requested = transport_->currentData().toInt();
     const bool direct = requested == static_cast<int>(RoutingTransport::Direct);
     const bool automatic = requested == AutoTransport;
     const auto gateway_text = gateway_->text().trimmed();
-    const bool valid_gateway = canonicalIpv4(gateway_text);
+    const bool valid_gateway = validDirectGateway();
     const bool transport_ready = direct ? valid_gateway
                                         : automatic ? (gateway_text.isEmpty() ? state_.paired
                                                                               : valid_gateway)

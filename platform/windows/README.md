@@ -57,6 +57,9 @@ Auto makes a single choice when Start is pressed: a configured valid gateway
 selects Direct, while an empty gateway selects the paired tunnel. Invalid
 non-empty gateway input is rejected. A selected tunnel never falls back to
 direct routing after failure.
+Automatic pairing restoration runs only when the next activation needs the
+tunnel. A stale or unavailable saved pairing endpoint therefore cannot prevent
+Direct, or Auto with a valid direct gateway, from starting.
 
 `routing_panel_test` checks missing-service responsiveness and bounded local
 cancellation. `native-routing-service-live.ps1 -GuiClient` uses the real Qt

@@ -39,6 +39,9 @@ private:
     void submit(int action);
     void dispatch(Request request);
     void updateControls();
+    bool validDirectGateway() const;
+    bool nextStartUsesDirect() const;
+    bool nextStartRequiresPairing() const;
     QLineEdit* service_{};
     QLineEdit* endpoint_{};
     QLineEdit* gateway_{};
