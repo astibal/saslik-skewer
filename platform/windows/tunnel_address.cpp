@@ -1,4 +1,5 @@
 #include "tunnel_address.hpp"
+#include "tunnel_dns.hpp"
 #include <QHostAddress>
 #include <system_error>
 #include <algorithm>
@@ -109,8 +110,9 @@ bool TunnelAddress::remove() noexcept {
     owned_ = false;
     return true;
 }
-AddressedTunnelControl::AddressedTunnelControl(TunnelControl& control, WintunDevice& device, HANDLE cancel)
-    : control_(control), device_(device), cancel_(cancel) {}
+AddressedTunnelControl::AddressedTunnelControl(TunnelControl& control, WintunDevice& device, HANDLE cancel,
+                                               std::wstring dns)
+    : control_(control), device_(device), cancel_(cancel), dns_(std::move(dns)) {}
 PairedTunnel AddressedTunnelControl::open() {
     if (address_) {
         throw std::logic_error("Addressed control cannot reopen");
@@ -118,6 +120,9 @@ PairedTunnel AddressedTunnelControl::open() {
     auto value = control_.open();
     try {
         address_ = std::make_unique<TunnelAddress>(device_, value.endpoint, cancel_);
+        if (!dns_.empty()) {
+            configureTunnelDns(device_.luid(), dns_);
+        }
     } catch (...) {
         std::fill(value.key.begin(), value.key.end(), '\0');
         try {

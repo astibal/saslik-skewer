@@ -20,7 +20,7 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ### Native whole-host service integration
 
-`skewer-routing-service.exe --service NAME OWNER_SID ENDPOINT IPV4_PEER
+`skewer-routing-service.exe --service NAME OWNER_SID ENDPOINT IPV4_PEER DNS_SERVER
 [SSH_MANAGEMENT_IP]` now hosts the real paired runtime under SCM. These arguments
 must be administrator-owned service configuration; DLLs are loaded only from
 the service installation directory. Pairing is memory-only through the existing
@@ -31,20 +31,30 @@ desktop installer or claim of application-routing parity.
 /32 routes, arms the physical-egress guard, assigns the authenticated Wintun
 address, waits for transport health, then installs a peer /32 and tunnel /1 routes.
 The peer stays outside its tunnel. Cleanup withdraws routes before retiring the
-adapter. Physical IPv6 egress is blocked; IPv6 tunneling and system DNS policy
-remain unfinished. Tuple exceptions allow control TCP and protocol UDP ports
+adapter. Physical IPv6 egress is blocked; IPv6 tunneling remains unfinished.
+The configured numeric IPv4 DNS server is assigned only to the fresh Wintun
+adapter using SetInterfaceDnsSettings (Windows 10 build 19041 or newer); physical
+adapter DNS settings are never changed. Adapter destruction removes its DNS
+settings. Registration and LLMNR are disabled only on that adapter. Tuple exceptions allow control TCP and protocol UDP ports
 40001–40255 to the configured peer. They are not process isolation. The optional
 management IP allows SSH replies only and is explicit lab administration policy.
 
 `tests/native-routing-service-live.ps1` installs a disposable real service from
 verified driver artifacts in Program Files, hands off saved pairing and tests
-plain HTTP/HTTPS with no explicit proxy. DNS is pre-resolved and the TLS CA check
-is bypassed only by the test curl. `-TestTunnelLoss` disables only the owned
+plain HTTP/HTTPS with no explicit proxy. It first pre-resolves DNS to isolate
+transport checks, then clears the test VM's resolver cache and tests system DNS
+and HTTPS without `--resolve`. The TLS CA check is bypassed only by the test curl.
+`-TestTunnelLoss` disables only the owned
 adapter, requires Blocked while the service remains alive, and verifies direct
 HTTP fallback times out. Explicit Stop removes protection after cleanup; the
 controller retains Failed for that generation rather than concealing the earlier
 tunnel error. The script finally removes the service and checks owned routes,
 adapter and unchanged default routes. Binaries are retained for diagnostics.
+
+The DNS-enabled SCM integration passed on the Windows VM on 2026-10-28, including
+system resolution, ordinary HTTPS, tunnel loss blocking and owned-resource cleanup.
+The per-interface API contract is documented at
+https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-setinterfacednssettings.
 
 ### Generation-bound routing commands
 

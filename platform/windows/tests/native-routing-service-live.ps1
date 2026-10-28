@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Endpoint,
     [Parameter(Mandatory=$true)][string]$Peer,
     [Parameter(Mandatory=$true)][string]$Management,
+    [string]$DnsServer = '1.1.1.1',
     [switch]$TestTunnelLoss
 )
 $ErrorActionPreference = 'Stop'
@@ -28,7 +29,7 @@ foreach ($file in $hashes.Keys) {
     if ((Get-FileHash (Join-Path $root $file)).Hash -ne $hashes[$file]) { throw 'Unverified WinDivert' }
 }
 if ((Get-AuthenticodeSignature (Join-Path $root 'WinDivert64.sys')).Status -ne 'Valid') { throw 'Invalid driver signature' }
-foreach ($address in @($Peer, $Management)) {
+foreach ($address in @($Peer, $Management, $DnsServer)) {
     $ip = $null
     if (![Net.IPAddress]::TryParse($address, [ref]$ip) -or $ip.AddressFamily -ne 'InterNetwork') {
         throw 'Numeric IPv4 peer and management addresses required'
@@ -43,6 +44,10 @@ function Defaults {
     @(Get-NetRoute | Where-Object DestinationPrefix -In @('0.0.0.0/0','::/0') |
       Sort-Object InterfaceIndex,DestinationPrefix | Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric) |
       ConvertTo-Json -Compress
+}
+function DnsState {
+    @(Get-DnsClientServerAddress | Sort-Object InterfaceIndex,AddressFamily |
+      Select-Object InterfaceIndex,AddressFamily,ServerAddresses) | ConvertTo-Json -Compress -Depth 4
 }
 function Status {
     $output = & $client status $name
@@ -59,12 +64,13 @@ function Await([int]$phase) {
     throw "Expected phase $phase, got $($state.phase)"
 }
 $before = Defaults
+$dnsBefore = DnsState
 $testIp = (Resolve-DnsName example.com -Type A -DnsOnly | Where-Object Type -EQ A | Select-Object -First 1).IPAddress
 if (!$testIp) { throw 'Cannot pre-resolve HTTPS destination' }
 $created = $false
 try {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $command = '"' + $exe + '" --service ' + $name + ' ' + $sid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $Management
+    $command = '"' + $exe + '" --service ' + $name + ' ' + $sid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer + ' ' + $Management
     $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
         Name=$name; DisplayName=$name; PathName=$command; ServiceType=[byte]16
         ErrorControl=[byte]1; StartMode='Manual'; StartName='LocalSystem'
@@ -79,6 +85,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Start failed' }
     $active = Await 2
     $adapter = Get-NetAdapter -Name "Skewer-$name"
+    $dns = Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4
+    if ($dns.ServerAddresses -notcontains $DnsServer) { throw 'Native tunnel DNS was not configured' }
     foreach ($prefix in $prefixes[0..1]) {
         $route = Get-NetRoute -DestinationPrefix $prefix -InterfaceIndex $adapter.ifIndex
         if (!$route) { throw "Missing native route: $prefix" }
@@ -92,6 +100,13 @@ try {
         if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw "$scheme routing failed" }
     }
     Write-Output 'PASS: real SCM service -> Wintun/Tuntom -> Smithproxy -> HTTP/HTTPS, without explicit proxy'
+    Clear-DnsClientCache
+    $resolved = Resolve-DnsName example.com -Type A -DnsOnly -ErrorAction Stop
+    if (!$resolved) { throw 'System DNS resolution failed through the tunnel' }
+    $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
+        --connect-timeout 5 --max-time 15 https://example.com/
+    if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw 'HTTPS with system DNS failed' }
+    Write-Output 'PASS: system DNS and HTTPS without --resolve through the tunnel'
     if ($TestTunnelLoss) {
         # Only the exact adapter created by this fixture is affected.
         Disable-NetAdapter -Name $adapter.Name -Confirm:$false
@@ -117,6 +132,7 @@ try {
         if ((Invoke-CimMethod -InputObject $state -MethodName Delete).ReturnValue -ne 0) { throw 'Service cleanup failed' }
     }
     if ((Defaults) -ne $before) { throw 'Default routing changed' }
+    if ((DnsState) -ne $dnsBefore) { throw 'DNS settings of pre-existing adapters changed' }
     foreach ($prefix in $prefixes) {
         if (Get-NetRoute -DestinationPrefix $prefix -ErrorAction SilentlyContinue) { throw "Owned route remains: $prefix" }
     }

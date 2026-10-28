@@ -12,8 +12,9 @@ using namespace skewer::windows;
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const auto args = app.arguments();
-    if ((args.size() != 6 && args.size() != 7) || args[1] != "--service") {
-        QTextStream(stderr) << "Expected --service NAME OWNER_SID ENDPOINT IPV4_PEER [SSH_MANAGEMENT_IP]\n";
+    if ((args.size() != 7 && args.size() != 8) || args[1] != "--service") {
+        QTextStream(stderr)
+            << "Expected --service NAME OWNER_SID ENDPOINT IPV4_PEER DNS_SERVER [SSH_MANAGEMENT_IP]\n";
         return 2;
     }
     try {
@@ -26,7 +27,8 @@ int main(int argc, char** argv) {
             throw std::invalid_argument("Invalid configured pairing endpoint");
         }
         const auto peer = args[5];
-        const auto management = args.size() == 7 ? args[6].toStdString() : std::string{};
+        const auto dns = args[6].toStdWString();
+        const auto management = args.size() == 8 ? args[7].toStdString() : std::string{};
         const auto directory = QCoreApplication::applicationDirPath();
         const auto wintun = QDir::toNativeSeparators(directory + "/wintun.dll").toStdWString();
         const auto divert = QDir::toNativeSeparators(directory + "/WinDivert.dll").toStdWString();
@@ -48,7 +50,7 @@ int main(int argc, char** argv) {
                         [&](NET_LUID luid, const Tuntom::Endpoint& tunnel) {
                             return policy.routes(luid, tunnel);
                         },
-                        cancel, state.ready, state.blocked);
+                        cancel, state.ready, state.blocked, dns);
                     if (result.worker.session_error) {
                         std::rethrow_exception(result.worker.session_error);
                     }

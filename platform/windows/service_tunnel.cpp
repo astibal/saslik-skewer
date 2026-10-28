@@ -30,7 +30,8 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
                                          std::shared_ptr<const WintunApi> api,
                                          const std::wstring& adapter_name, TunnelControl& control,
                                          const QString& peer, ServiceRoutePlan plan, HANDLE stop,
-                                         std::atomic_bool& ready, std::atomic_bool& blocked) {
+                                         std::atomic_bool& ready, std::atomic_bool& blocked,
+                                         const std::wstring& dns = {}) {
     if (!api || !plan || adapter_name.empty()) {
         throw std::invalid_argument("Incomplete service tunnel configuration");
     }
@@ -47,7 +48,7 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
             if (!device) {
                 device = std::make_unique<WintunDevice>(api, adapter_name);
             }
-            addressed = std::make_unique<AddressedTunnelControl>(control, *device, cancel);
+            addressed = std::make_unique<AddressedTunnelControl>(control, *device, cancel, dns);
             result.counters = runPairedTunnel(*device, *addressed, peer, cancel, ready, &routes);
         },
         [&] {
@@ -80,7 +81,7 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
                                                TunnelControl& control, const QString& peer,
                                                ServiceGuardFactory guard_factory, ServiceRoutePlan plan,
                                                HANDLE stop, std::atomic_bool& ready,
-                                               std::atomic_bool& blocked) {
+                                               std::atomic_bool& blocked, const std::wstring& dns) {
     ready.store(false);
     blocked.store(false);
     if (!api || !guard_factory || !plan || name.empty()) {
@@ -95,6 +96,6 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
         throw std::runtime_error("Service egress guard was not created");
     }
     return runOwnedDeviceTunnel(*guard, device, api, name, control, peer, std::move(plan), stop, ready,
-                                blocked);
+                                blocked, dns);
 }
 } // namespace skewer::windows
