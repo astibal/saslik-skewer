@@ -13,6 +13,8 @@ try {
     Expand-Archive -LiteralPath $Archive -DestinationPath $TestRoot
     $package = Join-Path $TestRoot "skewer-windows-amd64-$ExpectedVersion"
     $executable = Join-Path $package 'skewer.exe'
+    $resourceVersion = (Get-Item -LiteralPath $executable).VersionInfo.ProductVersion
+    if ($resourceVersion -ne $ExpectedVersion) { throw "Unexpected PE product version: $resourceVersion" }
     $versionProbe = Start-Process -FilePath $executable -ArgumentList '--version' -Wait -PassThru
     if ($versionProbe.ExitCode -ne 0) { throw "Version probe failed: $($versionProbe.ExitCode)" }
     $process = Start-Process -FilePath $executable -WorkingDirectory $package -PassThru
