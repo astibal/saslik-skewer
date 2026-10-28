@@ -109,12 +109,18 @@ foundation for the desktop controller):
 skewer-routing-control status SERVICE
 skewer-routing-control pair SERVICE skewer://HOST:8766/pair
 skewer-routing-control start SERVICE GENERATION
-skewer-routing-control stop SERVICE GENERATION
+skewer-routing-control release SERVICE GENERATION
+skewer-routing-control attach SERVICE GENERATION PID BIRTH
+skewer-routing-control run SERVICE EXECUTABLE [ARGUMENTS...]
 ```
 
 Status returns JSON with an opaque string generation. Start/Stop require that
 generation; Busy/Stale return a structured reply and nonzero exit status. The
 client retries connection establishment only, never a possibly committed write.
+`release` is the user-facing alias for `stop`; `attach` retains `start-process`
+and `run` retains `launch` as compatibility aliases. Attach adopts the complete
+live same-owner descendant tree but cannot move already-open sockets. Run creates
+the process suspended and resumes it only after the service reports Active.
 Pair reads the existing user-owned DPAPI pairing, verifies the SCM pipe before
 decrypting it, and sends a memory-only snapshot through the authenticated handoff.
 It never accepts a secret in argv, creates a SYSTEM credential file, or starts

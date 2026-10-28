@@ -12,16 +12,17 @@ int main(int argc, char** argv) {
     const auto args = app.arguments();
     if (args.size() < 3) {
         QTextStream(stderr) << "Usage: skewer-routing-control status SERVICE\n"
-                               "       skewer-routing-control start|stop SERVICE GENERATION\n"
+                               "       skewer-routing-control start|stop|release SERVICE GENERATION\n"
                                "       skewer-routing-control pair SERVICE PAIRED_ENDPOINT\n"
-                               "       skewer-routing-control start-process SERVICE GENERATION PID BIRTH\n"
-                               "       skewer-routing-control launch SERVICE EXECUTABLE [ARGUMENTS...]\n"
-                               "       (experimental: fresh corroborated IPv4 TCP/UDP, one process, no descendants)\n";
+                               "       skewer-routing-control attach SERVICE GENERATION PID BIRTH\n"
+                               "       skewer-routing-control run SERVICE EXECUTABLE [ARGUMENTS...]\n"
+                               "       (aliases: start-process=attach, launch=run)\n";
         return 2;
     }
     try {
         const auto action = args[1];
-        if (action == "launch") {
+        const bool launching = action == "launch" || action == "run";
+        if (launching) {
             if (args.size() < 4) {
                 throw std::invalid_argument("Routed launch requires an executable");
             }
@@ -43,10 +44,11 @@ int main(int argc, char** argv) {
             return 0;
         }
         const bool pairing = action == "pair";
-        const bool selected = action == "start-process";
+        const bool selected = action == "start-process" || action == "attach";
+        const bool stopping = action == "stop" || action == "release";
         const int expected = selected ? 6 : action == "status" ? 3 : 4;
         if (args.size() != expected ||
-            (action != "status" && action != "start" && action != "stop" && !pairing && !selected)) {
+            (action != "status" && action != "start" && !stopping && !pairing && !selected)) {
             throw std::invalid_argument("Invalid routing command");
         }
         Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -68,9 +70,9 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("Invalid routing generation");
             }
         }
-        const auto operation = action == "start"  ? RoutingCommand::Start
-                               : action == "stop" ? RoutingCommand::Stop
-                                                  : RoutingCommand::Status;
+        const auto operation = action == "start" ? RoutingCommand::Start
+                               : stopping        ? RoutingCommand::Stop
+                                                 : RoutingCommand::Status;
         RoutingReply response;
         if (selected) {
             bool pid_valid{}, birth_valid{};

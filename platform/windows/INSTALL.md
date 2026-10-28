@@ -84,3 +84,16 @@ fresh corroborated IPv4 TCP and UDP traffic. Ambiguous ownership remains blocked
 A tunnel failure keeps the live guard blocking until explicit
 Stop; a WinDivert owner/driver failure cannot provide that guarantee. This is a
 lab tool, not a security boundary against an administrator or driver failure.
+
+Headless application routing uses the same authenticated service as the GUI:
+
+```powershell
+.\skewer-routing-control.exe status SkewerRouting
+.\skewer-routing-control.exe run SkewerRouting C:\Path\Application.exe --argument
+.\skewer-routing-control.exe attach SkewerRouting GENERATION PID BIRTH
+.\skewer-routing-control.exe release SkewerRouting GENERATION
+```
+
+Use the opaque generation returned by `status` or `run`. `run` is authoritative
+because the child remains suspended until routing is Active. `attach` cannot
+retroactively reroute existing sockets.
