@@ -310,13 +310,17 @@ void directBridgePacket(const std::wstring& path) {
                   std::to_string(port(local)) + " and udp.DstPort == " + std::to_string(port(remote)));
     Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     require(static_cast<bool>(cancel), "Create direct capture cancellation");
-    SelectedTunnelDevice device({10, 253, 0, 10}, [](auto) { return false; }, [] { return true; });
+    bool healthy = true;
+    auto disposition = SelectedCaptureBridge::Disposition::Direct;
+    const skewer::traffic::FlowIdentity owner{{GetCurrentProcessId(), 1}, 1};
+    SelectedTunnelDevice device({10, 253, 0, 10}, [](auto) { return true; }, [&] { return healthy; });
     SelectedCaptureBridge bridge(
         capture, device,
-        [](const auto&) -> SelectedCaptureBridge::Resolution {
-            return {SelectedCaptureBridge::Disposition::Direct, std::nullopt};
+        [&](const auto&) -> SelectedCaptureBridge::Resolution {
+            return {disposition, disposition == SelectedCaptureBridge::Disposition::Tunnel
+                                     ? std::optional(owner) : std::nullopt};
         },
-        [](auto) { return false; }, [] { return true; });
+        [](auto) { return true; }, [&] { return healthy; });
 
     // Larger than the tunnel MTU, but valid for the unchanged host path.
     // An explicit Direct decision must not enqueue or truncate this packet.
@@ -334,7 +338,33 @@ void directBridgePacket(const std::wstring& path) {
     const auto count = recv(destination.value, received.data(), received.size(), 0);
     require(count == payload.size() && std::equal(payload.begin(), payload.end(), received.begin()),
             "Direct bridge changed payload");
+    healthy = false;
+    require(bridge.deliver() == 0, "Blocked tunnel delivered replies");
+    // Exercise the same capture after failure. Selected and unknown decisions
+    // must drop, while explicit unrelated traffic must still reach its socket.
+    for (auto decision : {SelectedCaptureBridge::Disposition::Tunnel,
+                          SelectedCaptureBridge::Disposition::Tunnel,
+                          SelectedCaptureBridge::Disposition::Hold,
+                          SelectedCaptureBridge::Disposition::Direct}) {
+        disposition = decision;
+        require(sendto(source.value, payload.data(), 64, 0,
+                       reinterpret_cast<const sockaddr*>(&remote), sizeof(sockaddr_in)) == 64,
+                "Send post-failure fixture");
+        auto packet = capture.next(cancel.get(), 2000);
+        require(packet.packet.has_value(), "Post-failure packet not captured");
+        const bool direct = decision == SelectedCaptureBridge::Disposition::Direct;
+        require(bridge.accept(std::move(*packet.packet)) == direct, "Incorrect blocked tunnel decision");
+        require(readable(destination.value, direct ? 2000 : 30) == direct,
+                "Blocked selection leaked or unrelated traffic stopped");
+        if (direct) {
+            require(recv(destination.value, received.data(), received.size(), 0) == 64,
+                    "Incorrect direct payload after failure");
+        }
+        // A later healthy observation must not resurrect the retired epoch.
+        healthy = true;
+    }
     std::cout << "PASS: explicit direct decision preserves packets larger than tunnel MTU\n";
+    std::cout << "PASS: tunnel failure blocks selected/unknown traffic but preserves explicit direct traffic\n";
 }
 
 void tcpTunnel(const std::wstring& path, int family) {

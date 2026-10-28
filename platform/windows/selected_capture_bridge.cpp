@@ -20,6 +20,10 @@ SelectedCaptureBridge::SelectedCaptureBridge(traffic::PacketCapture& capture, Se
 }
 void SelectedCaptureBridge::stop() {
     stopped_ = true;
+    blockTunnel();
+}
+void SelectedCaptureBridge::blockTunnel() {
+    tunnel_blocked_ = true;
     origins_.clear();
     device_.stop();
 }
@@ -27,9 +31,8 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
     if (stopped_) {
         return false;
     }
-    if (!healthy_()) {
-        stop();
-        return false;
+    if (!tunnel_blocked_ && !healthy_()) {
+        blockTunnel();
     }
     const auto tuple = skewer::traffic::parsePacketTuple(packet.bytes);
     if (!tuple.tuple || tuple.tuple->ipv6 ||
@@ -44,14 +47,11 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
             throw std::logic_error("Direct decision must not carry a selected owner");
         }
         // Explicit independent policy, never fallback after a failed tunnel.
-        if (!healthy_()) {
-            stop();
-            return false;
-        }
+        // The resolver remains authoritative even when the tunnel is blocked.
         capture_.reinject(std::move(packet));
         return true;
     }
-    if (decision.disposition != Disposition::Tunnel) {
+    if (decision.disposition != Disposition::Tunnel || tunnel_blocked_) {
         return false;
     }
     // Only selected traffic is constrained by the encrypted transport MTU.
@@ -63,7 +63,7 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
         return false;
     }
     if (!healthy_()) {
-        stop();
+        blockTunnel();
         return false;
     }
     auto found = origins_.find(*tuple.tuple);
@@ -83,7 +83,7 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
         const auto& old = found->second.capture.address;
         if (old.Loopback != packet.address.Loopback || old.Network.IfIdx != packet.address.Network.IfIdx ||
             old.Network.SubIfIdx != packet.address.Network.SubIfIdx) {
-            stop();
+            blockTunnel();
             return false;
         }
         found->second.capture = std::move(packet);
@@ -95,11 +95,11 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
 }
 
 std::size_t SelectedCaptureBridge::deliver() try {
-    if (stopped_) {
+    if (stopped_ || tunnel_blocked_) {
         return 0;
     }
     if (!healthy_()) {
-        stop();
+        blockTunnel();
         return 0;
     }
     std::size_t count{};
@@ -117,7 +117,7 @@ std::size_t SelectedCaptureBridge::deliver() try {
             continue;
         }
         if (!healthy_()) {
-            stop();
+            blockTunnel();
             break;
         }
         capture_.reinject(traffic::restoredReply(found->second.capture, std::move(reply->bytes)));

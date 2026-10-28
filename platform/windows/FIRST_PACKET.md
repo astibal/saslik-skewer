@@ -403,7 +403,12 @@ logs are retained in a unique temporary directory.
 
 Run this broad probe only in the development VM. It does not install routes or
 change DNS, but unknown traffic is dropped while interception exists. A failed
-tunnel retires the entire bridge, including direct reinjection, until its
-supervisor closes the capture handle. Production per-application failure
-isolation, UDP, IPv6 and process-tree lifecycle integration remain unfinished;
+tunnel permanently retires its translated flows and reply queue, while explicit
+Direct decisions remain available through the live capture worker. Selected and
+unknown traffic stays blocked; a later healthy observation cannot revive the old
+epoch. Explicit stop, cancellation or an exception still retires the entire
+bridge. The packet fixture verifies these decisions on real intercepted loopback
+datagrams, including direct traffic larger than the tunnel MTU. The supervisor
+must keep the worker and capture handle alive during a blocked tunnel state.
+Production service integration, UDP ownership, IPv6 and process-tree lifecycle remain unfinished;
 this flag is not exposed by the installed service or GUI.

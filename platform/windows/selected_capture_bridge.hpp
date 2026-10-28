@@ -24,6 +24,9 @@ public:
     // caller interleaves this with TunnelPump::step; no thread is created here.
     void step(HANDLE cancel, DWORD timeout_ms);
     std::size_t deliver();
+    // Retire this tunnel epoch without releasing interception or unrelated
+    // Direct traffic. Recovery requires a fresh device and bridge.
+    void blockTunnel();
     void stop();
 
 private:
@@ -41,6 +44,7 @@ private:
     std::function<bool()> healthy_;
     const std::size_t capacity_;
     bool stopped_{};
+    bool tunnel_blocked_{};
     std::map<skewer::traffic::PacketTuple, Origin, Less> origins_;
 };
 } // namespace skewer::windows
