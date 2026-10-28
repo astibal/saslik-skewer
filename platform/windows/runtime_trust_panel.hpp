@@ -15,6 +15,7 @@ struct RuntimeTrustResult {
 };
 
 EnvironmentOverrides managedRuntimeEnvironment();
+RuntimeTrustResult prepareManagedRuntimeTrust(const QByteArray& pem);
 
 class RuntimeTrustPanel final : public QWidget {
 public:

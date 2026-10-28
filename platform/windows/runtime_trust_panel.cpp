@@ -94,7 +94,7 @@ bool writePrivate(const QString& path, const QByteArray& data) {
     return output.open(QIODevice::WriteOnly) && output.write(data) == data.size() && output.commit();
 }
 
-RuntimeTrustResult prepareBundle(const QByteArray& pem) {
+RuntimeTrustResult prepareBundleInternal(const QByteArray& pem) {
     auto selected = context(pem);
     std::set<QByteArray> roots;
     collectRoots(CERT_SYSTEM_STORE_LOCAL_MACHINE, roots);
@@ -127,6 +127,10 @@ QString powerShellSetup() {
                           "$env:NODE_EXTRA_CA_CERTS = %2\r\n").arg(quote(bundle), quote(ca));
 }
 } // namespace
+
+RuntimeTrustResult prepareManagedRuntimeTrust(const QByteArray& pem) {
+    return prepareBundleInternal(pem);
+}
 
 EnvironmentOverrides managedRuntimeEnvironment() {
     const QSettings settings;
@@ -218,7 +222,7 @@ void RuntimeTrustPanel::prepare() {
     status_->setText(tr("Building a managed bundle from Windows Root stores…"));
     updateControls();
     watcher_.setFuture(QtConcurrent::run([pem = certificate_] {
-        try { return prepareBundle(pem); }
+        try { return prepareManagedRuntimeTrust(pem); }
         catch (const std::exception& error) { return RuntimeTrustResult{QString::fromUtf8(error.what()), {}, {}}; }
     }));
 }
