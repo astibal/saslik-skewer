@@ -20,6 +20,23 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ### Native whole-host service integration
 
+The Windows desktop now has a **Routing** tab for an installed service: stored
+pairing handoff, asynchronous state, generation-bound Start/Stop, and explicit
+Idle/Starting/Active/Blocked/Stopping/Failed feedback. Periodic status reads do
+not toggle controls; unknown state disables mutations. A click arriving during
+a read is queued once with its original generation, never silently retried.
+The panel remembers the successful service/endpoint choice. Closing it cancels
+only local IPC, not routing. Application attachment remains unavailable and is
+labelled separately from whole-host routing. Service installation is still a
+separate task; the UI does not pretend that an absent service is ready.
+
+`routing_panel_test` checks missing-service responsiveness and bounded local
+cancellation. `native-routing-service-live.ps1 -GuiClient` uses the real Qt
+buttons to pair/start, closes the panel, then verifies continued system DNS and
+HTTP/HTTPS through the SCM service. This passed with `-TestTunnelLoss` on the
+Windows VM on 2026-10-28, including fail-closed behavior and cleanup. It tests
+widget behavior, not final visual parity or a finished installer.
+
 `skewer-routing-service.exe --service NAME OWNER_SID ENDPOINT IPV4_PEER DNS_SERVER
 [SSH_MANAGEMENT_IP]` now hosts the real paired runtime under SCM. These arguments
 must be administrator-owned service configuration; DLLs are loaded only from

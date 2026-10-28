@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Peer,
     [Parameter(Mandatory=$true)][string]$Management,
     [string]$DnsServer = '1.1.1.1',
-    [switch]$TestTunnelLoss
+    [switch]$TestTunnelLoss,
+    [switch]$GuiClient
 )
 $ErrorActionPreference = 'Stop'
 # Elevated disposable VM only. Real whole-host routing, explicit SSH return-path
@@ -79,10 +80,15 @@ try {
     $created = $true
     Start-Service $name
     $state = Await 0
-    & $client pair $name $Endpoint
-    if ($LASTEXITCODE -ne 0) { throw 'Stored pairing handoff failed' }
-    & $client start $name $state.generation
-    if ($LASTEXITCODE -ne 0) { throw 'Start failed' }
+    if ($GuiClient) {
+        & (Join-Path $Directory 'routing_panel_test.exe') --live $name $Endpoint
+        if ($LASTEXITCODE -ne 0) { throw 'GUI pairing/start test failed' }
+    } else {
+        & $client pair $name $Endpoint
+        if ($LASTEXITCODE -ne 0) { throw 'Stored pairing handoff failed' }
+        & $client start $name $state.generation
+        if ($LASTEXITCODE -ne 0) { throw 'Start failed' }
+    }
     $active = Await 2
     $adapter = Get-NetAdapter -Name "Skewer-$name"
     $dns = Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4

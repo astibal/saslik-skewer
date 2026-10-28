@@ -25,6 +25,7 @@
 #include <QMessageBox>
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
+#include "routing_panel.hpp"
 #include <QSettings>
 #include <QDateTime>
 #endif
@@ -83,6 +84,7 @@ public:
         buildLauncher();
 #ifdef SKEWER_WINDOWS_PAIRING
         buildSaslikPage();
+        pages()->addTab(new skewer::windows::RoutingPanel(this), tr("Routing"));
 #endif
         applyPreferences();
         connect(preferencesAction(), &QAction::triggered, this, &WindowsWindow::editPreferences);
@@ -205,19 +207,19 @@ private:
         addUnavailablePage(tr("Connections"),
                            tr("Windows per-process connection inspection is not available yet."));
 
-        auto* disclaimer = new QLabel(tr("Routing is not implemented on Windows. Programs launched here use "
-                                         "their normal network connection."),
+        auto* disclaimer = new QLabel(tr("Selected-application routing is not implemented yet. Whole-host routing is controlled on the Routing tab. "
+                                         "Programs launched here follow the current host routing policy."),
                                       page_);
         disclaimer->setWordWrap(true);
         page_->top->addWidget(disclaimer);
         browser_ = new skewer::ui::ProcessBrowser(page_, page_->tree);
         page_->setProcessWidget(browser_);
         connect(page_->search, &QLineEdit::textChanged, browser_, &skewer::ui::ProcessBrowser::setFilterText);
-        page_->action_status->setText(tr("Windows routing is unavailable; no applications are attached."));
+        page_->action_status->setText(tr("Application attachment is unavailable; no applications are individually attached."));
         for (auto* button : {page_->attach, page_->release}) {
             button->setToolTip(tr("Not supported by the Windows backend yet."));
         }
-        auto* routing_status = new QLabel(tr("Routing unavailable on Windows"), this);
+        auto* routing_status = new QLabel(tr("Whole-host routing: see Routing tab"), this);
         routing_status->setObjectName("routingStatusBar");
         statusBar()->addPermanentWidget(routing_status);
     }
