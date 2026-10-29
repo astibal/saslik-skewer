@@ -23,11 +23,17 @@ int main(int argc, char** argv) {
         if (argc == 4 && std::string(argv[1]) == "--live") {
             settings.setValue("windows/routingService", QString::fromLocal8Bit(argv[2]));
             settings.setValue("windows/saslikEndpoint", QString::fromLocal8Bit(argv[3]));
+            // Model an upgrade from the former Auto policy: a saved gateway
+            // must not make Windows silently choose Direct.
+            settings.setValue("windows/routingTransport", 2);
+            settings.setValue("windows/directGateway", "198.51.100.1");
             auto panel = std::make_unique<skewer::windows::RoutingPanel>();
             panel->show();
             auto* status = panel->findChild<QLabel*>("routingStatus");
             auto* service = panel->findChild<QLineEdit*>("routingService");
             auto* endpoint = panel->findChild<QLineEdit*>("routingEndpoint");
+            auto* transport = panel->findChild<QComboBox*>("routingTransport");
+            auto* gateway = panel->findChild<QLineEdit*>("routingGateway");
             auto* pair = panel->findChild<QPushButton*>("routingPair");
             auto* start = panel->findChild<QPushButton*>("routingStart");
             auto* stop = panel->findChild<QPushButton*>("routingStop");
@@ -42,15 +48,19 @@ int main(int argc, char** argv) {
                 }
             };
             wait("Idle");
-            if (!pair->isEnabled() || start->isEnabled() || stop->isEnabled() ||
+            if (!transport || transport->currentIndex() != 2 || !gateway || gateway->isEnabled() ||
+                !pair->isEnabled() || start->isEnabled() || stop->isEnabled() ||
                 !service->isEnabled() || !endpoint->isEnabled()) {
-                throw std::runtime_error("Unpaired Idle enabled routing");
+                throw std::runtime_error("Legacy Auto did not require paired Tuntom");
             }
             pair->click(); wait("Pairing delivered");
             if (!start->isEnabled()) {
                 throw std::runtime_error("Paired Idle did not enable routing");
             }
             start->click(); wait("Active");
+            if (!status->text().contains("encrypted tunnel")) {
+                throw std::runtime_error("Windows Auto did not activate Tuntom");
+            }
             if (stop->text() != "Release host" || !stop->toolTip().contains("not a protected pause")) {
                 throw std::runtime_error("Whole-host release is mislabeled as protected pause");
             }
@@ -60,12 +70,12 @@ int main(int argc, char** argv) {
             }
             panel.reset();
             settings.clear(); settings.sync();
-            std::cout << "PASS: GUI pairing and Start reached Active; panel closed without Stop\n";
+            std::cout << "PASS: saved-gateway Auto chose Tuntom; GUI closed without Stop\n";
             return 0;
         }
         if (argc == 4 && std::string(argv[1]) == "--live-direct") {
             settings.setValue("windows/routingService", QString::fromLocal8Bit(argv[2]));
-            settings.setValue("windows/routingTransport", 2);
+            settings.setValue("windows/routingTransport", 1);
             settings.setValue("windows/directGateway", QString::fromLocal8Bit(argv[3]));
             // A stale tunnel endpoint must not interfere with a Direct
             // activation, which intentionally needs no pairing.
@@ -91,17 +101,17 @@ int main(int argc, char** argv) {
                 }
             };
             wait("Idle");
-            if (transport->currentIndex() != 2 || gateway->text() != QString::fromLocal8Bit(argv[3]) ||
+            if (transport->currentIndex() != 1 || gateway->text() != QString::fromLocal8Bit(argv[3]) ||
                 !status->text().contains("Direct-only") || pair->isEnabled() ||
                 !start->isEnabled() || stop->isEnabled() || !service->isEnabled() ||
                 !endpoint->isEnabled()) {
-                throw std::runtime_error("Auto did not admit the valid unpaired direct gateway");
+                throw std::runtime_error("Explicit Direct did not admit the valid unpaired gateway");
             }
             start->click();
             wait("Active");
             if (!status->text().contains("direct gateway") || start->isEnabled() || !stop->isEnabled() ||
                 service->isEnabled() || endpoint->isEnabled() || install->isEnabled()) {
-                throw std::runtime_error("Auto did not publish authoritative Direct state");
+                throw std::runtime_error("Explicit Direct did not publish authoritative state");
             }
             const auto active_endpoint = endpoint->text();
             const QString replacement = "skewer://198.51.100.10:8766/pair";
@@ -118,7 +128,7 @@ int main(int argc, char** argv) {
             wait("Active");
             panel.reset();
             settings.clear(); settings.sync();
-            std::cout << "PASS: GUI Auto selected Direct; panel closed without Stop\n";
+            std::cout << "PASS: explicit GUI Direct remained available and panel closed without Stop\n";
             return 0;
         }
         if (argc != 1) {
@@ -153,8 +163,9 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Release control omits its routing consequence");
         }
         if (transport->count() != 3 || transport->itemData(2).toInt() != -1 ||
-            !transport->itemText(2).startsWith("Auto")) {
-            throw std::runtime_error("Windows routing does not expose explicit Auto transport");
+            !transport->itemText(2).startsWith("Auto") || transport->currentIndex() != 0 ||
+            !transport->itemText(0).contains("recommended") || gateway->isEnabled()) {
+            throw std::runtime_error("Windows routing does not default to recommended Tuntom");
         }
         transport->setCurrentIndex(1);
         gateway->setText("not-an-address");

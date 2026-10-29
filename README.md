@@ -277,6 +277,12 @@ otherwise it starts Tuntom. Direct opts out of tunneling; Enforced tunnel forces
 it even when Saslik is directly connected. Neither a failure nor loss of the
 tunnel silently enables a direct fallback in this mode.
 
+On Windows, Tuntom is the default and **Auto always means Tuntom**, including
+after upgrading with a previously saved Direct gateway. Windows Direct remains
+an explicit whole-host option; selected applications require Tuntom. This differs
+from Linux Auto because Windows has no dependency-free per-application next-hop
+equivalent to the Linux routing policy.
+
 Disable routing before changing modes. A selected tunnel never silently falls
 back to Direct. Failed tunnel controllers are retried after 5, 10, 20 and then
 30 seconds, including failures before transport startup. Verification resets

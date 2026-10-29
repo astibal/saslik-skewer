@@ -42,6 +42,17 @@ Selected applications use IPv4 TCP/UDP through Tuntom. Whole-host tunnel routing
 is supported; whole-host Direct exists but was not revalidated in this run.
 Per-application Direct is deferred to research, by user decision.
 
+### Post-checkpoint transport default
+
+Source after this artifact checkpoint changes the Windows default and Auto
+policy to paired Tuntom. A saved gateway no longer makes Auto select Direct;
+whole-host Direct remains an explicit choice. The cross-build and native panel
+test passed. A disposable SCM integration with legacy Auto plus a saved gateway
+activated Tuntom, passed HTTP/HTTPS and system DNS, and retained routing after
+the GUI closed. A separate disposable integration confirmed explicit Direct
+still passed HTTP/HTTPS and restored owned routes. This source change has not
+yet been repackaged into the artifact hashes above.
+
 IPv6 is blocked rather than tunneled. Service/WinDivert owner failure can remove
 interception and restore direct connectivity: this is a lab tool, not a security
 boundary. Arbitrary process delegation, VPN coexistence, endpoint relocation,

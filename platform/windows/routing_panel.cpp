@@ -81,12 +81,14 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
     transport_ = new QComboBox(this);
     transport_->setObjectName("routingTransport");
     transport_->setAccessibleName(tr("Whole-host transport"));
-    transport_->addItem(tr("Encrypted tunnel (Tuntom)"), static_cast<int>(RoutingTransport::Tunnel));
-    transport_->addItem(tr("Directly reachable Saslik gateway"), static_cast<int>(RoutingTransport::Direct));
-    transport_->addItem(tr("Auto — direct when configured, otherwise tunnel"), AutoTransport);
-    transport_->setToolTip(tr("Auto chooses once when Start is pressed. It never falls back from a failed "
-                              "tunnel to direct routing."));
-    transport_->setCurrentIndex(qBound(0, QSettings().value("windows/routingTransport", 2).toInt(), 2));
+    transport_->addItem(tr("Encrypted tunnel (Tuntom) — recommended"), static_cast<int>(RoutingTransport::Tunnel));
+    transport_->addItem(tr("Direct gateway — whole host only"), static_cast<int>(RoutingTransport::Direct));
+    transport_->addItem(tr("Auto — Tuntom on Windows"), AutoTransport);
+    transport_->setToolTip(tr("Auto requires paired Tuntom even when a gateway is saved. "
+                              "Direct is an explicit whole-host option, not a tunnel fallback. "
+                              "Selected applications require Tuntom."));
+    // Keep saved indices compatible, including explicit whole-host Direct.
+    transport_->setCurrentIndex(qBound(0, QSettings().value("windows/routingTransport", 0).toInt(), 2));
     gateway_ = new QLineEdit(QSettings().value("windows/directGateway").toString(), this);
     gateway_->setObjectName("routingGateway");
     gateway_->setAccessibleName(tr("Direct gateway"));
@@ -388,13 +390,11 @@ bool RoutingPanel::validDirectGateway() const {
 }
 bool RoutingPanel::nextStartUsesDirect() const {
     const auto requested = transport_->currentData().toInt();
-    return requested == static_cast<int>(RoutingTransport::Direct) ||
-           (requested == AutoTransport && validDirectGateway());
+    return requested == static_cast<int>(RoutingTransport::Direct);
 }
 bool RoutingPanel::nextStartRequiresPairing() const {
     const auto requested = transport_->currentData().toInt();
-    return requested == static_cast<int>(RoutingTransport::Tunnel) ||
-           (requested == AutoTransport && gateway_->text().trimmed().isEmpty());
+    return requested == static_cast<int>(RoutingTransport::Tunnel) || requested == AutoTransport;
 }
 void RoutingPanel::updateControls() {
     const bool idle = known_ && (state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed);
@@ -408,14 +408,9 @@ void RoutingPanel::updateControls() {
     }
     const auto requested = transport_->currentData().toInt();
     const bool direct = requested == static_cast<int>(RoutingTransport::Direct);
-    const bool automatic = requested == AutoTransport;
-    const auto gateway_text = gateway_->text().trimmed();
     const bool valid_gateway = validDirectGateway();
     const bool transport_ready = direct ? (state_.direct_available && valid_gateway)
-                                        : automatic ? (gateway_text.isEmpty()
-                                                           ? (state_.tunnel_available && state_.paired)
-                                                           : (state_.direct_available && valid_gateway))
-                                                    : (state_.tunnel_available && state_.paired);
+                                        : (state_.tunnel_available && state_.paired);
     pair_->setEnabled(idle && state_.tunnel_available && !action_busy_);
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
@@ -441,7 +436,7 @@ void RoutingPanel::updateControls() {
     service_->setEnabled(configuration_editable && !action_busy_ && !service_overridden_);
     endpoint_->setEnabled(configuration_editable && !action_busy_);
     transport_->setEnabled(idle && !action_busy_);
-    gateway_->setEnabled(idle && !action_busy_ && (direct || automatic));
+    gateway_->setEnabled(idle && !action_busy_ && direct);
     const auto package = QCoreApplication::applicationDirPath();
     const bool install_packaged = QFileInfo::exists(QDir(package).filePath("install-routing-service.ps1")) &&
                                   QFileInfo::exists(QDir(package).filePath("wintun.dll")) &&

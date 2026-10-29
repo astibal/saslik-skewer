@@ -300,17 +300,17 @@ cancelling an unclaimed request and worker failure completing an already claimed
 request with an error instead of retaining a false protection claim.
 Whole-host pause is not currently supported.
 
-Unselected applications must remain unaffected. Auto mode may initially choose
-a known direct lab route, as Linux does. Once a tunnel has been selected, its
-loss must not silently switch back to direct mode. User-authorized mode changes
-are distinct from automatic recovery.
+Unselected applications must remain unaffected. Windows defaults to paired
+Tuntom. Direct remains an explicit whole-host choice; it is never selected merely
+because a gateway was saved. Once a tunnel has been selected, its loss must not
+silently switch to direct mode. User-authorized mode changes are distinct from
+automatic recovery.
 
-The Windows GUI implements that admission rule without a runtime fallback:
-Auto chooses Direct only when a canonical gateway is configured at Start;
-otherwise it requires paired Tuntom. Invalid non-empty gateway input blocks
-activation instead of silently choosing the tunnel. Native SCM/GUI integration
-verifies that closing the panel after Auto selected Direct leaves the generation
-active until an explicit Stop.
+The Windows GUI implements that admission rule without a runtime fallback: Auto
+always requires paired Tuntom, even when a canonical gateway is saved. The
+gateway field is active only for explicit Direct. Native SCM/GUI integration
+separately verifies explicit whole-host Direct and that closing the panel leaves
+the generation active until an explicit Stop.
 
 The controller, tunnel endpoint and control plane must not be routed back into
 their own tunnel. Application identity must resist PID reuse and preserve
