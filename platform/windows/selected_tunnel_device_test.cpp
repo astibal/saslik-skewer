@@ -128,6 +128,30 @@ int main() {
         check(applications.enqueue(owner, original), "Reattached application enqueue failed");
         check(applications.readPacket(buffer).has_value(), "Reattached application read failed");
         check(!applications.writePacket(firstReply), "Late reply survived process Release and reattach");
+        SelectedTunnelDevice paused({10, 253, 0, 10}, [](auto) { return true; }, [] { return true; });
+        check(paused.enqueue(owner, original), "Pause fixture enqueue failed");
+        const auto pauseSize = paused.readPacket(buffer);
+        check(pauseSize.has_value(), "Pause fixture translation failed");
+        const auto pauseReply = reply(std::vector(buffer.begin(), buffer.begin() + *pauseSize));
+        check(paused.writePacket(pauseReply) && paused.enqueue(owner, original),
+              "Pause fixture could not queue both directions");
+        paused.setPaused(true);
+        check(!paused.readPacket(buffer) && !paused.takeReceived(), "Pause retained buffered data");
+        check(!paused.enqueue(owner, original) && !paused.writePacket(pauseReply),
+              "Paused device admitted new data");
+        check(WaitForSingleObject(paused.readEvent(), 0) == WAIT_TIMEOUT,
+              "Paused device kept its data event signalled");
+        paused.setPaused(false);
+        check(!paused.readPacket(buffer) && !paused.takeReceived(), "Resume replayed paused data");
+        check(paused.writePacket(pauseReply) && paused.takeReceived().has_value(),
+              "Resume lost the original flow identity");
+        check(paused.enqueue(owner, original) && paused.readPacket(buffer).has_value(),
+              "Resume did not admit fresh data");
+        paused.stop();
+        paused.setPaused(true);
+        paused.setPaused(false);
+        check(!paused.enqueue(owner, original) && !paused.writePacket(pauseReply),
+              "Resume revived a retired packet epoch");
         SelectedTunnelDevice broken({10, 253, 0, 10}, [&](auto) {
             if (fail) { throw std::runtime_error("Injected identity lookup failure"); }
             return true;

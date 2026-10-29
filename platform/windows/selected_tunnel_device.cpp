@@ -24,6 +24,16 @@ void SelectedTunnelDevice::syncEvent() {
         throw std::runtime_error("Selected packet event failed");
     }
 }
+void SelectedTunnelDevice::setPaused(bool paused) {
+    paused_ = paused;
+    if (paused) {
+        // Neither direction may replay data buffered before acknowledgement.
+        // Keep translations so a healthy resumed connection retains identity.
+        outbound_.clear();
+        inbound_.clear();
+    }
+    syncEvent();
+}
 void SelectedTunnelDevice::release(Identity owner) {
     flows_.release(owner);
     std::erase_if(outbound_, [&](const auto& packet) { return packet.owner == owner; });
@@ -44,6 +54,7 @@ bool SelectedTunnelDevice::allowed(Identity owner) try {
         stop();
         return false;
     }
+    if (paused_) return false;
     if (!live_(owner)) {
         release(owner);
         return false;
@@ -96,7 +107,7 @@ std::optional<std::size_t> SelectedTunnelDevice::readPacket(std::span<std::uint8
     return std::nullopt;
 }
 bool SelectedTunnelDevice::writePacket(std::span<const std::uint8_t> packet) {
-    if (stopped_ || packet.empty() || packet.size() > 1280 || inbound_.size() >= capacity_) {
+    if (stopped_ || paused_ || packet.empty() || packet.size() > 1280 || inbound_.size() >= capacity_) {
         return false;
     }
     std::vector<std::uint8_t> bytes(packet.begin(), packet.end());

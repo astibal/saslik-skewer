@@ -29,6 +29,9 @@ public:
     HANDLE readEvent() const override { return event_.get(); }
     void release(Identity owner);
     void releaseProcess(skewer::traffic::ProcessIdentity process);
+    // Packet-worker only. Pause drops queued and newly arriving data without
+    // releasing flow ownership. Resume never revives a retired tunnel epoch.
+    void setPaused(bool paused);
     void stop();
 
 private:
@@ -40,6 +43,7 @@ private:
     const std::size_t capacity_;
     Handle event_;
     bool stopped_{};
+    bool paused_{};
     std::deque<Packet> outbound_, inbound_;
 };
 } // namespace skewer::windows
