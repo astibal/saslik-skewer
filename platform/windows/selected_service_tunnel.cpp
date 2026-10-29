@@ -15,21 +15,23 @@ public:
             std::string peer, std::uint16_t port, HANDLE cancel, std::atomic_bool& ready,
             std::atomic_bool& published,
             std::atomic_bool& blocked, std::atomic<RoutingStage>& stage,
-            std::atomic<std::shared_ptr<const std::string>>& retry_error)
+            std::atomic<std::shared_ptr<const std::string>>& retry_error, RoutingSignals& control_state)
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
           published_(published), blocked_(blocked), stage_(stage), retry_error_(retry_error),
+          owner_(owner), signals_(control_state),
           resolver_(dll, std::move(target), owner, [this](const ProcessTarget& member) {
-              unsupported_.push_back(std::make_unique<traffic::SocketConnectGuard>(
+              unsupported_.push_back({member.key(), std::make_unique<traffic::SocketConnectGuard>(
                   dll_, member, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp,
-                  peer_, port_));
-              startup_.push_back(std::make_unique<traffic::SocketConnectGuard>(
-                  dll_, member, traffic::SocketConnectGuard::Mode::All));
+                  peer_, port_)});
+              startup_.push_back({member.key(), std::make_unique<traffic::SocketConnectGuard>(
+                  dll_, member, traffic::SocketConnectGuard::Mode::All)});
           }) {
         // ProcessGroup has already adopted the live descendant tree. Drain its
         // notifications so every member is guarded before old IPv4 TCP sockets
         // are reset. Fresh attempts remain blocked until packet interception is
         // ready; launched suspended processes normally have nothing to reset.
         traffic::resetOwnedIpv4Tcp(resolver_.memberKeys());
+        signals_.selection_supported = true;
     }
     bool running() const { return resolver_.running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
@@ -73,6 +75,7 @@ public:
         }
     }
     void poll() override {
+        applySelectionChange();
         if (!running()) {
             throw std::runtime_error("Selected process exited");
         }
@@ -122,6 +125,40 @@ public:
     }
 
 private:
+    void applySelectionChange() {
+        const auto request = signals_.selection_change.load();
+        if (!request || !request->claim()) return;
+        try {
+            if (request->operation == SelectionOperation::Add) {
+                const auto before = resolver_.memberKeys();
+                resolver_.add(std::make_unique<ProcessTarget>(request->process, owner_));
+                auto added = resolver_.memberKeys();
+                std::erase_if(added, [&](auto key) { return std::ranges::find(before, key) != before.end(); });
+                // Never reset sockets of an application that was already selected.
+                traffic::resetOwnedIpv4Tcp(added);
+                if (ready_.load() && packets_ && !packets_->blocked()) startup_.clear();
+            } else {
+                const auto removed = resolver_.remove(request->process);
+                for (const auto key : removed) {
+                    if (packets_) packets_->releaseProcess({key.pid, key.created});
+                }
+                // Include guards from an enrollment that failed before its
+                // observer was installed. Their Job membership is authoritative.
+                const auto released = [&](const Guard& guard) { return !resolver_.covers(guard.process); };
+                std::erase_if(startup_, released);
+                std::erase_if(unsupported_, released);
+            }
+            request->complete();
+        } catch (const std::exception& error) {
+            request->complete(error.what());
+        } catch (...) {
+            request->complete("Selection change failed with an unknown exception");
+        }
+    }
+    struct Guard {
+        ProcessKey process;
+        std::unique_ptr<traffic::SocketConnectGuard> handle;
+    };
     std::wstring dll_;
     std::string peer_;
     std::uint16_t port_;
@@ -131,8 +168,10 @@ private:
     std::atomic_bool& blocked_;
     std::atomic<RoutingStage>& stage_;
     std::atomic<std::shared_ptr<const std::string>>& retry_error_;
-    std::vector<std::unique_ptr<traffic::SocketConnectGuard>> unsupported_;
-    std::vector<std::unique_ptr<traffic::SocketConnectGuard>> startup_;
+    ServiceOwner owner_;
+    RoutingSignals& signals_;
+    std::vector<Guard> unsupported_;
+    std::vector<Guard> startup_;
     traffic::SelectedGroupResolver resolver_;
     std::unique_ptr<traffic::PacketCapture> capture_;
     std::unique_ptr<SelectedSessionPackets> packets_;
@@ -148,7 +187,7 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
     state.stage = RoutingStage::Preparing;
     std::atomic_bool transport_ready{};
     Runtime runtime(dll, std::move(target), owner, peer.toStdString(), control_port, cancel, transport_ready,
-                    state.ready, state.blocked, state.stage, state.retry_error);
+                    state.ready, state.blocked, state.stage, state.retry_error, state);
     state.stage = RoutingStage::Connecting;
     unsigned failures{};
     for (;;) {

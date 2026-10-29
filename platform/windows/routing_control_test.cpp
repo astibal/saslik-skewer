@@ -89,6 +89,51 @@ int main() {
         require(recovered.detail.empty(), "Recovered session retained stale retry detail");
         retrying.command(RoutingCommand::Stop, recovered.generation);
         awaitPhase(retrying, RoutingPhase::Idle);
+        std::atomic_bool apply_changes{};
+        std::atomic_bool parked{};
+        std::atomic_uint changes{};
+        RoutingController selections([&](HANDLE stop, RoutingSignals& signals) {
+            signals.selection_supported = true;
+            signals.ready = true;
+            while (WaitForSingleObject(stop, 1) == WAIT_TIMEOUT) {
+                if (!apply_changes) { parked = true; continue; }
+                parked = false;
+                const auto change = signals.selection_change.load();
+                if (change && change->claim()) {
+                    ++changes;
+                    change->complete();
+                }
+            }
+        });
+        const auto selection_initial = selections.command(RoutingCommand::Status, 0);
+        const auto selection_started = selections.command(RoutingCommand::Start, selection_initial.generation);
+        awaitPhase(selections, RoutingPhase::Active);
+        auto cancelled = selections.changeSelection(SelectionOperation::Add, {42, 100}, selection_started.generation);
+        require(cancelled->cancel(), "Pending selection could not be cancelled");
+        auto pending = selections.changeSelection(SelectionOperation::Add, {43, 101}, selection_started.generation);
+        bool busy{};
+        try {
+            selections.changeSelection(SelectionOperation::Remove, {43, 101}, selection_started.generation);
+        } catch (const std::runtime_error&) { busy = true; }
+        require(busy, "In-flight selection was overwritten");
+        apply_changes = true;
+        for (unsigned i = 0; i < 200 && pending->phase != SelectionChange::Phase::Complete; ++i) Sleep(5);
+        require(pending->phase == SelectionChange::Phase::Complete && pending->error.empty() && changes == 1,
+                "Selection completion or cancellation was not honored");
+        require(!pending->cancel(), "Completed selection reported cancellation");
+        bool stale{};
+        try {
+            selections.changeSelection(SelectionOperation::Remove, {43, 101}, selection_initial.generation);
+        } catch (const std::runtime_error&) { stale = true; }
+        require(stale, "Stale generation changed selection");
+        apply_changes = false;
+        for (unsigned i = 0; i < 200 && !parked; ++i) Sleep(5);
+        require(parked, "Selection worker did not reach test barrier");
+        auto stopped = selections.changeSelection(SelectionOperation::Remove, {43, 101}, selection_started.generation);
+        selections.command(RoutingCommand::Stop, selection_started.generation);
+        awaitPhase(selections, RoutingPhase::Idle);
+        require(stopped->phase == SelectionChange::Phase::Cancelled,
+                "Stopped worker left a selection pending forever");
         std::cout
             << "PASS: controller generations, cleanup, failure and retry diagnostics\n";
         return 0;

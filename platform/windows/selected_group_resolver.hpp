@@ -18,6 +18,7 @@ public:
     SelectedOwnerResolver::Result resolve(skewer::traffic::PacketTuple tuple, HANDLE cancel);
     bool running() const { return group_.running(); }
     bool contains(skewer::traffic::ProcessIdentity process) const;
+    bool covers(ProcessKey process) const;
     // Drains initial Job Object membership before activation. Retained process
     // handles keep every returned PID bound to its creation-time identity.
     std::vector<ProcessKey> memberKeys();

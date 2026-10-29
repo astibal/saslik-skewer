@@ -44,6 +44,11 @@ bool SelectedGroupResolver::contains(skewer::traffic::ProcessIdentity process) c
     });
 }
 
+bool SelectedGroupResolver::covers(ProcessKey process) const {
+    const auto member = group_.member(process.pid);
+    return member && member->key() == process;
+}
+
 std::vector<ProcessKey> SelectedGroupResolver::memberKeys() {
     refresh();
     std::vector<ProcessKey> result;

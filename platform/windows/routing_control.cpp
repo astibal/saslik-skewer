@@ -29,6 +29,7 @@ RoutingController::RoutingController(Runner runner)
     generation_ &= 0x7fffffffffffffffULL;
 }
 RoutingController::~RoutingController() {
+    if (const auto pending = signals_.selection_change.load()) pending->cancel();
     SetEvent(stop_.get());
     if (work_.valid()) {
         work_.wait();
@@ -50,6 +51,15 @@ void RoutingController::reap() {
     signals_.blocked = false;
     signals_.stage = RoutingStage::None;
     signals_.retry_error.store({});
+    signals_.selection_supported = false;
+    if (const auto pending = signals_.selection_change.load()) {
+        const auto phase = pending->phase.load();
+        if (phase == SelectionChange::Phase::Pending || phase == SelectionChange::Phase::Applying) {
+            // work_.get() above joined the only consumer; no request can still
+            // be executing when its terminal failure is published here.
+            pending->complete("Routing worker stopped before confirming selection change");
+        }
+    }
     stopping_ = false;
 }
 RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t generation) {
@@ -68,6 +78,8 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
                 throw std::runtime_error("Cannot start routing generation");
             }
             signals_.ready = false;
+            signals_.selection_supported = false;
+            signals_.selection_change.store({});
             signals_.blocked = false;
             signals_.stage = RoutingStage::None;
             signals_.retry_error.store({});
@@ -88,6 +100,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
         if (!SetEvent(stop_.get())) {
             throw std::runtime_error("Cannot stop routing generation");
         }
+        if (const auto pending = signals_.selection_change.load()) pending->cancel();
         stopping_ = true;
     }
     const auto phase = !work_.valid()            ? terminal_
@@ -106,5 +119,29 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
     }
     return {result, phase, generation_, RoutingScope::None, RoutingTransport::None,
             std::nullopt, detail, false, false, false};
+}
+std::shared_ptr<SelectionChange> RoutingController::changeSelection(SelectionOperation operation,
+                                                                   ProcessKey process,
+                                                                   std::uint64_t generation) {
+    const auto state = command(RoutingCommand::Status, 0);
+    if (generation != state.generation) throw std::runtime_error("Stale selection generation");
+    if (!signals_.selection_supported ||
+        (state.phase != RoutingPhase::Active && state.phase != RoutingPhase::Blocked)) {
+        throw std::runtime_error("Selected routing is not ready for changes");
+    }
+    if (operation != SelectionOperation::Add && operation != SelectionOperation::Remove) {
+        throw std::invalid_argument("Invalid selection operation");
+    }
+    if (!process.pid || !process.created) throw std::invalid_argument("Invalid selection identity");
+    auto previous = signals_.selection_change.load();
+    if (previous) {
+        const auto phase = previous->phase.load();
+        if (phase == SelectionChange::Phase::Pending || phase == SelectionChange::Phase::Applying) {
+            throw std::runtime_error("Another selection change is still pending");
+        }
+    }
+    auto request = std::make_shared<SelectionChange>(operation, process);
+    signals_.selection_change = request;
+    return request;
 }
 } // namespace skewer::windows

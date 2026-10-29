@@ -26,11 +26,37 @@ struct RoutingReply {
     bool direct_available{};
 };
 enum class RoutingStage : std::uint8_t { None, Preparing, Connecting, Intercepting, StartingSession };
+enum class SelectionOperation { Add, Remove };
+// One command-thread producer and one packet-thread consumer. Cancellation can
+// win only before claim(); after that the caller must observe the final result.
+struct SelectionChange final {
+    enum class Phase { Pending, Applying, Complete, Cancelled };
+    SelectionChange(SelectionOperation action, ProcessKey identity) : operation(action), process(identity) {}
+    const SelectionOperation operation;
+    const ProcessKey process;
+    std::atomic<Phase> phase{Phase::Pending};
+    // Read only after phase == Complete (the atomic publication synchronizes).
+    std::string error;
+    bool claim() {
+        auto expected = Phase::Pending;
+        return phase.compare_exchange_strong(expected, Phase::Applying);
+    }
+    bool cancel() {
+        auto expected = Phase::Pending;
+        return phase.compare_exchange_strong(expected, Phase::Cancelled);
+    }
+    void complete(std::string failure = {}) {
+        error = std::move(failure);
+        phase = Phase::Complete;
+    }
+};
 struct RoutingSignals {
     std::atomic_bool ready{};
     std::atomic_bool blocked{};
     std::atomic<RoutingStage> stage{RoutingStage::None};
     std::atomic<std::shared_ptr<const std::string>> retry_error{};
+    std::atomic_bool selection_supported{};
+    std::atomic<std::shared_ptr<SelectionChange>> selection_change{};
 };
 
 // One service command thread owns this controller. The runner owns all runtime
@@ -42,6 +68,8 @@ public:
     explicit RoutingController(Runner runner);
     ~RoutingController();
     RoutingReply command(RoutingCommand command, std::uint64_t generation);
+    std::shared_ptr<SelectionChange> changeSelection(SelectionOperation operation, ProcessKey process,
+                                                    std::uint64_t generation);
 
 private:
     void reap();
