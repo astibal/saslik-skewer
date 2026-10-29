@@ -240,7 +240,29 @@ default gateway or DNS change was needed. With a reachable ULA peer, invoke:
 ```
 
 These are external link-local and on-link ULA TCP checks, not proof of public
-IPv6 internet reachability, routed IPv6, UDP or pre-existing external socket behavior.
+IPv6 internet reachability, routed IPv6 or UDP behavior.
+
+`tests/selected-existing-ipv6.ps1` additionally checks an IPv6 TCP socket opened
+before Attach. Start a fresh marker peer on a separate, isolated IPv6-reachable
+host for each run (Python is needed only on that test peer):
+
+```sh
+python3 ipv6-marker-peer.py fd53:534b:2026:1029::1 18082
+```
+
+```powershell
+.\selected-existing-ipv6.ps1 -Service YOUR_PAIRED_TEST_SERVICE -Address fd53:534b:2026:1029::1 -Port 18082
+```
+
+The child must complete an echo before Attach. Once Active, it writes a protected
+marker on that same socket. An unselected control connection queries the peer's
+counter: no protected byte may have arrived. After Release, the original socket
+must deliver and receive a new marker. Retransmission of the previously blocked
+byte after deliberate Release is allowed. This passed against an external ULA
+namespace peer on 2026-10-29. The fixture requires an idle paired service, retains
+child logs and removes only its own selection/process; it does not configure
+addresses, default routes or DNS. Recreated peers should retain a stable MAC or
+clear only their fixture-specific stale neighbor entry before the baseline.
 
 The [first-packet experiment](FIRST_PACKET.md) confirms that a WinDivert SOCKET
 filter can deny fresh TCP/UDP attempts for one PID, but new connections become
