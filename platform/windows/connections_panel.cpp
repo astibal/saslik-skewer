@@ -3,6 +3,7 @@
 #include "connections_panel.hpp"
 #include "tcp_owners.hpp"
 #include "process_browser.hpp"
+#include <algorithm>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -115,6 +116,11 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
         return;
     }
     QHash<quint64, skewer::ui::ProcessRecord> owners;
+    const auto selected = [&](quint64 pid, quint64 created) {
+        return std::ranges::any_of(routing_.selections, [&](const auto root) {
+            return root.pid == pid && root.created == created;
+        });
+    };
     for (const auto& process : processes_->processes()) owners.insert(process.pid, process);
     const auto scroll = table_->verticalScrollBar()->value();
     table_->setSortingEnabled(false);
@@ -130,10 +136,9 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
             route = tr("Unknown");
         } else if (routing_.scope == RoutingScope::WholeHost && routing_.phase == RoutingPhase::Active) {
             route = tr("Skewer (whole host)");
-        } else if (routing_.scope == RoutingScope::SelectedProcess && routing_.selected &&
-                   routing_.phase == RoutingPhase::Active && routing_.selected->pid == row.pid &&
-                   owner.created == routing_.selected->created) {
-            route = tr("Skewer (selected)");
+        } else if (routing_.scope == RoutingScope::SelectedProcess &&
+                   routing_.phase == RoutingPhase::Active && selected(row.pid, owner.created)) {
+            route = row.tuple.ipv6 ? tr("Not routed (selected IPv4 only)") : tr("Skewer (selected)");
         }
         const QStringList cells{owner.name.isEmpty() ? tr("Unknown process") : owner.name,
                                 QString::number(row.pid), stateName(row.state), address(row.tuple, true),
@@ -155,8 +160,7 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
         } else if (routing_.scope == RoutingScope::WholeHost &&
                    routing_.phase == RoutingPhase::Active) {
             route = tr("Skewer (whole host)");
-        } else if (routing_.scope == RoutingScope::SelectedProcess && routing_.selected &&
-                   routing_.selected->pid == row.pid && owner.created == routing_.selected->created) {
+        } else if (routing_.scope == RoutingScope::SelectedProcess && selected(row.pid, owner.created)) {
             route = row.ipv6 ? tr("Not routed (selected IPv4 only)")
                              : tr("Skewer candidate (selected UDP)");
         }

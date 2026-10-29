@@ -1,4 +1,5 @@
 #include "routing_client.hpp"
+#include "routed_launch.hpp"
 #include <iostream>
 
 using namespace skewer::windows;
@@ -65,7 +66,6 @@ int wmain(int argc, wchar_t** argv) {
         Handle done2(CreateEventW(nullptr, FALSE, FALSE, second_done.c_str()));
         require(bool(go1) && bool(done1) && bool(go2) && bool(done2), "Cannot create fixture events");
         Child first{launch(executable(), {L"--child", first_go, first_done, argv[2], argv[3]}, LaunchMode::Suspended)};
-        Child second{launch(executable(), {L"--child", second_go, second_done, argv[2], argv[3]}, LaunchMode::Suspended)};
         const auto initial = status(RoutingCommand::Status, 0);
         require(initial.phase == RoutingPhase::Idle || initial.phase == RoutingPhase::Failed, "Service is busy");
         struct Cleanup {
@@ -82,10 +82,13 @@ int wmain(int argc, wchar_t** argv) {
             state = status(RoutingCommand::Status, 0);
         }
         require(state.phase == RoutingPhase::Active, "First selection did not activate");
-        state = change(SelectionOperation::Add, second.key(), generation);
+        const auto joined = launchRouted(service, executable(),
+            {L"--child", second_go, second_done, argv[2], argv[3]}, cancel.get());
+        Child second{joined.process};
+        state = status(RoutingCommand::Status, 0);
         require(state.result == RoutingResult::Ok && state.generation == generation && state.selections.size() == 2,
                 "Second selection replaced or failed to join the active generation");
-        require(ResumeThread(first.process.hThread) == 1 && ResumeThread(second.process.hThread) == 1,
+        require(ResumeThread(first.process.hThread) == 1,
                 "Cannot resume selected applications");
         require(SetEvent(go1.get()) && SetEvent(go2.get()), "Cannot trigger HTTPS");
         require(WaitForSingleObject(done1.get(), 20000) == WAIT_OBJECT_0 &&

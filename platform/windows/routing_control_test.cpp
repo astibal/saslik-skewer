@@ -66,6 +66,9 @@ int main() {
         failed.command(RoutingCommand::Start, fresh.generation);
         const auto failure = awaitPhase(failed, RoutingPhase::Failed);
         require(failure.detail == "Fixture failure", "Fatal worker detail was lost");
+        const auto acknowledged = failed.command(RoutingCommand::Stop, failure.generation);
+        require(acknowledged.phase == RoutingPhase::Idle && acknowledged.detail.empty(),
+                "Explicit stop did not acknowledge the terminal failure");
         std::atomic_bool recover{};
         RoutingController retrying([&](HANDLE stop, RoutingSignals& signals) {
             signals.stage = RoutingStage::Connecting;

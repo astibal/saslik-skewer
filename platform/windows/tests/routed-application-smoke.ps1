@@ -5,6 +5,7 @@ Add-Type -AssemblyName UIAutomationTypes
 Add-Type @'
 using System.Runtime.InteropServices;
 public static class SkewerMouse {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr window);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
 }
@@ -17,6 +18,7 @@ $savedService=(Get-ItemProperty $settings -Name routingService -ErrorAction Sile
 $launchedPid=0
 $manualPid=0
 $shellProcess=$null
+$secondShell=$null
 $testGui=$null
 $result=1
 $postCrashMarker='C:\SkewerDev\skewer-gui-crash-routing.pass'
@@ -184,7 +186,11 @@ try {
         throw 'Manual Attach did not activate routing for the selected process'
     }
     $manualPid=[int]$reply.selected.pid
-    $release=FindNamed $window 'Release'
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $release=FindNamed $window 'Release'
+    } while ((!$release -or !$release.Current.IsEnabled) -and (Get-Date) -lt $deadline)
     if (!$release -or !$release.Current.IsEnabled) { throw 'Manual Attach did not enable Release' }
     $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $deadline=(Get-Date).AddSeconds(12)
@@ -216,6 +222,58 @@ try {
     if ($shellProcess.ProcessName -ne 'cmd') { throw 'Shell action selected an unexpected process' }
     Start-Sleep -Seconds 2
     if ($shellProcess.HasExited) { throw "Shell exited before Release (exit $($shellProcess.ExitCode))" }
+    $shellGeneration=$reply.generation
+    $deadline=(Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 100
+        $shellButton=FindNamed $window 'Shell'
+    } while ((!$shellButton -or !$shellButton.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$shellButton.Current.IsEnabled) { throw 'Launcher disabled while another application is routed' }
+    $shellButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(35)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (@($reply.selections).Count -ne 2 -and (Get-Date) -lt $deadline)
+    if (@($reply.selections).Count -ne 2 -or $reply.generation -ne $shellGeneration) {
+        throw 'Second GUI launch failed to join the same routing generation'
+    }
+    $secondIdentity=$reply.selections | Where-Object pid -NE $shellProcess.Id
+    $secondShell=Get-Process -Id $secondIdentity.pid -ErrorAction Stop
+    $null=$secondShell.Handle
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $window=FindWindow
+        if (!$window) { continue }
+        try {
+            [SkewerMouse]::SetForegroundWindow([IntPtr]$window.Current.NativeWindowHandle) | Out-Null
+            $search=FindNamed $window 'Find application'
+            $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue([string]$shellProcess.Id)
+        } catch { continue } # A process refresh invalidates transient UIA elements.
+        $rootCell=FindNamed $window ([string]$shellProcess.Id)
+    } while (!$rootCell -and (Get-Date) -lt $deadline)
+    if (!$rootCell) { throw 'First routed shell has no selectable tree row' }
+    try { $rootCell.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView() } catch {}
+    $bounds=$rootCell.Current.BoundingRectangle
+    if ($bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'Selected shell row is not visible' }
+    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 200
+    $release=FindNamed $window 'Release'
+    if (!$release.Current.IsEnabled) { throw 'Release unavailable for selected shell root' }
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (@($reply.selections).Count -ne 1 -and (Get-Date) -lt $deadline)
+    if (@($reply.selections).Count -ne 1 -or $reply.selections[0].pid -ne $secondShell.Id -or
+        $shellProcess.HasExited -or $secondShell.HasExited) { throw 'GUI Release affected another application' }
+    $search=FindNamed $window 'Find application'
+    $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('')
+    Start-Sleep -Seconds 2
     $release=FindNamed $window 'Release'
     $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $deadline=(Get-Date).AddSeconds(12)
@@ -226,10 +284,15 @@ try {
     if ($reply.scope -ne 0) { throw "Shell Release failed: $($reply | ConvertTo-Json -Compress)" }
     if ($shellProcess.HasExited) { throw "Shell exited during Release (exit $($shellProcess.ExitCode))" }
     'PASS: Shell action starts a selected command prompt; Release preserves it' | Out-File $log -Append
+    'PASS: GUI launches two shells and releases them independently without changing generation' | Out-File $log -Append
     $result=0
 } catch {
     "FAIL: $_" | Out-File $log -Append
 } finally {
+    if ($secondShell) {
+        if (!$secondShell.HasExited) { $secondShell.Kill(); $secondShell.WaitForExit(5000) | Out-Null }
+        $secondShell.Dispose()
+    }
     if ($shellProcess) {
         if (!$shellProcess.HasExited) { $shellProcess.Kill(); $shellProcess.WaitForExit(5000) | Out-Null }
         $shellProcess.Dispose()

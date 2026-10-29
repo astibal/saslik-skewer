@@ -213,7 +213,9 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
                 }
                 if (state_.phase == RoutingPhase::Active &&
                     state_.scope == RoutingScope::SelectedProcess && state_.selected) {
-                    status_->setText(tr("Active — selected PID %1 (generation %2)")
+                    status_->setText(state_.selections.size() > 1
+                        ? tr("Active — %1 application trees (generation %2)").arg(state_.selections.size()).arg(state_.generation)
+                        : tr("Active — selected PID %1 (generation %2)")
                                          .arg(state_.selected->pid)
                                          .arg(state_.generation));
                 } else if (state_.phase == RoutingPhase::Active &&
@@ -309,7 +311,9 @@ void RoutingPanel::startSelected(ProcessKey process) {
     if (!process.pid || !process.created || !known_ || !state_.tunnel_available || !state_.paired) {
         return;
     }
-    Request request{4, service_->text().trimmed(), endpoint_->text().trimmed(), {},
+    if (action_busy_) return;
+    const bool joining = state_.scope == RoutingScope::SelectedProcess && state_.phase == RoutingPhase::Active;
+    Request request{joining ? 6 : 4, service_->text().trimmed(), endpoint_->text().trimmed(), {},
                     state_.generation, process, epoch_};
     action_busy_ = true;
     updateControls();
@@ -319,6 +323,16 @@ void RoutingPanel::startSelected(ProcessKey process) {
     } else {
         dispatch(std::move(request));
     }
+}
+void RoutingPanel::releaseSelected(ProcessKey process) {
+    if (!known_ || action_busy_ || state_.scope != RoutingScope::SelectedProcess) return;
+    Request request{7, service_->text().trimmed(), endpoint_->text().trimmed(), {},
+                    state_.generation, process, epoch_};
+    action_busy_ = true;
+    updateControls();
+    status_->setText(tr("Releasing application…"));
+    if (watcher_.isRunning()) pending_ = request;
+    else dispatch(std::move(request));
 }
 void RoutingPanel::stopCurrent() { submit(2); }
 RoutingPanel::~RoutingPanel() {
@@ -415,7 +429,11 @@ void RoutingPanel::dispatch(Request request) {
                 sendStoredPairing(pipe->get(), name, QUrl(request.endpoint), cancel->get(), 2000);
             }
             auto pipe = connectRoutingService(name, false, cancel->get(), 1000);
-            if (request.selected) {
+            if (request.selected && (request.action == 6 || request.action == 7)) {
+                result.reply = exchangeSelectionChange(pipe->get(), name,
+                    request.action == 6 ? SelectionOperation::Add : SelectionOperation::Remove,
+                    *request.selected, request.generation, cancel->get(), 30000);
+            } else if (request.selected) {
                 result.reply = exchangeSelectedRouting(pipe->get(), name, *request.selected,
                                                        request.generation, cancel->get(), 2000);
             } else if (request.action == 5) {

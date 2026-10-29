@@ -105,13 +105,18 @@ void ProcessBrowser::setProcesses(QVector<ProcessRecord> records) {
 }
 
 void ProcessBrowser::setRoutingState(bool available, const QString& routed_identity) {
-    const auto normalized = available ? routed_identity : QString{};
-    if (routing_available_ == available && routed_identity_ == normalized) {
+    setRoutingSelections(available, routed_identity.isEmpty() ? QStringList{} : QStringList{routed_identity});
+}
+void ProcessBrowser::setRoutingSelections(bool available, const QStringList& identities) {
+    auto normalized = available ? identities : QStringList{};
+    normalized.removeDuplicates();
+    normalized.sort();
+    if (routing_available_ == available && routed_identities_ == normalized) {
         return;
     }
     const auto state = captureViewState();
     routing_available_ = available;
-    routed_identity_ = normalized;
+    routed_identities_ = normalized;
     rebuildModel();
     restoreViewState(state);
     setFilterText(filter_);
@@ -202,7 +207,7 @@ void ProcessBrowser::rebuildModel() {
         auto* details = new QStandardItem(record.executable);
         details->setToolTip(record.executable + QLatin1Char('\n') + record.windows.join(QLatin1Char('\n')));
         auto* routing = new QStandardItem(routing_available_ ? tr("Direct") : tr("Unavailable"));
-        if (routing_available_ && record.identity() == routed_identity_) {
+        if (routing_available_ && routed_identities_.contains(record.identity())) {
             routing->setText(tr("Routed"));
             auto font = routing->font();
             font.setBold(true);

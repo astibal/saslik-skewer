@@ -7,13 +7,16 @@ whole-host IPv4 through either Tuntom or a directly reachable on-link gateway,
 and selected-process IPv4 TCP/UDP routing through Tuntom, are available; the
 limits below remain part of the contract.
 
-## Multiple application trees (service and CLI)
+## Multiple application trees (GUI, service and CLI)
 
 An active selected-process session accepts up to 64 independent application
 trees without replacing its tunnel generation. Use `skewer-routing-control add
 SERVICE GENERATION PID BIRTH` and `remove` with the same arguments. `status`
 reports the authoritative `selections` array; `selected` remains the first root
-for older consumers. GUI multi-selection integration is still pending.
+for older consumers. The GUI launcher, Shell and Attach actions can add another
+tree to the active session. Every selected root receives a routing badge.
+Release targets the selected root row; with only one tree it can also release
+that sole selection without requiring a row selection.
 
 Add revalidates the configured owner and process creation time. Remove accepts
 an exact previously selected root, including an exited root with live children.
@@ -26,7 +29,9 @@ retain their version-6 response format. New clients require an upgraded service.
 Mutation requests are not automatically retried after IPC loss: inspect status
 because a request may already have been applied. The disposable-service fixture
 tests concurrent HTTPS, independent Release, fresh HTTPS from the remaining tree,
-unchanged generation and rejection of stale-generation mutations.
+unchanged generation and rejection of stale-generation mutations. The desktop
+fixture launches two shells from the GUI, selects one through process search,
+and releases both independently while keeping the shells alive.
 
 ## Routed shell
 

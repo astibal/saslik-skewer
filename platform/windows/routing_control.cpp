@@ -103,6 +103,9 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
         }
         if (const auto pending = signals_.selection_change.load()) pending->cancel();
         stopping_ = true;
+    } else if (command == RoutingCommand::Stop) {
+        terminal_ = RoutingPhase::Idle;
+        detail_.clear();
     }
     const auto phase = !work_.valid()            ? terminal_
                        : stopping_               ? RoutingPhase::Stopping

@@ -442,7 +442,7 @@ private:
         page_->attach->setToolTip(
             tr("Route fresh corroborated IPv4 TCP and UDP from the selected running process."));
         page_->release->setEnabled(false);
-        page_->release->setToolTip(tr("Stop the currently selected-process routing session."));
+        page_->release->setToolTip(tr("Release the selected application tree; other applications keep routing."));
 #ifdef SKEWER_WINDOWS_PAIRING
         connect(browser_->tree()->selectionModel(), &QItemSelectionModel::currentChanged, this,
                 [this] { updateApplicationActions(); });
@@ -450,9 +450,12 @@ private:
                 [this] { updateApplicationActions(); });
         connect(page_->attach, &QPushButton::clicked, this, [this] { attachSelected(); });
         connect(page_->release, &QPushButton::clicked, this, [this] {
+            const auto root = selectedRoutingRoot();
+            if (!root) return;
             page_->release->setEnabled(false);
-            page_->action_status->setText(tr("Stopping selected-process routing…"));
-            routing_panel_->stopCurrent();
+            page_->action_status->setText(tr("Releasing selected application…"));
+            routing_panel_->releaseSelected(*root);
+            updateApplicationActions();
         });
 #endif
     }
@@ -589,11 +592,13 @@ private:
                               state.phase == skewer::windows::RoutingPhase::Active ||
                               state.phase == skewer::windows::RoutingPhase::Blocked ||
                               state.phase == skewer::windows::RoutingPhase::Stopping;
-        const auto identity = selected
-                                  ? QString::number(state.selected->pid) + QLatin1Char(':') +
-                                        QString::number(state.selected->created)
-                                  : QString{};
-        browser_->setRoutingState(known, selected && retained ? identity : QString{});
+        QStringList identities;
+        if (selected && retained) {
+            for (const auto root : state.selections) {
+                identities.append(QString::number(root.pid) + QLatin1Char(':') + QString::number(root.created));
+            }
+        }
+        browser_->setRoutingSelections(known, identities);
         connections_->setRoutingState(known, state);
         updateRoutingSummary(known, state, selected, retained);
         updateApplicationActions();
@@ -602,6 +607,9 @@ private:
         } else if (state.phase == skewer::windows::RoutingPhase::Failed && !state.detail.empty()) {
             page_->action_status->setText(
                 tr("Routing failed: %1").arg(QString::fromUtf8(state.detail)));
+        } else if (selected && retained && state.selections.size() > 1) {
+            page_->action_status->setText(tr("%1 application trees are selected for routing (generation %2). Select a root to release it.")
+                                             .arg(state.selections.size()).arg(state.generation));
         } else if (selected && retained) {
             page_->action_status->setText(
                 tr("PID %1 is selected for routing (generation %2, %3).")
@@ -641,7 +649,8 @@ private:
             text = tr("Whole host routed");
             color = QStringLiteral("#41b879");
         } else if (selected && retained) {
-            text = tr("PID %1 routed").arg(state.selected->pid);
+            text = state.selections.size() > 1 ? tr("%1 applications routed").arg(state.selections.size())
+                                               : tr("PID %1 routed").arg(state.selected->pid);
             color = QStringLiteral("#41b879");
         } else {
             if (!state.tunnel_available && state.direct_available) {
@@ -656,6 +665,19 @@ private:
         tray_->setToolTip(tr("Skewer\n%1").arg(text));
     }
 
+    std::optional<skewer::windows::ProcessKey> selectedRoutingRoot() const {
+        if (const auto process = browser_->selectedProcess()) {
+            for (const auto root : routing_state_.selections) {
+                if (root.pid == process->pid && root.created == static_cast<std::uint64_t>(process->created)) {
+                    return root;
+                }
+            }
+        }
+        // With one application there is no ambiguous choice, preserving the
+        // convenient Release action after launch without a tree-row selection.
+        if (routing_state_.selections.size() == 1) return routing_state_.selections.front();
+        return std::nullopt;
+    }
     void updateApplicationActions() {
         const bool idle = routing_known_ &&
                           (routing_state_.phase == skewer::windows::RoutingPhase::Idle ||
@@ -666,11 +688,21 @@ private:
         const bool retained = routing_state_.phase == skewer::windows::RoutingPhase::Starting ||
                               routing_state_.phase == skewer::windows::RoutingPhase::Active ||
                               routing_state_.phase == skewer::windows::RoutingPhase::Blocked;
-        page_->attach->setEnabled(idle && routing_state_.tunnel_available && routing_state_.paired &&
-                                  browser_->selectedProcess().has_value());
-        page_->release->setEnabled(selected && retained);
+        const bool joining = selected && routing_state_.phase == skewer::windows::RoutingPhase::Active;
+        const bool available = !routing_panel_->actionPending();
+        bool already_selected{};
+        if (const auto process = browser_->selectedProcess()) {
+            for (const auto root : routing_state_.selections) {
+                already_selected |= root.pid == process->pid && root.created == static_cast<std::uint64_t>(process->created);
+            }
+        }
+        page_->attach->setEnabled(available && (idle || joining) && routing_state_.selections.size() < 64 &&
+                                  routing_state_.tunnel_available && routing_state_.paired &&
+                                  browser_->selectedProcess().has_value() && !already_selected);
+        page_->release->setEnabled(available && selected && retained && selectedRoutingRoot().has_value());
         if (!launch_watcher_.isRunning()) {
-            routed_start_->setEnabled(idle && routing_state_.tunnel_available && routing_state_.paired);
+            routed_start_->setEnabled(available && (idle || joining) && routing_state_.selections.size() < 64 &&
+                                      routing_state_.tunnel_available && routing_state_.paired);
             shell_->setEnabled(routed_start_->isEnabled());
         }
     }
@@ -686,6 +718,7 @@ private:
                 .arg(process->pid));
         routing_panel_->startSelected(
             {static_cast<DWORD>(process->pid), static_cast<std::uint64_t>(process->created)});
+        updateApplicationActions();
     }
 #endif
 

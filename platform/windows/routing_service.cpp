@@ -127,7 +127,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             }
         }
         current = describe(controller.command(RoutingCommand::Status, 0));
-        if (current.selections.empty() && current.scope == RoutingScope::SelectedProcess) {
+        if (operation == SelectionOperation::Remove && current.selections.empty()) {
             controller.command(RoutingCommand::Stop, generation);
         }
         return describe(controller.command(RoutingCommand::Status, 0));

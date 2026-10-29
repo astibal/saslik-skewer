@@ -22,6 +22,8 @@ public:
     QString serviceName() const;
     void setPairedEndpoint(const QString& endpoint);
     void startSelected(ProcessKey process);
+    void releaseSelected(ProcessKey process);
+    bool actionPending() const { return action_busy_; }
     void stopCurrent();
 
 private:

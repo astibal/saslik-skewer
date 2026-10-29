@@ -40,7 +40,7 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
         throw std::invalid_argument("Routed launch timeout must be 1..120000 ms");
     }
     const auto deadline = GetTickCount64() + timeout_ms;
-    const auto remaining = [&]() -> DWORD {
+    const auto remaining = [&](DWORD limit = 2000) -> DWORD {
         if (WaitForSingleObject(cancel, 0) != WAIT_TIMEOUT) {
             throw std::runtime_error("Routed launch cancelled or invalid cancellation event");
         }
@@ -48,15 +48,17 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
         if (now >= deadline) {
             throw std::runtime_error("Routed launch timed out before readiness");
         }
-        return static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, 2000));
+        return static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, limit));
     };
     const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
         auto pipe = connectRoutingService(service, false, cancel, remaining());
         return exchangeRoutingCommand(pipe->get(), service, operation, generation, cancel, remaining());
     };
     const auto initial = command(RoutingCommand::Status, 0);
+    const bool joining = initial.scope == RoutingScope::SelectedProcess &&
+                         initial.phase == RoutingPhase::Active;
     if (initial.result != RoutingResult::Ok ||
-        (initial.phase != RoutingPhase::Idle && initial.phase != RoutingPhase::Failed)) {
+        (!joining && initial.phase != RoutingPhase::Idle && initial.phase != RoutingPhase::Failed)) {
         throw std::runtime_error("Routing service is busy; process was not launched");
     }
     PendingChild child(launch(executable, arguments, LaunchMode::Suspended, environment, console));
@@ -64,8 +66,13 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
     auto pipe = connectRoutingService(service, false, cancel, remaining());
     // Never retry Start: loss of its reply may mean it was already accepted.
     // On uncertainty the child stays suspended and is terminated by its handle.
-    const auto started =
-        exchangeSelectedRouting(pipe->get(), service, identity, initial.generation, cancel, remaining());
+    // Mutations can wait for the packet worker. Sample the deadline once and
+    // stay within the IPC budget even when the overall launch allows longer.
+    const auto mutation_timeout = remaining(30000);
+    const auto started = joining
+        ? exchangeSelectionChange(pipe->get(), service, SelectionOperation::Add, identity,
+                                   initial.generation, cancel, mutation_timeout)
+        : exchangeSelectedRouting(pipe->get(), service, identity, initial.generation, cancel, remaining());
     pipe.reset();
     if (started.result != RoutingResult::Ok) {
         throw std::runtime_error("Selected routing start rejected; process was not resumed");
@@ -78,6 +85,9 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
             throw std::runtime_error("Selected routing stopped before process readiness");
         }
         if (state.phase == RoutingPhase::Active) {
+            if (std::ranges::find(state.selections, identity) == state.selections.end()) {
+                throw std::runtime_error("Launched process is not in the authoritative selection");
+            }
             remaining(); // Cancellation wins over a simultaneous Active reply.
             return {child.resume(), identity, started.generation};
         }
