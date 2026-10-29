@@ -71,18 +71,25 @@ int wmain(int argc, wchar_t** argv) {
                     "Release terminated the first application");
             require(ResumeThread(second.process.hThread) == 1, "Cannot resume second application");
             bool descendant{};
+            std::unique_ptr<ProcessTarget> surviving_child;
             const auto until = GetTickCount64() + 3000;
             while (GetTickCount64() < until && !descendant) {
                 if (auto member = selection.next()) {
                     descendant = member->key() != second_key;
+                    if (descendant) surviving_child = std::move(member);
                 } else {
                     Sleep(10);
                 }
             }
             require(descendant, "Remaining tree lost descendant tracking after Release");
+            require(TerminateProcess(second.process.hProcess, 0) &&
+                        WaitForSingleObject(second.process.hProcess, 3000) == WAIT_OBJECT_0,
+                    "Cannot retire fixture root");
+            require(selection.running() && selection.roots() == std::vector<ProcessKey>{second_key} &&
+                        selection.contains(surviving_child->key().pid),
+                    "Exited root lost its surviving routing group");
             require(selection.remove(second_key) && !selection.running(), "Final Release left selection active");
-            require(WaitForSingleObject(second.process.hProcess, 0) == WAIT_TIMEOUT,
-                    "Final Release terminated application");
+            require(surviving_child->running(), "Release of exited root killed its surviving child");
         }
         {
             ProcessTarget root(identity);

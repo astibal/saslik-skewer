@@ -249,20 +249,48 @@ try {
         try {
             [SkewerMouse]::SetForegroundWindow([IntPtr]$window.Current.NativeWindowHandle) | Out-Null
             $search=FindNamed $window 'Find application'
-            $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue([string]$shellProcess.Id)
+            $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('no-visible-root-for-release-fixture')
         } catch { continue } # A process refresh invalidates transient UIA elements.
-        $rootCell=FindNamed $window ([string]$shellProcess.Id)
-    } while (!$rootCell -and (Get-Date) -lt $deadline)
-    if (!$rootCell) { throw 'First routed shell has no selectable tree row' }
-    try { $rootCell.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern).ScrollIntoView() } catch {}
-    $bounds=$rootCell.Current.BoundingRectangle
-    if ($bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'Selected shell row is not visible' }
-    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
-    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
-    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
-    Start-Sleep -Milliseconds 200
+        $picker=FindNamed $window 'Routed application group'
+    } while ((!$picker -or !$picker.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$picker -or !$picker.Current.IsEnabled) { throw 'Routing group picker unavailable' }
+    $deadline=(Get-Date).AddSeconds(8)
+    $chosen=$false
+    do {
+        try {
+            $picker=FindNamed $window 'Routed application group'
+            $picker.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+            $items=[System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                    [System.Windows.Automation.ControlType]::ListItem))
+            foreach ($item in $items) {
+                if ($item.Current.Name -match ('PID '+$shellProcess.Id+'$')) {
+                    # Qt exposes popup selection separately from combobox
+                    # activation. Click the visible item to commit the choice;
+                    # SelectionItem.Select followed by Collapse cancels it.
+                    $bounds=$item.Current.BoundingRectangle
+                    if ($bounds.IsEmpty -or $bounds.Width -le 0) { continue }
+                    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+                    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+                    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+                    $chosen=$true
+                    break
+                }
+            }
+        } catch {} # Retry if a status refresh replaces popup elements.
+        if (!$chosen) { Start-Sleep -Milliseconds 100 }
+    } while (!$chosen -and (Get-Date) -lt $deadline)
+    if (!$chosen) { throw 'Cannot choose the first routed group by identity' }
+    # The first root is the first shell. Keep its explicit selection across
+    # several inventory/status refreshes, with every process-tree row hidden.
+    Start-Sleep -Seconds 3
     $release=FindNamed $window 'Release'
-    if (!$release.Current.IsEnabled) { throw 'Release unavailable for selected shell root' }
+    if (!$release.Current.IsEnabled) {
+        "Group picker state:`n$(WindowText $window)" | Out-File $log -Append
+        throw 'Release unavailable for chosen routing group'
+    }
     $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $deadline=(Get-Date).AddSeconds(12)
     do {
@@ -285,6 +313,7 @@ try {
     if ($shellProcess.HasExited) { throw "Shell exited during Release (exit $($shellProcess.ExitCode))" }
     'PASS: Shell action starts a selected command prompt; Release preserves it' | Out-File $log -Append
     'PASS: GUI launches two shells and releases them independently without changing generation' | Out-File $log -Append
+    'PASS: explicit group Release survives refresh with no visible root row' | Out-File $log -Append
     $result=0
 } catch {
     "FAIL: $_" | Out-File $log -Append

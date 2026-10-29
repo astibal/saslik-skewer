@@ -27,6 +27,9 @@
 #include <QMessageBox>
 #include <QItemSelectionModel>
 #include <QRegularExpression>
+#include <QComboBox>
+#include <QSignalBlocker>
+#include <QScopedValueRollback>
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
 #include "ca_trust_panel.hpp"
@@ -445,8 +448,18 @@ private:
         page_->release->setEnabled(false);
         page_->release->setToolTip(tr("Release the selected application tree; other applications keep routing."));
 #ifdef SKEWER_WINDOWS_PAIRING
-        connect(browser_->tree()->selectionModel(), &QItemSelectionModel::currentChanged, this,
+        routing_selection_ = new QComboBox(page_);
+        routing_selection_->setAccessibleName(tr("Routed application group"));
+        routing_selection_->setToolTip(tr("Select a routing group to Release, including groups whose original process has exited."));
+        routing_selection_->setVisible(false);
+        page_->footer->addWidget(routing_selection_);
+        connect(routing_selection_, &QComboBox::currentIndexChanged, this,
                 [this] { updateApplicationActions(); });
+        connect(browser_->tree()->selectionModel(), &QItemSelectionModel::currentChanged, this,
+                [this] {
+                    if (!refreshing_tree_) routing_selection_->setCurrentIndex(0);
+                    updateApplicationActions();
+                });
         connect(browser_->tree()->selectionModel(), &QItemSelectionModel::selectionChanged, this,
                 [this] { updateApplicationActions(); });
         connect(page_->attach, &QPushButton::clicked, this, [this] { attachSelected(); });
@@ -547,7 +560,13 @@ private:
             status_->setText(tr("Scan failed — displayed data may be stale: %1").arg(result.error));
             return;
         }
-        browser_->setProcesses(result.records);
+        {
+            QScopedValueRollback<bool> updating(refreshing_tree_, true);
+            browser_->setProcesses(result.records);
+        }
+#ifdef SKEWER_WINDOWS_PAIRING
+        refreshRoutingSelections();
+#endif
         suggestions_->remember(result.records);
         status_->setText(tr("%1 user processes; %2 inaccessible entries. %3")
                              .arg(result.records.size())
@@ -617,7 +636,11 @@ private:
                 display = Display::Direct;
             }
         }
-        browser_->setRoutingDisplay(display, identities);
+        {
+            QScopedValueRollback<bool> updating(refreshing_tree_, true);
+            browser_->setRoutingDisplay(display, identities);
+        }
+        refreshRoutingSelections();
         connections_->setRoutingState(known, state);
         updateRoutingSummary(known, state, selected, retained);
         updateApplicationActions();
@@ -689,6 +712,11 @@ private:
     }
 
     std::optional<skewer::windows::ProcessKey> selectedRoutingRoot() const {
+        const auto choice = routing_selection_->currentData().toString();
+        for (const auto root : routing_state_.selections) {
+            if (choice == QString::number(root.pid) + QLatin1Char(':') + QString::number(root.created))
+                return root;
+        }
         if (const auto process = browser_->selectedProcess()) {
             for (const auto root : routing_state_.selections) {
                 if (root.pid == process->pid && root.created == static_cast<std::uint64_t>(process->created)) {
@@ -700,6 +728,35 @@ private:
         // convenient Release action after launch without a tree-row selection.
         if (routing_state_.selections.size() == 1) return routing_state_.selections.front();
         return std::nullopt;
+    }
+    void refreshRoutingSelections() {
+        const auto selected = routing_selection_->currentData().toString();
+        QStringList identities, labels;
+        for (const auto root : routing_state_.selections) {
+            identities.append(QString::number(root.pid) + QLatin1Char(':') + QString::number(root.created));
+            QString name;
+            for (const auto& process : browser_->processes()) {
+                if (process.pid == root.pid && process.created == root.created) {
+                    name = process.name;
+                    break;
+                }
+            }
+            labels.append(name.isEmpty() ? tr("PID %1 — original process exited or unavailable").arg(root.pid)
+                                         : tr("%1 — PID %2").arg(name).arg(root.pid));
+        }
+        // Preserve an explicit group choice across asynchronous inventory and
+        // status updates; never rebind it to a recycled PID or a different root.
+        if (identities != routing_selection_ids_ || labels != routing_selection_labels_) {
+            const QSignalBlocker blocker(routing_selection_);
+            routing_selection_->clear();
+            routing_selection_->addItem(tr("Choose a routed application group to Release…"));
+            for (int i = 0; i < identities.size(); ++i) routing_selection_->addItem(labels[i], identities[i]);
+            routing_selection_->setCurrentIndex(std::max(0, routing_selection_->findData(selected)));
+            routing_selection_ids_ = identities;
+            routing_selection_labels_ = labels;
+        }
+        routing_selection_->setVisible(routing_known_ && !identities.isEmpty());
+        updateApplicationActions();
     }
     void updateApplicationActions() {
         const bool idle = routing_known_ &&
@@ -713,6 +770,7 @@ private:
                               routing_state_.phase == skewer::windows::RoutingPhase::Blocked;
         const bool joining = selected && routing_state_.phase == skewer::windows::RoutingPhase::Active;
         const bool available = !routing_panel_->actionPending();
+        routing_selection_->setEnabled(available && selected && retained);
         bool already_selected{};
         if (const auto process = browser_->selectedProcess()) {
             for (const auto root : routing_state_.selections) {
@@ -821,7 +879,10 @@ private:
     skewer::windows::ConnectionsPanel* connections_{};
     skewer::windows::RoutingReply routing_state_{};
     bool routing_known_{};
+    QComboBox* routing_selection_{};
+    QStringList routing_selection_ids_, routing_selection_labels_;
 #endif
+    bool refreshing_tree_{};
     skewer::ui::LaunchCatalog* suggestions_{};
     QLabel* launch_status_{};
     QLabel* status_{};

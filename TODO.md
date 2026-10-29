@@ -6,6 +6,12 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows IPv4 routing is implemented and has
 passed the native VM cases listed below; unchecked items remain release gates.
 
+- [ ] Investigate intermittent immediate descendant HTTPS refusal in the SCM
+  integration fixture (2026-10-29: curl exit 7 after 0 ms, after root HTTPS passed).
+  The unchanged full rerun passed, including descendant HTTPS and UDP. Preserve
+  per-generation packet/guard diagnostics on failure before attributing this to
+  external connectivity; a passing rerun alone does not explain the failure.
+
 Transport milestones verified independently of the remaining service/UI gates:
 
 - [x] Shared TLS-PSK pairing on Windows with user-scoped DPAPI credentials.

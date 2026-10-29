@@ -44,8 +44,12 @@ Mutation requests are not automatically retried after IPC loss: inspect status
 because a request may already have been applied. The disposable-service fixture
 tests concurrent HTTPS, independent Release, fresh HTTPS from the remaining tree,
 unchanged generation and rejection of stale-generation mutations. The desktop
-fixture launches two shells from the GUI, selects one through process search,
-and releases both independently while keeping the shells alive.
+fixture launches two shells from the GUI, hides their process rows, selects one
+through the routed-group picker, and releases both independently while keeping
+the shells alive. The picker preserves the exact root identity across inventory
+and status refreshes and lists roots even after their original process exits.
+Native process tests verify that releasing an exited root preserves its surviving
+children. Choosing another process-tree row returns Release to that row's root.
 
 ## Routed shell
 
