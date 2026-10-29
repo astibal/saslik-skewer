@@ -75,6 +75,15 @@ try {
     } while ((!$window -or !$button -or !$button.Current.IsEnabled -or
               !$status) -and (Get-Date) -lt $deadline)
     if (!$window) { throw 'Skewer window missing' }
+    $details=FindNamed $window 'Application routing details and limits'
+    if (!$details) { throw 'Application routing details missing' }
+    $toggle=$details.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) {
+        throw 'Application routing details should start collapsed'
+    }
+    $toggle.Toggle()
+    if ((WindowText $window) -notmatch 'blocked, not forwarded') { throw 'Expanded routing limitations missing' }
+    $toggle.Toggle()
     $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
     if ($currentService -ne $savedService) {
         throw 'Process-local routing service override changed persistent user preferences'

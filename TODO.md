@@ -6,6 +6,13 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows IPv4 routing is implemented and has
 passed the native VM cases listed below; unchecked items remain release gates.
 
+- [ ] Diagnose intermittent client pipe setup failure (`Cannot configure routing
+  pipe message mode`) observed during the selected-service IPv6 fixture on
+  2026-10-29. The service remained Idle and fixture cleanup completed. Preserve
+  the Win32 error in diagnostics and reproduce the disconnect/re-accept boundary;
+  a successful repeat alone does not close this reliability finding. Never retry
+  a potentially delivered routing mutation as a generic transport workaround.
+
 - [x] Repeat descendant admission integration after the startup-guard race fix. The
   2026-10-29 investigation found full connect guards briefly applied even to
   descendants of an already Active group. Active descendants now retain packet

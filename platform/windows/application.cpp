@@ -10,6 +10,7 @@
 #include <QFileDialog>
 #include <QFutureWatcher>
 #include <QLabel>
+#include <QToolButton>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QProcess>
@@ -431,16 +432,35 @@ private:
         addUnavailablePage(tr("CA Trust"), tr("This build has no paired CA support."));
         addUnavailablePage(tr("Runtime Trust"), tr("This build has no paired CA support."));
 #endif
+        auto* summary = new QLabel(tr("Attach resets existing TCP connections. A handoff to an already running "
+                                     "application does not select that instance."), page_);
+        summary->setWordWrap(true);
+        page_->top->addWidget(summary);
+        auto* limitations = new QToolButton(page_);
+        limitations->setText(tr("Application routing details and limits"));
+        limitations->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        limitations->setArrowType(Qt::RightArrow);
+        limitations->setAutoRaise(true);
+        limitations->setObjectName("applicationRoutingDetails");
+        limitations->setCheckable(true);
+        limitations->setChecked(false);
         auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
                                          "releases it only after routing is ready. "
                                          "Attach guards the live process tree and resets its existing IPv4 "
                                          "TCP connections before activation. Fresh corroborated IPv4 TCP and UDP are routed, "
                                          "including new descendants, intact live trees and uniquely owned "
-                                         "UDP sockets opened before Attach. Shared UDP binds, orphaned "
-                                         "handoffs and IPv6 are not covered. "
+                                         "UDP sockets opened before Attach. Ambiguous shared UDP binds and "
+                                         "selected IPv6 traffic are blocked, not forwarded. Existing instances "
+                                         "receiving a singleton handoff are not automatically selected. "
                                          "Whole-host routing is controlled on the Routing tab."),
                                       page_);
         disclaimer->setWordWrap(true);
+        disclaimer->setVisible(false);
+        connect(limitations, &QToolButton::toggled, disclaimer, [limitations, disclaimer](bool expanded) {
+            limitations->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+            disclaimer->setVisible(expanded);
+        });
+        page_->top->addWidget(limitations);
         page_->top->addWidget(disclaimer);
         browser_ = new skewer::ui::ProcessBrowser(page_, page_->tree);
         page_->setProcessWidget(browser_);
