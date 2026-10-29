@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QHostAddress>
 #include <QLabel>
+#include <QGroupBox>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QFormLayout>
@@ -32,13 +33,42 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
     auto* layout = new QVBoxLayout(this);
     auto* note = new QLabel(tr("Whole-host IPv4 routing through an installed Skewer service. Closing this "
                                "window does not stop routing. "
-                               "The Applications tab can route one process's fresh corroborated IPv4 TCP "
+                               "The Applications tab can route selected application trees' corroborated IPv4 TCP "
                                "and UDP traffic. "
                                "WinDivert protection does "
                                "not survive a service crash."),
                             this);
     note->setWordWrap(true);
     layout->addWidget(note);
+    auto* policy = new QGroupBox(tr("Routing policy and exceptions"), this);
+    policy->setObjectName("routingPolicy");
+    policy->setCheckable(true);
+    policy->setChecked(false);
+    auto* policy_layout = new QVBoxLayout(policy);
+    auto* details = new QLabel(tr(
+        "Whole-host tunnel: IPv4 uses the tunnel. Physical egress permits loopback, DHCPv4 "
+        "(UDP 68 → 67), and the configured peer's control TCP port and tunnel UDP ports "
+        "40001–40255. An optional configured management address permits SSH replies "
+        "(TCP source port 22). These are address/port exceptions, not process isolation. "
+        "There is no blanket private-network or host-DNS exception. Physical IPv6 is blocked.\n\n"
+        "Whole-host direct gateway: two IPv4 /1 routes use the gateway. More-specific "
+        "existing routes, including on-link LAN routes, still win. Existing DNS settings "
+        "are retained; DNS follows routing. Non-loopback IPv6 is blocked. This mode does "
+        "not provide the tunnel's physical-egress guard.\n\n"
+        "Selected applications: corroborated IPv4 TCP/UDP uses the tunnel; unrelated "
+        "applications retain their routing. IPv6 and unsupported selected traffic are not "
+        "forwarded. Tunnel/control address and port exceptions still apply.\n\n"
+        "Closing the GUI changes none of these rules. Stop/Release deliberately restores "
+        "normal routing. A WinDivert service crash can remove interception; this is a lab "
+        "tool, not a security isolation boundary."), policy);
+    details->setObjectName("routingPolicyDetails");
+    details->setTextFormat(Qt::PlainText);
+    details->setWordWrap(true);
+    details->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    policy_layout->addWidget(details);
+    details->hide();
+    connect(policy, &QGroupBox::toggled, details, &QWidget::setVisible);
+    layout->addWidget(policy);
     auto* form = new QFormLayout;
     // Integration tests bind one GUI process to a disposable SCM service.
     // That process-local override must never become the user's next default.

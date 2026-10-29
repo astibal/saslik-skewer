@@ -2,6 +2,7 @@
 #include <QApplication>
 #include <QSettings>
 #include <QLabel>
+#include <QGroupBox>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QPushButton>
@@ -129,6 +130,18 @@ int main(int argc, char** argv) {
         const auto start = panel->findChild<QPushButton*>("routingStart");
         const auto stop = panel->findChild<QPushButton*>("routingStop");
         const auto status = panel->findChild<QLabel*>("routingStatus");
+        const auto policy = panel->findChild<QGroupBox*>("routingPolicy");
+        const auto details = panel->findChild<QLabel*>("routingPolicyDetails");
+        if (!policy || !details || policy->isChecked() || !details->isHidden()) {
+            throw std::runtime_error("Routing policy must start collapsed");
+        }
+        policy->setChecked(true);
+        if (details->isHidden() || !details->text().contains("More-specific") ||
+            !details->text().contains("DHCPv4") || !details->text().contains("service crash")) {
+            throw std::runtime_error("Routing exceptions and limitations are not visible");
+        }
+        policy->setChecked(false);
+        if (!details->isHidden()) throw std::runtime_error("Routing policy did not collapse");
         if (!endpoint || !gateway || !transport || !start || !stop || !status ||
             start->isEnabled() || stop->isEnabled()) {
             throw std::runtime_error("Unknown service enabled routing controls");

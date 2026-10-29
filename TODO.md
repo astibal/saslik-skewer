@@ -6,11 +6,14 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows IPv4 routing is implemented and has
 passed the native VM cases listed below; unchecked items remain release gates.
 
-- [ ] Soak-test descendant admission after the startup-guard race fix. The
+- [x] Repeat descendant admission integration after the startup-guard race fix. The
   2026-10-29 investigation found full connect guards briefly applied even to
   descendants of an already Active group. Active descendants now retain packet
   capture and unsupported-protocol guards without a transient connect denial.
   The SCM fixture covers eight consecutive HTTPS children without sleeps/retries;
+  three consecutive full VM suites passed on 2026-10-29 (24 fresh HTTPS children,
+  plus the adopted-tree probes, GUI crash recovery, independent Release and UDP).
+  This is bounded regression evidence, not a long-duration reliability guarantee;
   preserve diagnostics if the previously observed immediate curl exit 7 recurs.
 
 Transport milestones verified independently of the remaining service/UI gates:
