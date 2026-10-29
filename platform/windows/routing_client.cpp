@@ -23,7 +23,11 @@ std::unique_ptr<Handle> connectRoutingService(const std::wstring& name, bool pai
         if (*pipe) {
             DWORD mode = PIPE_READMODE_MESSAGE;
             if (!SetNamedPipeHandleState(pipe->get(), &mode, nullptr, nullptr)) {
-                throw std::runtime_error("Cannot configure routing pipe message mode");
+                // Capture immediately: cleanup or formatting must not replace
+                // the OS error needed to diagnose a disconnect/re-accept race.
+                const auto error = GetLastError();
+                throw std::runtime_error("Cannot configure routing pipe message mode (Win32 " +
+                                         std::to_string(error) + ")");
             }
             // Reject a spoofed pipe before callers can send even a command.
             try {
@@ -48,7 +52,8 @@ std::unique_ptr<Handle> connectRoutingService(const std::wstring& name, bool pai
         }
         const auto error = GetLastError();
         if ((error != ERROR_PIPE_BUSY && error != ERROR_FILE_NOT_FOUND) || GetTickCount64() >= deadline) {
-            throw std::runtime_error("Routing service unavailable");
+            throw std::runtime_error("Routing service unavailable (Win32 " +
+                                     std::to_string(error) + ")");
         }
         if (WaitForSingleObject(cancel, 20) != WAIT_TIMEOUT) {
             throw std::runtime_error("Routing service connection cancelled");
