@@ -1,5 +1,6 @@
 #include "tunnel_pump.hpp"
 #include "packet_queue.hpp"
+#include "host_tunnel_pause.hpp"
 #include <array>
 #include <deque>
 #include <iostream>
@@ -246,8 +247,39 @@ void testDataGate() {
     std::cout << "PASS: packet-boundary authorization in both directions\n";
 }
 
+void testHostPauseControl() {
+    TestDevice device;
+    RoutingSignals state;
+    HostTunnelPause pause(device, state);
+    require(state.pause_supported && pause.dataAllowed(), "Host pause capability missing");
+    auto request = std::make_shared<PauseChange>(true);
+    state.pause_change = request;
+    pause.pollControl();
+    require(request->phase == PauseChange::Phase::Complete && !pause.dataAllowed(),
+            "Pause acknowledged before blocking payload");
+    pause.block();
+    require(!pause.dataAllowed(), "Transport recovery lost pause intent");
+    for (unsigned i = 0; i < 300; ++i) device.outgoing.push_back(packet(false));
+    auto resume = std::make_shared<PauseChange>(false);
+    state.pause_change = resume;
+    pause.pollControl();
+    require(resume->phase == PauseChange::Phase::Applying && !pause.dataAllowed() &&
+                device.outgoing.size() == 44,
+            "Resume drain was unbounded or admitted queued data");
+    pause.pollControl();
+    require(resume->phase == PauseChange::Phase::Complete && pause.dataAllowed() &&
+                device.outgoing.empty(), "Resume did not drain queued host data");
+    auto cancelled = std::make_shared<PauseChange>(true);
+    require(cancelled->cancel(), "Cannot cancel pending pause");
+    state.pause_change = cancelled;
+    pause.pollControl();
+    require(pause.dataAllowed(), "Cancelled pause changed packet admission");
+    std::cout << "PASS: host pause acknowledgement, recovery intent and bounded resume drain\n";
+}
+
 int main() {
     try {
+        testHostPauseControl();
         {
             PacketQueue queue(1, 4);
             std::array<std::uint8_t, 4> data{1, 2, 3, 4}, buffer{};

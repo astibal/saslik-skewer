@@ -419,6 +419,8 @@ if(SKEWER_WINDOWS_PAIRING)
         # Explicit elevated VM fixture; never run route mutations via CTest.
         target_link_libraries(tunnel_routes_test PRIVATE skewer-paired-tunnel)
         target_link_libraries(paired_tunnel_test PRIVATE skewer-paired-tunnel skewer-windows-processes)
+        # Host pause exercises service control as well as the low-level pump.
+        target_link_libraries(tunnel_pump_test PRIVATE skewer-paired-tunnel skewer-windows-processes)
         add_test(NAME windows_paired_tunnel COMMAND paired_tunnel_test)
         set_tests_properties(windows_paired_tunnel PROPERTIES TIMEOUT 35)
         if(TARGET skewer-wintun)
