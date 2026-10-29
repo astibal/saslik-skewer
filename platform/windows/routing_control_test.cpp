@@ -22,6 +22,21 @@ RoutingReply awaitPhase(RoutingController& controller, RoutingPhase phase) {
 int main() {
     try {
         {
+            RoutingController finished([](HANDLE, RoutingSignals& signals) { signals.completed = true; });
+            const auto initial = finished.command(RoutingCommand::Status, 0);
+            finished.command(RoutingCommand::Start, initial.generation);
+            require(awaitPhase(finished, RoutingPhase::Idle).detail.empty(),
+                    "Normal selected-group completion was reported as failure");
+            RoutingController failed([](HANDLE, RoutingSignals& signals) {
+                signals.completed = true;
+                throw std::runtime_error("cleanup failed");
+            });
+            const auto before = failed.command(RoutingCommand::Status, 0);
+            failed.command(RoutingCommand::Start, before.generation);
+            require(awaitPhase(failed, RoutingPhase::Failed).detail == "cleanup failed",
+                    "Completion hid a worker cleanup error");
+        }
+        {
             RoutingReply state;
             state.scope = RoutingScope::SelectedProcess;
             state.paused = true;

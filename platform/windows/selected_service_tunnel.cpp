@@ -272,7 +272,10 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
             state.blocked = true;
             runtime.block();
             if (WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
-            if (!runtime.running()) std::rethrow_exception(failure);
+            if (!runtime.running()) {
+                state.completed = true;
+                return;
+            }
             // Preserve capture while backing off. Direct decisions for other
             // processes are still reinjected; selected/unknown packets drop.
             const auto shift = std::min(failures, 4U);
@@ -289,7 +292,10 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
                 WaitForSingleObject(cancel, 25);
             }
             if (WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return;
-            if (!runtime.running()) std::rethrow_exception(failure);
+            if (!runtime.running()) {
+                state.completed = true;
+                return;
+            }
             // A successful generation clears Blocked from Runtime::poll().
             // Until then the authoritative service phase remains Blocked.
         }

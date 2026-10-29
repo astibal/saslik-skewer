@@ -43,6 +43,7 @@ void RoutingController::reap() {
     terminal_ = stopping_ ? RoutingPhase::Idle : RoutingPhase::Failed;
     try {
         detail_ = work_.get();
+        if (detail_.empty() && signals_.completed.load()) terminal_ = RoutingPhase::Idle;
     } catch (...) {
         detail_ = "Routing worker failed with an unknown exception";
         terminal_ = RoutingPhase::Failed;
@@ -86,6 +87,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
                 throw std::runtime_error("Cannot start routing generation");
             }
             signals_.ready = false;
+            signals_.completed = false;
             signals_.pause_supported = false;
             signals_.paused = false;
             signals_.pause_change.store({});

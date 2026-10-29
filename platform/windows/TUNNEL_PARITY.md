@@ -1,5 +1,23 @@
 # Windows tunnel parity contract
 
+### Existing-instance handoff and normal process completion
+
+`tests/selected-handoff-live.ps1` starts an unselected broker before launching a
+selected process. Named-event IPC transfers work to that broker. The native SCM
+test verifies successful HTTP(S), exact launcher membership, absence of the
+broker from membership, and automatic Idle after the selected launcher exits.
+On 2026-10-29 a controlled endpoint at `192.168.199.1:18088` observed the request
+from the VM's physical address `192.168.199.131`. The existing instance remains
+outside routing; this is a documented limitation, not an isolation guarantee.
+This does not cover arbitrary orphaned/breakaway descendants or all singleton
+implementations.
+
+The test exposed normal group exit being reported as Failed. Selected runtime
+now explicitly signals successful completion after the last member exits. The
+controller returns Idle only after joining the worker with no error; a cleanup
+exception still reports Failed, and an unexpected unmarked worker return retains
+its previous failure behavior. Native controller tests cover both outcomes.
+
 ### Selected-application direct routing: unresolved architecture
 
 The implemented mode matrix is:

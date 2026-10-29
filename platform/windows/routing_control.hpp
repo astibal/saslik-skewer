@@ -87,6 +87,9 @@ struct PauseChange final {
     }
 };
 struct RoutingSignals {
+    // Explicit normal completion (for example, the last selected process exits).
+    // A worker exception still wins over this flag during controller reap.
+    std::atomic_bool completed{};
     std::atomic_bool ready{};
     std::atomic_bool blocked{};
     std::atomic<RoutingStage> stage{RoutingStage::None};
