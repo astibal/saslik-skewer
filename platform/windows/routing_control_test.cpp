@@ -185,6 +185,36 @@ int main() {
         try { pauses.changePause(true, pauseStarted.generation); }
         catch (const std::runtime_error&) { idlePause = true; }
         require(idlePause, "Idle routing accepted protected pause");
+        RoutingController cancelledPause([](HANDLE stop, RoutingSignals& signals) {
+            signals.pause_supported = true;
+            signals.ready = true;
+            WaitForSingleObject(stop, INFINITE); // Deliberately never claim the request.
+        });
+        const auto cancelledInitial = cancelledPause.command(RoutingCommand::Status, 0);
+        const auto cancelledStarted = cancelledPause.command(RoutingCommand::Start, cancelledInitial.generation);
+        awaitPhase(cancelledPause, RoutingPhase::Active);
+        auto abandoned = cancelledPause.changePause(true, cancelledStarted.generation);
+        cancelledPause.command(RoutingCommand::Stop, cancelledStarted.generation);
+        awaitPhase(cancelledPause, RoutingPhase::Idle);
+        require(abandoned->phase == PauseChange::Phase::Cancelled && !abandoned->claim(),
+                "Stopped generation left a claimable pause request");
+        RoutingController failedPause([](HANDLE stop, RoutingSignals& signals) {
+            signals.pause_supported = true;
+            signals.ready = true;
+            while (WaitForSingleObject(stop, 1) == WAIT_TIMEOUT) {
+                const auto request = signals.pause_change.load();
+                if (request && request->claim()) throw std::runtime_error("Injected pause worker failure");
+            }
+        });
+        const auto failedInitial = failedPause.command(RoutingCommand::Status, 0);
+        const auto failedStarted = failedPause.command(RoutingCommand::Start, failedInitial.generation);
+        awaitPhase(failedPause, RoutingPhase::Active);
+        auto interrupted = failedPause.changePause(true, failedStarted.generation);
+        const auto pauseFailure = awaitPhase(failedPause, RoutingPhase::Failed);
+        require(interrupted->phase == PauseChange::Phase::Complete && !interrupted->error.empty(),
+                "Worker failure stranded an applying pause request");
+        require(!pauseFailure.paused && !pauseFailure.pause_available,
+                "Failed worker still claimed protected pause");
         std::cout
             << "PASS: controller generations, cleanup, failure and retry diagnostics\n";
         return 0;

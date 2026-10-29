@@ -165,7 +165,12 @@ revive an epoch retired by transport failure. Pause intent survives replacement
 packet sessions. The native paired HTTPS fixture checks successful transfer,
 pause blocking, stale Resume rejection and recovery in the same generation.
 The desktop fixture checks both buttons against service state without changing
-the routing generation. Whole-host pause is not currently supported.
+the routing generation. It terminates the GUI while paused, verifies that the
+service retains protection, and reopens the GUI to recover the enabled Resume
+action without implicitly resuming. Controller regressions also cover Stop
+cancelling an unclaimed request and worker failure completing an already claimed
+request with an error instead of retaining a false protection claim.
+Whole-host pause is not currently supported.
 
 Unselected applications must remain unaffected. Auto mode may initially choose
 a known direct lab route, as Linux does. Once a tunnel has been selected, its

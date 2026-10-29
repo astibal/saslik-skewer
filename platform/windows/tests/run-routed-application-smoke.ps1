@@ -15,7 +15,7 @@ $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minute
 Register-ScheduledTask -TaskName $name -Action $action -Principal $principal -Settings $settings -Force | Out-Null
 try {
     Start-ScheduledTask -TaskName $name
-    $deadline=(Get-Date).AddSeconds(55)
+    $deadline=(Get-Date).AddSeconds(90)
     while ((Get-Date) -lt $deadline) {
         if (Test-Path $log) {
             $text=Get-Content $log -Raw

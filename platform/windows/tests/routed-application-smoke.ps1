@@ -199,6 +199,39 @@ try {
         } while (($reply.paused -ne $expectedPaused) -and (Get-Date) -lt $deadline)
         if (!$reply.pauseAvailable -or $reply.paused -ne $expectedPaused -or
             [UInt64]$reply.generation -ne $generation) { throw 'GUI pause did not match service state' }
+        if ($expectedPaused) {
+            # Pause belongs to the service, not to the window that requested it.
+            $testGui.Kill()
+            if (!$testGui.WaitForExit(5000)) { throw 'Paused GUI did not terminate' }
+            $testGui.Dispose()
+            $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or !$reply.paused -or $reply.phase -ne 3 -or
+                [UInt64]$reply.generation -ne $generation) { throw 'GUI exit released protected pause' }
+            $testGui=Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service" -PassThru
+            $deadline=(Get-Date).AddSeconds(12)
+            do {
+                Start-Sleep -Milliseconds 100
+                $window=FindWindow
+            } while ((!$window -or $window.Current.ProcessId -ne $testGui.Id) -and (Get-Date) -lt $deadline)
+            if (!$window -or $window.Current.ProcessId -ne $testGui.Id) { throw 'Paused GUI did not reopen' }
+            SelectTab $window 'Routing'
+            $deadline=(Get-Date).AddSeconds(12)
+            do {
+                Start-Sleep -Milliseconds 100
+                $restoredResume=FindNamed $window 'Resume applications'
+            } while ((!$restoredResume -or !$restoredResume.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+            if (!$restoredResume -or !$restoredResume.Current.IsEnabled) {
+                WindowText $window | Out-File $log -Append
+                throw 'Reopened GUI lost paused state'
+            }
+            $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or !$reply.paused -or $reply.phase -ne 3 -or
+                [UInt64]$reply.generation -ne $generation) { throw 'Reopening GUI changed protected pause' }
+            if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) {
+                throw 'Paused GUI restart terminated the selected application'
+            }
+            'PASS: protected pause survives GUI termination and is restored on reopen' | Out-File $log -Append
+        }
     }
     'PASS: GUI protected pause and resume preserve the routing generation' | Out-File $log -Append
     SelectTab $window 'Applications'
