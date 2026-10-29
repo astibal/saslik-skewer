@@ -17,5 +17,6 @@ struct RoutedLaunch {
 RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& executable,
                           const std::vector<std::wstring>& arguments, HANDLE cancel,
                           const EnvironmentOverrides& environment = {},
-                          DWORD timeout_ms = 30000);
+                          DWORD timeout_ms = 30000,
+                          LaunchConsole console = LaunchConsole::Inherit);
 } // namespace skewer::windows

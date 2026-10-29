@@ -35,7 +35,7 @@ private:
 
 RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& executable,
                           const std::vector<std::wstring>& arguments, HANDLE cancel,
-                          const EnvironmentOverrides& environment, DWORD timeout_ms) {
+                          const EnvironmentOverrides& environment, DWORD timeout_ms, LaunchConsole console) {
     if (!timeout_ms || timeout_ms > 120000) {
         throw std::invalid_argument("Routed launch timeout must be 1..120000 ms");
     }
@@ -59,7 +59,7 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
         (initial.phase != RoutingPhase::Idle && initial.phase != RoutingPhase::Failed)) {
         throw std::runtime_error("Routing service is busy; process was not launched");
     }
-    PendingChild child(launch(executable, arguments, LaunchMode::Suspended, environment));
+    PendingChild child(launch(executable, arguments, LaunchMode::Suspended, environment, console));
     const auto identity = processKey(child.process().hProcess, child.process().dwProcessId);
     auto pipe = connectRoutingService(service, false, cancel, remaining());
     // Never retry Start: loss of its reply may mean it was already accepted.

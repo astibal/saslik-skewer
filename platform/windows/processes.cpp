@@ -392,7 +392,10 @@ std::vector<wchar_t> environmentBlock(const EnvironmentOverrides& overrides) {
 } // namespace
 
 PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments,
-                           LaunchMode mode, const EnvironmentOverrides& environment) {
+                           LaunchMode mode, const EnvironmentOverrides& environment, LaunchConsole console) {
+    if (console != LaunchConsole::Inherit && console != LaunchConsole::New) {
+        throw std::invalid_argument("Invalid process console mode");
+    }
     if (mode != LaunchMode::Running && mode != LaunchMode::Suspended) {
         throw std::invalid_argument("Invalid process launch mode");
     }
@@ -414,6 +417,7 @@ PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std
     auto environment_block = environmentBlock(environment);
     // No inherited handles, shell expansion, admin token or hidden routing.
     DWORD flags = mode == LaunchMode::Suspended ? CREATE_SUSPENDED : 0;
+    if (console == LaunchConsole::New) flags |= CREATE_NEW_CONSOLE;
     if (!environment_block.empty()) flags |= CREATE_UNICODE_ENVIRONMENT;
     if (!CreateProcessW(executable.c_str(), line.data(), nullptr, nullptr, FALSE, flags,
                         environment_block.empty() ? nullptr : environment_block.data(), nullptr,

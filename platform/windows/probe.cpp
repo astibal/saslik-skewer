@@ -90,6 +90,18 @@ void testCommandLine() {
     require(rejected, "Embedded NUL accepted");
 
     const auto executable = testExecutable();
+    // A dedicated console must still respect CREATE_SUSPENDED. The child
+    // verifies it owns a console rather than silently inheriting the parent.
+    Child console_child{launch(executable, {L"--console-child"}, LaunchMode::Suspended, {},
+                               LaunchConsole::New)};
+    require(WaitForSingleObject(console_child.information.hProcess, 100) == WAIT_TIMEOUT,
+            "Suspended console child executed");
+    require(ResumeThread(console_child.information.hThread) == 1, "Cannot resume console child");
+    require(WaitForSingleObject(console_child.information.hProcess, 5000) == WAIT_OBJECT_0,
+            "Console child did not exit");
+    DWORD console_exit{};
+    require(GetExitCodeProcess(console_child.information.hProcess, &console_exit) && !console_exit,
+            "Dedicated console missing or shared with parent");
     Child environment_child{launch(executable, {L"--environment-child", L"lab value"}, LaunchMode::Running,
                                    {{L"SKEWER_TEST_ENV", L"lab value"}})};
     require(WaitForSingleObject(environment_child.information.hProcess, 3000) == WAIT_OBJECT_0,
@@ -266,6 +278,11 @@ void printSnapshot(const Snapshot& snapshot) {
 
 int wmain(int argc, wchar_t** argv) {
     try {
+        if (argc == 2 && std::wstring_view(argv[1]) == L"--console-child") {
+            DWORD processes[8]{};
+            const auto count = GetConsoleProcessList(processes, 8);
+            return count == 1 && processes[0] == GetCurrentProcessId() ? 0 : 1;
+        }
         if (argc == 3 && std::wstring_view(argv[1]) == L"--environment-child") {
             wchar_t value[128]{};
             const auto size = GetEnvironmentVariableW(L"SKEWER_TEST_ENV", value, 128);

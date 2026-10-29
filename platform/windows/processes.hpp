@@ -102,10 +102,12 @@ std::wstring commandLine(const std::wstring& executable, const std::vector<std::
 // Suspended mode additionally requires the caller to resume or terminate its
 // child; closing handles alone deliberately does neither.
 enum class LaunchMode { Running, Suspended };
+enum class LaunchConsole { Inherit, New };
 using EnvironmentOverrides = std::vector<std::pair<std::wstring, std::wstring>>;
 PROCESS_INFORMATION launch(const std::wstring& executable, const std::vector<std::wstring>& arguments,
                            LaunchMode mode = LaunchMode::Running,
-                           const EnvironmentOverrides& environment = {});
+                           const EnvironmentOverrides& environment = {},
+                           LaunchConsole console = LaunchConsole::Inherit);
 std::string utf8(std::wstring_view value);
 
 } // namespace skewer::windows

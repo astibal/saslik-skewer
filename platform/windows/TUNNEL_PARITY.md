@@ -7,6 +7,21 @@ whole-host IPv4 through either Tuntom or a directly reachable on-link gateway,
 and selected-process IPv4 TCP/UDP routing through Tuntom, are available; the
 limits below remain part of the contract.
 
+## Routed shell
+
+The Applications launcher offers **Shell** when selected routing is available.
+It launches the system `cmd.exe /D /K` as the current user in a new console,
+using the same suspended-child transaction as **Launch through Skewer**.
+No child code executes until the selected routing generation is Active.
+The launcher fields are ignored for this action; `/D` disables command prompt
+AutoRun commands. Release leaves the shell running, without selected routing.
+New descendants are tracked; singleton handoffs to existing applications outside
+the selected group are not covered. Closing Skewer does not terminate the shell.
+
+Native process tests cover dedicated-console creation and suspended execution.
+The disposable-service desktop fixture verifies Shell selection and preservation
+of the command prompt after Release.
+
 ## First-release scope: lab routing, not security isolation
 
 Use WinDivert for interception and Wintun/Tuntom for transport. The interception

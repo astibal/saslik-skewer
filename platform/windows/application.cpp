@@ -91,7 +91,8 @@ struct PairedStatusResult {
 #endif
 LaunchResult launch(const QString& executable, const QStringList& arguments, const QString& service, bool routed,
                     const std::shared_ptr<skewer::windows::Handle>& cancel,
-                    const skewer::windows::EnvironmentOverrides& environment) {
+                    const skewer::windows::EnvironmentOverrides& environment,
+                    skewer::windows::LaunchConsole console) {
     try {
         std::vector<std::wstring> native_arguments;
         native_arguments.reserve(arguments.size());
@@ -101,12 +102,12 @@ LaunchResult launch(const QString& executable, const QStringList& arguments, con
         if (routed) {
             const auto result = skewer::windows::launchRouted(service.toStdWString(),
                                                               executable.toStdWString(), native_arguments,
-                                                              cancel->get(), environment);
+                                                              cancel->get(), environment, 30000, console);
             skewer::windows::Handle thread(result.process.hThread), handle(result.process.hProcess);
             return {result.identity.pid, result.generation, true, {}};
         }
         const auto process = skewer::windows::launch(executable.toStdWString(), native_arguments,
-                                                     skewer::windows::LaunchMode::Running, environment);
+                                                     skewer::windows::LaunchMode::Running, environment, console);
         skewer::windows::Handle thread(process.hThread), handle(process.hProcess);
         return {process.dwProcessId, 0, false, {}};
     } catch (const std::exception& error) {
@@ -473,6 +474,10 @@ private:
 #ifdef SKEWER_WINDOWS_PAIRING
         routed_start_ = new QPushButton(tr("Launch through Skewer"), this);
         routed_start_->setObjectName("routedLaunch");
+        shell_ = new QPushButton(tr("Shell"), this);
+        shell_->setObjectName("routedShell");
+        shell_->setToolTip(tr("Open a command prompt after routing is ready. Commands launched inside it "
+                             "inherit selection; existing applications may hand off outside it."));
 #endif
         row->addWidget(path_, 1);
         row->addWidget(arguments_, 1);
@@ -480,6 +485,7 @@ private:
         row->addWidget(start_);
 #ifdef SKEWER_WINDOWS_PAIRING
         row->addWidget(routed_start_);
+        row->addWidget(shell_);
 #endif
         page_->footer->addLayout(row);
         launch_status_ = new QLabel(this);
@@ -489,9 +495,10 @@ private:
         status_->setWordWrap(true);
         page_->footer->addWidget(status_);
         connect(browse, &QPushButton::clicked, this, &WindowsWindow::browseExecutable);
-        connect(start_, &QPushButton::clicked, this, &WindowsWindow::startProgram);
+        connect(start_, &QPushButton::clicked, this, [this] { startProgram(); });
 #ifdef SKEWER_WINDOWS_PAIRING
         connect(routed_start_, &QPushButton::clicked, this, [this] { startProgram(true); });
+        connect(shell_, &QPushButton::clicked, this, [this] { startProgram(true, true); });
         connect(path_, &QLineEdit::returnPressed, this, [this] { startProgram(true); });
 #else
         connect(path_, &QLineEdit::returnPressed, this, [this] { startProgram(); });
@@ -664,6 +671,7 @@ private:
         page_->release->setEnabled(selected && retained);
         if (!launch_watcher_.isRunning()) {
             routed_start_->setEnabled(idle && routing_state_.tunnel_available && routing_state_.paired);
+            shell_->setEnabled(routed_start_->isEnabled());
         }
     }
 
@@ -689,7 +697,7 @@ private:
         }
     }
 
-    void startProgram(bool routed = false) {
+    void startProgram(bool routed = false, bool shell = false) {
         // Keep Enter blocked until the completion callback has updated the UI,
         // not merely until the worker has returned its result.
         if (!start_->isEnabled()
@@ -699,7 +707,18 @@ private:
         ) {
             return;
         }
-        const auto executable = path_->text().trimmed();
+        auto executable = path_->text().trimmed();
+        if (shell) {
+            // Resolve the OS command prompt, not a PATH/COMSPEC override. /D
+            // disables AutoRun commands; no user input is interpreted here.
+            wchar_t directory[MAX_PATH]{};
+            const auto length = GetSystemDirectoryW(directory, MAX_PATH);
+            if (!length || length >= MAX_PATH) {
+                launch_status_->setText(tr("Cannot locate the Windows command prompt."));
+                return;
+            }
+            executable = QString::fromWCharArray(directory) + QStringLiteral("\\cmd.exe");
+        }
         if (executable.isEmpty()) {
             launch_status_->setText(tr("Choose an executable first."));
             return;
@@ -707,6 +726,7 @@ private:
         start_->setEnabled(false);
 #ifdef SKEWER_WINDOWS_PAIRING
         routed_start_->setEnabled(false);
+        shell_->setEnabled(false);
 #endif
         if (!ResetEvent(launch_cancel_->get())) {
             launch_status_->setText(tr("Cannot reset launcher cancellation state."));
@@ -721,12 +741,14 @@ private:
 #else
         const QString service;
 #endif
-        const auto arguments = QProcess::splitCommand(arguments_->text());
+        const auto arguments = shell ? QStringList{QStringLiteral("/D"), QStringLiteral("/K")}
+                                     : QProcess::splitCommand(arguments_->text());
+        const auto console = shell ? skewer::windows::LaunchConsole::New : skewer::windows::LaunchConsole::Inherit;
         const auto environment = skewer::windows::managedRuntimeEnvironment();
         launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
                                        : tr("Starting %1 without routing…").arg(executable));
         launch_watcher_.setFuture(
-            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_, environment));
+            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_, environment, console));
     }
 
     skewer::ui::ApplicationPage* page_{};
@@ -736,6 +758,7 @@ private:
     QPushButton* start_{};
 #ifdef SKEWER_WINDOWS_PAIRING
     QPushButton* routed_start_{};
+    QPushButton* shell_{};
     skewer::windows::RoutingPanel* routing_panel_{};
     skewer::windows::CaTrustPanel* ca_trust_{};
     QLabel* routing_status_bar_{};

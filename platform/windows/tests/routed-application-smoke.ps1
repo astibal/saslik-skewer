@@ -16,6 +16,7 @@ $settings='HKCU:\Software\Saslik\Skewer\windows'
 $savedService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
 $launchedPid=0
 $manualPid=0
+$shellProcess=$null
 $testGui=$null
 $result=1
 $postCrashMarker='C:\SkewerDev\skewer-gui-crash-routing.pass'
@@ -59,7 +60,7 @@ try {
             $status=FindNamed $window 'Windows routing status'
         }
     } while ((!$window -or !$button -or !$button.Current.IsEnabled -or
-              !$status -or $status.Current.Name -ne 'Routing idle') -and (Get-Date) -lt $deadline)
+              !$status) -and (Get-Date) -lt $deadline)
     if (!$window) { throw 'Skewer window missing' }
     $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
     if ($currentService -ne $savedService) {
@@ -196,10 +197,43 @@ try {
     }
     "PASS: routing survived GUI crash and HTTPS, activation recovery, Release and manual Attach retained the selected application" |
         Out-File $log -Append
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $shellButton=FindNamed $window 'Shell'
+    } while ((!$shellButton -or !$shellButton.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$shellButton -or !$shellButton.Current.IsEnabled) { throw 'Routed Shell action unavailable' }
+    $shellButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(35)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (($reply.phase -ne 2 -or !$reply.selected.pid) -and (Get-Date) -lt $deadline)
+    if ($reply.phase -ne 2 -or !$reply.selected.pid) { throw 'Shell did not acquire selected routing' }
+    $shellProcess=Get-Process -Id $reply.selected.pid -ErrorAction Stop
+    # Pin the process handle before checking exit status or cleaning up.
+    $null=$shellProcess.Handle
+    if ($shellProcess.ProcessName -ne 'cmd') { throw 'Shell action selected an unexpected process' }
+    Start-Sleep -Seconds 2
+    if ($shellProcess.HasExited) { throw "Shell exited before Release (exit $($shellProcess.ExitCode))" }
+    $release=FindNamed $window 'Release'
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while ($reply.scope -ne 0 -and (Get-Date) -lt $deadline)
+    if ($reply.scope -ne 0) { throw "Shell Release failed: $($reply | ConvertTo-Json -Compress)" }
+    if ($shellProcess.HasExited) { throw "Shell exited during Release (exit $($shellProcess.ExitCode))" }
+    'PASS: Shell action starts a selected command prompt; Release preserves it' | Out-File $log -Append
     $result=0
 } catch {
     "FAIL: $_" | Out-File $log -Append
 } finally {
+    if ($shellProcess) {
+        if (!$shellProcess.HasExited) { $shellProcess.Kill(); $shellProcess.WaitForExit(5000) | Out-Null }
+        $shellProcess.Dispose()
+    }
     if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
     $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
