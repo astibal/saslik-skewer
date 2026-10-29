@@ -28,6 +28,21 @@ std::wstring executable() {
 
 int wmain(int argc, wchar_t** argv) {
     try {
+        if (argc == 4 && std::wstring(argv[1]) == L"--broker") {
+            Handle request(OpenEventW(SYNCHRONIZE, FALSE, argv[2]));
+            Handle reply(OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[3]));
+            require(request && reply, "Cannot open singleton handoff events");
+            require(WaitForSingleObject(request.get(), 10000) == WAIT_OBJECT_0,
+                    "Singleton broker received no request");
+            require(SetEvent(reply.get()), "Cannot acknowledge singleton request");
+            Sleep(15000);
+            return 0;
+        }
+        if (argc == 3 && std::wstring(argv[1]) == L"--handoff") {
+            Handle request(OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[2]));
+            require(request && SetEvent(request.get()), "Cannot send singleton handoff");
+            return 0;
+        }
         if (argc == 2 && std::wstring(argv[1]) == L"--leaf") {
             Sleep(5000);
             return 0;
@@ -48,6 +63,34 @@ int wmain(int argc, wchar_t** argv) {
         require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token_raw),
                 "Cannot open current process token");
         Handle token(token_raw);
+        {
+            // Existing singleton brokers are not descendants of the new
+            // launcher. IPC handoff must never grant them a routing badge.
+            const auto prefix = L"Local\\SkewerHandoff-" + std::to_wstring(GetCurrentProcessId()) +
+                                L"-" + std::to_wstring(GetTickCount64());
+            const auto request_name = prefix + L"-request";
+            const auto reply_name = prefix + L"-reply";
+            Handle request(CreateEventW(nullptr, TRUE, FALSE, request_name.c_str()));
+            Handle reply(CreateEventW(nullptr, TRUE, FALSE, reply_name.c_str()));
+            require(request && reply, "Cannot create singleton handoff events");
+            Child broker{launch(executable(), {L"--broker", request_name, reply_name})};
+            Child launcher{launch(executable(), {L"--handoff", request_name}, LaunchMode::Suspended)};
+            const auto launcher_key = processKey(launcher.process.hProcess, launcher.process.dwProcessId);
+            ProcessSelection selection(ServiceOwner::fromToken(token.get()));
+            selection.add(launcher_key);
+            require(!selection.contains(broker.process.dwProcessId), "Existing singleton was selected before handoff");
+            require(ResumeThread(launcher.process.hThread) == 1, "Cannot resume singleton launcher");
+            require(WaitForSingleObject(reply.get(), 5000) == WAIT_OBJECT_0,
+                    "Existing singleton did not receive the handoff");
+            require(WaitForSingleObject(launcher.process.hProcess, 5000) == WAIT_OBJECT_0,
+                    "Singleton launcher did not exit");
+            DWORD code{};
+            require(GetExitCodeProcess(launcher.process.hProcess, &code) && code == 0,
+                    "Singleton launcher failed");
+            require(!selection.contains(broker.process.dwProcessId), "IPC handoff silently adopted an existing instance");
+            require(WaitForSingleObject(broker.process.hProcess, 0) == WAIT_TIMEOUT,
+                    "Existing singleton exited with its launcher");
+        }
         {
             Child first{launch(executable(), {L"--parent"}, LaunchMode::Suspended)};
             Child second{launch(executable(), {L"--parent"}, LaunchMode::Suspended)};

@@ -82,6 +82,14 @@ AutoRun commands. Release leaves the shell running, without selected routing.
 New descendants are tracked; singleton handoffs to existing applications outside
 the selected group are not covered. Closing Skewer does not terminate the shell.
 
+The native process-group regression includes an existing singleton broker and a
+new suspended launcher selected before execution. The launcher signals the broker
+through a named event and exits successfully. The broker acknowledges the request
+and remains alive, but must remain outside the routing selection before and after
+handoff. This verifies the membership boundary and supports the launcher's exit
+warning; it does not claim interception of the broker's traffic. Users must select
+that existing instance explicitly or launch a genuinely independent instance.
+
 Native process tests cover dedicated-console creation and suspended execution.
 The disposable-service desktop fixture verifies Shell selection and preservation
 of the command prompt after Release.
