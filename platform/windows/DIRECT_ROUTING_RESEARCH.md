@@ -4,6 +4,53 @@
 Research only: no new driver installed, no replacement backend implemented.
 Npcap is excluded by user decision.
 
+## Two-adapter native experiment: forwarding works, loss leaks
+
+On 2026-10-29 an isolated Windows VM experiment used the existing WinDivert
+driver, without changing the production backend or installing another driver.
+Exclusive TCP/UDP sockets belonging to the probe were selected by their reserved
+port 48101; a control socket used 48102. This is not a general PID-selection test.
+
+Topology:
+
+```
+original NIC: 192.168.199.131 -> 192.168.199.1 (virbr0)
+temporary NIC: 198.18.240.2 -> 198.18.240.1 (skw-direct-test)
+same target for both: 198.18.241.1:18087, local echo server on Rhino
+```
+
+Both NICs had WeakHostSend/Receive disabled. The temporary default route had a
+higher metric. The probe rewrote only the selected outgoing source address and
+restored the original destination address/interface on replies. No alias DNAT,
+remote NAT, tunnel, production routing change or Internet dependency was used.
+
+- Healthy: TCP and UDP replies reported the expected source addresses. Capture
+  on Rhino showed selected traffic on vnet9/skw-direct-test and control traffic
+  on vnet5/virbr0, with replies on the corresponding paths.
+- Temporary NIC disabled, translator still alive: control TCP/UDP succeeded;
+  selected calls timed out. **Capture nevertheless showed selected UDP and TCP
+  SYN packets with source 198.18.240.2 leaving through virbr0.** Source rewriting
+  alone therefore does NOT provide fail-closed routing. A timeout is not proof
+  of no leakage, and the probe's exit-zero expected-timeout result is not a
+  security pass. WinDivert reported no send errors in this case.
+- NIC restored: selected and control TCP/UDP succeeded again (6 translated
+  outbound and 6 inbound packets, no send errors in the repeat).
+- Closing the translator in the first healthy run also allowed a delayed TCP
+  FIN to take the original path, consistent with the documented owner-loss limit.
+
+These were sequential socket probes to one local target, not concurrent load,
+HTTPS through Smithproxy, general process ownership, MTU/fragmentation, or
+same-NIC different-gateway validation. The temporary NIC, bridge, host target
+address, Windows address/default route and echo process were removed afterwards;
+the VM again had only its original NIC. Probe sources remain in /tmp as
+skewer-direct-probe.cpp, skewer-direct-run.ps1 and skewer-direct-peer.py.
+
+Conclusion: the healthy-path mechanism is real, but the unguarded proposal is
+unsuitable for integration. A further prototype must enforce egress identity
+independently of successful reinjection and validate adapter loss with capture.
+Polling adapter health alone cannot eliminate a check/send race. Direct remains
+opt-in if it ever requires an additional adapter; Tuntom stays the default.
+
 ## Required distinction
 
 Choosing a NIC is not choosing a next hop. Two applications reaching the same
