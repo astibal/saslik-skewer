@@ -44,7 +44,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Selected fixture pairing failed' }
     if (!$SkipGuiSmoke) {
         Set-Content 'C:\SkewerDev\routed-service-name.txt' $name
-        & (Join-Path $Directory 'run-routed-application-smoke.ps1')
+        & (Join-Path $FixtureDirectory 'run-routed-application-smoke.ps1') `
+            -Directory $Directory -FixtureDirectory $FixtureDirectory
         if ($LASTEXITCODE -ne 0) { throw 'GUI routed launch test failed' }
     }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name

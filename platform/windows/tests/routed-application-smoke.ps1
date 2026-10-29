@@ -1,3 +1,4 @@
+param([string]$Directory='C:\SkewerDev\skewer-windows-app')
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -8,7 +9,7 @@ public static class SkewerMouse {
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
 }
 '@
-$directory='C:\SkewerDev\skewer-windows-app'
+$directory=(Resolve-Path -LiteralPath $Directory).Path
 $service=(Get-Content 'C:\SkewerDev\routed-service-name.txt' -Raw).Trim()
 $log=Join-Path $env:USERPROFILE 'skewer-routed-application-smoke.log'
 $settings='HKCU:\Software\Saslik\Skewer\windows'

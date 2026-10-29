@@ -85,8 +85,11 @@ for file in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll libssp-0.dll;
     install -m 0644 "$path" "$tests/$file"
 done
 install -m 0644 packaging/test-windows-unit.ps1 "$tests/run-tests.ps1"
-install -m 0644 platform/windows/tests/selected-service-live.ps1 \
-    "$tests/selected-service-live.ps1"
+for file in selected-service-live.ps1 routed-application-smoke.ps1 \
+            run-routed-application-smoke.ps1 application_smoke.ps1 \
+            run-application-smoke.ps1; do
+    install -m 0644 "platform/windows/tests/$file" "$tests/$file"
+done
 
 archive="$output/skewer-windows-amd64-$version.zip"
 (cd "$stage" && cmake -E tar cf "$archive" --format=zip "$(basename "$root")")
