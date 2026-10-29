@@ -448,6 +448,12 @@ endpoint while an installed service generation is active or still being
 inspected, then applies it only after the authoritative service is Idle; it
 never retargets a running generation.
 
+Native GUI integration tests use `--routing-service=NAME` to bind one process
+to a disposable SCM service without persisting that name in normal user
+preferences. The override is intentionally process-local: it disables service
+installation/removal controls and cannot leak a deleted test service into the
+next ordinary GUI launch.
+
 The device list is populated by reports, not enrollment alone. Reports contain
 the hostname, Skewer version and an exact CryptoAPI observation of the last CA
 downloaded from Saslik in `Current User\\ROOT`. If the exact same CA is present

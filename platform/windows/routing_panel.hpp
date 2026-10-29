@@ -15,10 +15,11 @@ namespace skewer::windows {
 class RoutingPanel final : public QWidget {
 public:
     using StateCallback = std::function<void(bool, const RoutingReply&)>;
-    explicit RoutingPanel(QWidget* parent = nullptr);
+    explicit RoutingPanel(QWidget* parent = nullptr, QString service_override = {});
     ~RoutingPanel() override;
     void setStateCallback(StateCallback callback);
     void setServiceName(const QString& service);
+    QString serviceName() const;
     void setPairedEndpoint(const QString& endpoint);
     void startSelected(ProcessKey process);
     void stopCurrent();
@@ -63,6 +64,7 @@ private:
     bool known_{};
     bool action_busy_{};
     bool automatic_pairing_attempted_{};
+    bool service_overridden_{};
     QString pending_endpoint_;
     StateCallback state_callback_;
 };

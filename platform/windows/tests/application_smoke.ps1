@@ -58,6 +58,9 @@ try {
     if (!$routingStatus -or [string]::IsNullOrWhiteSpace($routingStatus.Current.Name)) {
         throw 'Authoritative routing status is not visible outside the Routing tab'
     }
+    if ((WindowText $window) -match 'Whole-host routing: see Routing tab') {
+        throw 'Obsolete duplicate routing status is still visible'
+    }
     'PASS: persistent routing status indicator' | Out-File $log -Append
     foreach ($tab in @('Applications', 'CA Trust', 'Runtime Trust', 'Connections', 'Saslik', 'Routing')) {
         if (!(FindNamed $window $tab)) { throw "Missing tab: $tab" }
@@ -118,6 +121,10 @@ try {
         $gateway.Current.ControlType -ne [System.Windows.Automation.ControlType]::Edit) {
         throw 'Whole-host transport controls expose unexpected accessibility roles'
     }
+    # Qt does not expose a QLabel objectName as a UIA AutomationId. Capture
+    # the exact visible status while the authoritative Routing panel is open.
+    $routingPanelText = WindowText $window
+    $routingReady = $routingPanelText -match '(?m)^Idle . paired control ready\r?$'
     'PASS: whole-host Auto/tunnel/direct transport controls' | Out-File $log -Append
     $package = Split-Path $exe
     $completeRuntime = @('install-routing-service.ps1','remove-routing-service.ps1',
@@ -144,9 +151,8 @@ try {
     if (!$normal -or !$routed -or !$normal.Current.IsEnabled) {
         throw 'Missing launcher routing choice'
     }
-    $routingReady = $routingStatus.Current.Name -eq 'Routing idle'
     if ($routed.Current.IsEnabled -ne $routingReady) {
-        throw "Routed launch disagrees with authoritative routing readiness ($($routingStatus.Current.Name))"
+        throw "Routed launch disagrees with authoritative Routing panel state:`n$routingPanelText"
     }
     'PASS: normal and routed launch actions are explicit' | Out-File $log -Append
     $invoke = $normal.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)

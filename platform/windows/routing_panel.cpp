@@ -27,7 +27,7 @@ bool canonicalIpv4(const QString& text) {
 }
 } // namespace
 
-RoutingPanel::RoutingPanel(QWidget* parent)
+RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
     : QWidget(parent), cancel_(std::make_shared<Handle>(CreateEventW(nullptr, TRUE, FALSE, nullptr))) {
     auto* layout = new QVBoxLayout(this);
     auto* note = new QLabel(tr("Whole-host IPv4 routing through an installed Skewer service. Closing this "
@@ -40,7 +40,13 @@ RoutingPanel::RoutingPanel(QWidget* parent)
     note->setWordWrap(true);
     layout->addWidget(note);
     auto* form = new QFormLayout;
-    service_ = new QLineEdit(QSettings().value("windows/routingService", "SkewerRouting").toString(), this);
+    // Integration tests bind one GUI process to a disposable SCM service.
+    // That process-local override must never become the user's next default.
+    service_overridden_ = !service_override.trimmed().isEmpty();
+    service_ = new QLineEdit(service_overridden_
+                                 ? service_override.trimmed()
+                                 : QSettings().value("windows/routingService", "SkewerRouting").toString(),
+                             this);
     endpoint_ = new QLineEdit(QSettings().value("windows/routingEndpoint", QSettings().value("windows/saslikEndpoint")).toString(), this);
     transport_ = new QComboBox(this);
     transport_->setObjectName("routingTransport");
@@ -223,7 +229,9 @@ RoutingPanel::RoutingPanel(QWidget* parent)
                 if (result.request.action == 3) {
                     status_->setText(tr("Pairing delivered; routing not started. ") + status_->text());
                 }
-                QSettings().setValue("windows/routingService", result.request.service);
+                if (!service_overridden_) {
+                    QSettings().setValue("windows/routingService", result.request.service);
+                }
                 if (result.request.action == 3) {
                     QSettings().setValue("windows/routingEndpoint", result.request.endpoint);
                 }
@@ -272,11 +280,15 @@ void RoutingPanel::setStateCallback(StateCallback callback) {
     }
 }
 void RoutingPanel::setServiceName(const QString& service) {
+    if (service_overridden_) {
+        return;
+    }
     const auto normalized = service.trimmed();
     if (!normalized.isEmpty() && service_->text() != normalized) {
         service_->setText(normalized);
     }
 }
+QString RoutingPanel::serviceName() const { return service_->text().trimmed(); }
 void RoutingPanel::setPairedEndpoint(const QString& endpoint) {
     const auto normalized = endpoint.trimmed();
     if (normalized.isEmpty()) {
@@ -356,7 +368,7 @@ void RoutingPanel::updateControls() {
     pair_->setEnabled(idle && state_.tunnel_available && !action_busy_);
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
-    service_->setEnabled(configuration_editable && !action_busy_);
+    service_->setEnabled(configuration_editable && !action_busy_ && !service_overridden_);
     endpoint_->setEnabled(configuration_editable && !action_busy_);
     transport_->setEnabled(idle && !action_busy_);
     gateway_->setEnabled(idle && !action_busy_ && (direct || automatic));
@@ -369,10 +381,11 @@ void RoutingPanel::updateControls() {
     install_->setText(routingServiceInstalled(service_->text().trimmed())
                           ? tr("Upgrade routing service…") : tr("Install routing service…"));
     const bool managing = install_watcher_.isRunning() || remove_watcher_.isRunning();
-    install_->setEnabled(install_packaged && configuration_editable && !action_busy_ && !managing);
+    install_->setEnabled(install_packaged && configuration_editable && !action_busy_ && !managing &&
+                         !service_overridden_);
     const bool removable = !known_ || state_.phase == RoutingPhase::Idle || state_.phase == RoutingPhase::Failed;
     remove_->setEnabled(remove_packaged && routingServiceInstalled(service_->text().trimmed()) && removable &&
-                        !action_busy_ && !managing);
+                        !action_busy_ && !managing && !service_overridden_);
 }
 void RoutingPanel::submit(int action) {
     Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(),

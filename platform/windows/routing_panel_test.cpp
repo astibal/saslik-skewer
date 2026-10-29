@@ -158,6 +158,19 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Unavailable service blocked UI or enabled controls");
         }
         panel.reset();
+        const auto saved_service = settings.value("windows/routingService").toString();
+        panel = std::make_unique<skewer::windows::RoutingPanel>(
+            nullptr, QStringLiteral("SkewerRouting-Test-0123456789abcdef0123456789abcdef"));
+        const auto override_service = panel->findChild<QLineEdit*>("routingService");
+        if (!override_service || override_service->text() !=
+                                     QStringLiteral("SkewerRouting-Test-0123456789abcdef0123456789abcdef") ||
+            override_service->isEnabled()) {
+            throw std::runtime_error("Process-local routing service override is not isolated");
+        }
+        panel.reset();
+        if (settings.value("windows/routingService").toString() != saved_service) {
+            throw std::runtime_error("Process-local service override changed user preferences");
+        }
         panel = std::make_unique<skewer::windows::RoutingPanel>();
         time.restart();
         panel.reset();
@@ -165,7 +178,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Closing panel did not cancel local IPC promptly");
         }
         std::cout
-            << "PASS: asynchronous unavailable status, disabled unknown-state actions, bounded local close\n";
+            << "PASS: asynchronous unavailable status, isolated service override and bounded local close\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         result = 1;

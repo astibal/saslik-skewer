@@ -25,6 +25,7 @@
 #include <QCryptographicHash>
 #include <QMessageBox>
 #include <QItemSelectionModel>
+#include <QRegularExpression>
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
 #include "ca_trust_panel.hpp"
@@ -41,6 +42,7 @@
 #endif
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 // Native controllers plug into the same shell and Applications page as Linux.
 // Unsupported operations never fall back to shell commands or simulated success.
@@ -113,7 +115,7 @@ LaunchResult launch(const QString& executable, const QStringList& arguments, con
 }
 class WindowsWindow final : public skewer::ui::ApplicationShell {
 public:
-    WindowsWindow()
+    explicit WindowsWindow(QString routing_service = {})
         : ApplicationShell(QStringLiteral(SKEWER_VERSION)),
           launch_cancel_(
               std::make_shared<skewer::windows::Handle>(CreateEventW(nullptr, TRUE, FALSE, nullptr))) {
@@ -127,12 +129,14 @@ public:
         routing_status_bar_ = new QLabel(tr("Routing: checking…"), this);
         routing_status_bar_->setAccessibleName(tr("Windows routing status"));
         statusBar()->addPermanentWidget(routing_status_bar_);
-        routing_panel_ = new skewer::windows::RoutingPanel(this);
+        routing_panel_ = new skewer::windows::RoutingPanel(this, std::move(routing_service));
         pages()->addTab(routing_panel_, tr("Routing"));
         routing_panel_->setStateCallback(
             [this](bool known, const skewer::windows::RoutingReply& state) {
                 routingStateChanged(known, state);
             });
+#else
+        Q_UNUSED(routing_service);
 #endif
         applyPreferences();
         connect(preferencesAction(), &QAction::triggered, this, &WindowsWindow::editPreferences);
@@ -449,9 +453,6 @@ private:
             routing_panel_->stopCurrent();
         });
 #endif
-        auto* routing_status = new QLabel(tr("Whole-host routing: see Routing tab"), this);
-        routing_status->setObjectName("routingStatusBar");
-        statusBar()->addPermanentWidget(routing_status);
     }
 
     void buildLauncher() {
@@ -714,16 +715,13 @@ private:
 #endif
             return;
         }
-        const auto service = QSettings().value("windows/routingService", "SkewerRouting").toString();
+#ifdef SKEWER_WINDOWS_PAIRING
+        const auto service = routing_panel_->serviceName();
+#else
+        const QString service;
+#endif
         const auto arguments = QProcess::splitCommand(arguments_->text());
         const auto environment = skewer::windows::managedRuntimeEnvironment();
-#ifdef SKEWER_WINDOWS_PAIRING
-        if (routed) {
-            // Launch and status must address the same installed service even
-            // when another process changed the persisted preference.
-            routing_panel_->setServiceName(service);
-        }
-#endif
         launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
                                        : tr("Starting %1 without routing…").arg(executable));
         launch_watcher_.setFuture(
@@ -769,13 +767,28 @@ private:
 } // namespace
 
 int main(int argc, char** argv) {
+    QString routing_service;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0) {
             std::printf("Skewer %s\n", SKEWER_VERSION);
             return 0;
         }
-        if (std::strcmp(argv[i], "--gui") != 0) {
-            std::fprintf(stderr, "Unsupported Windows command. Available: --gui, --version\n");
+        const QString argument = QString::fromLocal8Bit(argv[i]);
+        if (argument.startsWith(QStringLiteral("--routing-service="))) {
+            const auto candidate = argument.sliced(18);
+            static const QRegularExpression safe_service(
+                QStringLiteral("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"));
+            if (!routing_service.isEmpty() || !safe_service.match(candidate).hasMatch()) {
+                std::fprintf(stderr, "Invalid or duplicate --routing-service override\n");
+                return 2;
+            }
+            routing_service = candidate;
+            continue;
+        }
+        if (argument != QStringLiteral("--gui")) {
+            std::fprintf(stderr,
+                         "Unsupported Windows command. Available: --gui, --version, "
+                         "--routing-service=NAME\n");
             return 2;
         }
     }
@@ -811,7 +824,7 @@ int main(int argc, char** argv) {
         QMessageBox::critical(nullptr, "Skewer", server.errorString());
         return 1;
     }
-    WindowsWindow window;
+    WindowsWindow window(routing_service);
     QObject::connect(&server, &QLocalServer::newConnection, &window, [&] {
         while (auto* peer = server.nextPendingConnection()) {
             peer->close();

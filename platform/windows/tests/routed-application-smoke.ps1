@@ -12,7 +12,7 @@ $directory='C:\SkewerDev\skewer-windows-app'
 $service=(Get-Content 'C:\SkewerDev\routed-service-name.txt' -Raw).Trim()
 $log=Join-Path $env:USERPROFILE 'skewer-routed-application-smoke.log'
 $settings='HKCU:\Software\Saslik\Skewer\windows'
-$old=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
+$savedService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
 $launchedPid=0
 $manualPid=0
 $postCrashMarker='C:\SkewerDev\skewer-gui-crash-routing.pass'
@@ -39,8 +39,6 @@ function WindowText($window) {
 try {
     "Starting routed GUI smoke against $service" | Out-File $log
     Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
-    New-Item $settings -Force | Out-Null
-    Set-ItemProperty $settings -Name routingService -Value $service
     $window=FindWindow
     if ($window) {
         Stop-Process -Id $window.Current.ProcessId -Force
@@ -48,7 +46,7 @@ try {
         do { Start-Sleep -Milliseconds 100; $window=FindWindow } while ($window -and (Get-Date) -lt $deadline)
         if ($window) { throw 'Previous Skewer GUI did not terminate before the routed test' }
     }
-    Start-Process (Join-Path $directory 'skewer.exe')
+    Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service"
     $deadline=(Get-Date).AddSeconds(15)
     do {
         Start-Sleep -Milliseconds 200
@@ -60,6 +58,10 @@ try {
     } while ((!$window -or !$button -or !$button.Current.IsEnabled -or
               !$status -or $status.Current.Name -ne 'Routing idle') -and (Get-Date) -lt $deadline)
     if (!$window) { throw 'Skewer window missing' }
+    $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
+    if ($currentService -ne $savedService) {
+        throw 'Process-local routing service override changed persistent user preferences'
+    }
     $edit=FindNamed $window 'Application executable'
     $arguments=FindNamed $window 'Application arguments'
     if (!$edit -or !$arguments -or !$button -or !$button.Current.IsEnabled) {
@@ -103,7 +105,7 @@ try {
     if (!(Test-Path -LiteralPath $postCrashMarker)) {
         throw 'Routed descendant HTTPS did not complete after GUI process termination'
     }
-    Start-Process (Join-Path $directory 'skewer.exe')
+    Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service"
     $deadline=(Get-Date).AddSeconds(12)
     do {
         Start-Sleep -Milliseconds 200
@@ -197,7 +199,13 @@ try {
 } finally {
     if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
-    if ($null -eq $old) { Remove-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue }
-    else { Set-ItemProperty $settings -Name routingService -Value $old }
+    $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
+    if ($currentService -ne $savedService) {
+        if ($null -eq $savedService) {
+            Remove-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue
+        } else {
+            Set-ItemProperty $settings -Name routingService -Value $savedService
+        }
+    }
     if (!(FindWindow)) { Start-Process (Join-Path $directory 'skewer.exe') }
 }
