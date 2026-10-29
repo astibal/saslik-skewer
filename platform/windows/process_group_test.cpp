@@ -47,6 +47,19 @@ int wmain(int argc, wchar_t** argv) {
             Sleep(5000);
             return 0;
         }
+        if (argc == 4 && std::wstring(argv[1]) == L"--leaf-wait") {
+            Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[2]));
+            Handle release(OpenEventW(SYNCHRONIZE, FALSE, argv[3]));
+            require(ready && release && SetEvent(ready.get()), "Cannot signal stable leaf readiness");
+            require(WaitForSingleObject(release.get(), 15000) == WAIT_OBJECT_0,
+                    "Stable leaf was not released by fixture");
+            return 0;
+        }
+        if (argc == 4 && std::wstring(argv[1]) == L"--parent-wait") {
+            Child leaf{launch(executable(), {L"--leaf-wait", argv[2], argv[3]})};
+            WaitForSingleObject(leaf.process.hProcess, 20000);
+            return 0;
+        }
         if ((argc == 2 || argc == 3) && std::wstring(argv[1]) == L"--parent") {
             Child leaf{launch(executable(), {L"--leaf"})};
             if (argc == 3) {
@@ -93,7 +106,17 @@ int wmain(int argc, wchar_t** argv) {
         }
         {
             Child first{launch(executable(), {L"--parent"}, LaunchMode::Suspended)};
-            Child second{launch(executable(), {L"--parent"}, LaunchMode::Suspended)};
+            const auto prefix = L"Local\\SkewerSurvivingChild-" + std::to_wstring(GetCurrentProcessId()) +
+                                L"-" + std::to_wstring(GetTickCount64());
+            const auto ready_name = prefix + L"-ready", release_name = prefix + L"-release";
+            Handle ready(CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str()));
+            Handle release(CreateEventW(nullptr, TRUE, FALSE, release_name.c_str()));
+            require(ready && release, "Cannot create surviving-child barriers");
+            struct ReleaseLeaf {
+                HANDLE event;
+                ~ReleaseLeaf() { SetEvent(event); }
+            } release_leaf{release.get()};
+            Child second{launch(executable(), {L"--parent-wait", ready_name, release_name}, LaunchMode::Suspended)};
             const auto first_key = processKey(first.process.hProcess, first.process.dwProcessId);
             const auto second_key = processKey(second.process.hProcess, second.process.dwProcessId);
             ProcessSelection selection(ServiceOwner::fromToken(token.get()));
@@ -125,6 +148,11 @@ int wmain(int argc, wchar_t** argv) {
                 }
             }
             require(descendant, "Remaining tree lost descendant tracking after Release");
+            // A Job NEW_PROCESS notification can precede completion of child
+            // startup. Do not kill its parent inside CreateProcess, and do not
+            // rely on a five-second sleep to keep the child alive under load.
+            require(WaitForSingleObject(ready.get(), 5000) == WAIT_OBJECT_0,
+                    "Surviving child did not finish startup");
             require(TerminateProcess(second.process.hProcess, 0) &&
                         WaitForSingleObject(second.process.hProcess, 3000) == WAIT_OBJECT_0,
                     "Cannot retire fixture root");
@@ -133,6 +161,7 @@ int wmain(int argc, wchar_t** argv) {
                     "Exited root lost its surviving routing group");
             require(selection.remove(second_key) && !selection.running(), "Final Release left selection active");
             require(surviving_child->running(), "Release of exited root killed its surviving child");
+            require(SetEvent(release.get()), "Cannot finish surviving child fixture");
         }
         {
             ProcessTarget root(identity);

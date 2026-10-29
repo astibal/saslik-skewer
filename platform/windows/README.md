@@ -10,8 +10,17 @@ The package smoke test (`packaging/test-windows-package.ps1`) additionally check
 dependency signatures, per-user installation, update refusal while running,
 uninstall, version resources and GUI startup.
 
-On 2026-10-29 the Release build at `f354df9` passed all 43 bundled native tests
-plus package installation/uninstallation on the Rhino Windows VM. Noninteractive process
+On 2026-10-29 the post-pause Release build (based on `88ec570`, with the
+surviving-child fixture synchronized by readiness/release events) passed all 44
+bundled native tests plus package installation/uninstallation on the Rhino
+Windows VM. The application ZIP SHA-256 is
+`1d80b5f5619a1386c03f227928fa755c2bf258ababb99a5dae80847641902a3d`;
+the matching test ZIP is
+`24436befbd12e65237643fe6f5e83f094a9e0bb2e3200da6a4f51080ceb2e7cb`.
+The exited-root fixture now waits for its descendant to finish startup and
+keeps it alive until explicitly released, instead of racing process creation
+and a fixed sleep. It also passed three consecutive standalone VM runs.
+Noninteractive process
 tests explicitly skip visible-window assertions; this does not replace the
 interactive `routed-application-smoke.ps1` coverage. The test ZIP also includes
 `selected-service-live.ps1` for a paired lab and `selected-ipv6-egress.ps1` for
