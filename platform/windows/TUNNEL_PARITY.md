@@ -383,6 +383,21 @@ possible competing VPN configuration.
 
 Reference: [Microsoft VPN name resolution](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution).
 
+## Installed-service upgrade checkpoint (2026-10-29)
+
+The disposable upgrade test now covers a paired tunnel-ready service upgrade,
+in addition to conversion from Direct-only configuration. Restarted services must
+be Idle and have no borrowed credentials; a fresh handoff from the existing user
+DPAPI store must restore pairing without a new invitation or starting routing.
+The test verifies the installed binary hash and complete disposable removal.
+
+After this passed, the development VM's real `SkewerRouting` installation was
+upgraded to the service built from `25556a1`. Its endpoint, DNS, owner, management
+exception and automatic startup configuration were preserved. The installed hash
+matched the tested package, pairing was handed back from user storage, and the
+service remained Idle. This checkpoint is a development deployment, not a public
+release or evidence that all remaining parity gates are complete.
+
 ## References
 
 - Tuntom: `docs/PROTOCOL_V5.md`, `src/tun_device.hpp`, `src/udp_endpoint.hpp`.

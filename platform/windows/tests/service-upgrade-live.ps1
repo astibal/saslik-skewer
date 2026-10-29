@@ -46,6 +46,23 @@ try {
     if ($state.phase -ne 0 -or $state.paired) {
         throw 'Upgraded service did not restart unpaired and Idle'
     }
+    # Credentials stay in the user's DPAPI store, not the SYSTEM runtime.
+    # A service restart clears its borrowed in-memory pairing; re-handoff must
+    # work without requesting another invitation or implicitly starting traffic.
+    & $client pair $name $Endpoint
+    if ($LASTEXITCODE -ne 0 -or !(Status).paired) { throw 'Initial stored pairing handoff failed' }
+    & $installer -PackageDirectory $Directory -OwnerSid $owner -Name $name `
+        -Endpoint $Endpoint -Peer $Peer -Upgrade
+    $state = Status
+    if ($state.phase -ne 0 -or $state.paired) { throw 'Upgrade retained runtime credentials or started routing' }
+    & $client pair $name $Endpoint
+    if ($LASTEXITCODE -ne 0) { throw 'Stored pairing was unavailable after service upgrade' }
+    $state = Status
+    if ($state.phase -ne 0 -or !$state.paired) { throw 'Pairing restoration changed routing state' }
+    if ((Get-FileHash (Join-Path $root 'skewer-routing-service.exe')).Hash -ne
+        (Get-FileHash (Join-Path $Directory 'skewer-routing-service.exe')).Hash) {
+        throw 'Upgraded service binary differs from the requested package'
+    }
 } finally {
     if ($installed) {
         & $remover -Name $name -Confirm:$false
@@ -55,4 +72,4 @@ try {
 if ((Get-Service $name -ErrorAction SilentlyContinue) -or (Test-Path $root)) {
     throw 'Upgrade fixture cleanup left service or protected runtime behind'
 }
-Write-Output 'PASS: Direct-only install -> tunnel-ready upgrade -> clean removal'
+Write-Output 'PASS: Direct-only install, tunnel upgrade, stored pairing restoration, binary identity and clean removal'
