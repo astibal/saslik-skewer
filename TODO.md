@@ -6,12 +6,19 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows IPv4 routing is implemented and has
 passed the native VM cases listed below; unchecked items remain release gates.
 
-- [ ] Resolve selected-application **direct next-hop** parity explicitly. Windows
+- [ ] Implement selected-application **direct next-hop** for the first release
+  (explicit user requirement). This is not a deferrable parity enhancement. Windows
   application selection currently uses Tuntom; Direct applies to whole-host
   routing only. Do not treat the completed whole-host Direct item below as
   evidence for per-application Direct. WinDivert 2.2 ignores outbound injection
   interface indices, so changing `IfIdx` is not a next-hop implementation.
   See the architecture constraint in `platform/windows/TUNNEL_PARITY.md`.
+  Acceptance must demonstrate selected TCP and UDP reaching the configured
+  gateway while an unrelated application reaches the same destination through
+  its original route. Verify replies, loss protection, Release, and GUI closure;
+  a successful selected request alone cannot establish routing isolation.
+  An Npcap link-layer prototype is awaiting an architectural decision: do not
+  install or redistribute another driver merely to satisfy this release gate.
 
 - [ ] Diagnose intermittent client pipe setup failure (`Cannot configure routing
   pipe message mode`) observed during the selected-service IPv6 fixture on
