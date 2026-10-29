@@ -522,6 +522,11 @@ TCP endpoints. A uniquely owned UDP socket opened before Attach is corroborated
 from the fresh owner table and routed after activation. Orphaned or handed-off
 processes, IPv6 sockets and shared/ambiguous UDP binds remain unsupported and
 fail closed.
+The SCM VM fixture also opens an IPv6 loopback TCP connection before Attach. No
+payload reaches its peer while selected routing is Active; after explicit Stop,
+normal TCP retransmission and a new marker confirm that Release restores the
+connection. This proves the existing-socket IPv6 guard path without claiming
+IPv6 tunnel support or external IPv6 reachability.
 The HTTPS fixture supplies IPv4 resolution and disables certificate validation
 for that request only. Attribution failures hold packets rather than guessing
 Direct, so unrelated traffic can stall when attribution is unavailable. Service

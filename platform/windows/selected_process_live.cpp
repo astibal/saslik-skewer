@@ -235,6 +235,44 @@ int runExistingUdpChild(const QString& ready_name, const QString& inspect_name,
             "Pre-Attach UDP socket did not complete through selected routing");
     return 0;
 }
+int runExistingIpv6Child(const QString& ready_name, const QString& inspect_name,
+                         const QString& attempted_name, const QString& release_name,
+                         std::uint16_t port) {
+    WSADATA data{};
+    require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "Existing IPv6 child Winsock startup failed");
+    struct WinsockCleanup {
+        ~WinsockCleanup() { WSACleanup(); }
+    } winsock_cleanup;
+    Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, ready_name.toStdWString().c_str()));
+    Handle inspect(OpenEventW(SYNCHRONIZE, FALSE, inspect_name.toStdWString().c_str()));
+    Handle attempted(OpenEventW(EVENT_MODIFY_STATE, FALSE, attempted_name.toStdWString().c_str()));
+    Handle release(OpenEventW(SYNCHRONIZE, FALSE, release_name.toStdWString().c_str()));
+    require(bool(ready) && bool(inspect) && bool(attempted) && bool(release),
+            "Open existing IPv6 fixture events");
+    SOCKET socket = ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    require(socket != INVALID_SOCKET, "Create existing IPv6 fixture socket");
+    struct CloseSocket {
+        SOCKET value;
+        ~CloseSocket() { closesocket(value); }
+    } close{socket};
+    sockaddr_in6 peer{};
+    peer.sin6_family = AF_INET6;
+    peer.sin6_addr = in6addr_loopback;
+    peer.sin6_port = htons(port);
+    require(connect(socket, reinterpret_cast<const sockaddr*>(&peer), sizeof(peer)) == 0,
+            "Connect existing IPv6 fixture socket");
+    require(SetEvent(ready.get()), "Signal existing IPv6 fixture readiness");
+    require(WaitForSingleObject(inspect.get(), 30000) == WAIT_OBJECT_0,
+            "Existing IPv6 fixture was not inspected after Attach");
+    const char blocked = 'B';
+    require(send(socket, &blocked, 1, 0) == 1 && SetEvent(attempted.get()),
+            "Send protected IPv6 fixture byte");
+    require(WaitForSingleObject(release.get(), 10000) == WAIT_OBJECT_0,
+            "Existing IPv6 fixture was not released");
+    const char restored = 'R';
+    require(send(socket, &restored, 1, 0) == 1, "Send released IPv6 fixture byte");
+    return 0;
+}
 class Worker final : public TunnelPacketWorker {
 public:
     Worker(SelectedSessionPackets& packets, Child& child, HANDLE stop)
@@ -525,6 +563,139 @@ void routeExistingUdpThroughService(const std::wstring& executable, const QStrin
     QTextStream(stdout)
         << "PASS: unique pre-Attach UDP socket routed through SCM service\n";
 }
+void blockExistingIpv6ThroughService(const std::wstring& executable, const std::wstring& name) {
+    SOCKET listener = ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+    require(listener != INVALID_SOCKET, "Create existing IPv6 listener");
+    struct CloseSocket {
+        SOCKET value;
+        ~CloseSocket() { closesocket(value); }
+    } close_listener{listener};
+    DWORD ipv6_only = 1;
+    require(setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY,
+                       reinterpret_cast<const char*>(&ipv6_only), sizeof(ipv6_only)) == 0,
+            "Configure existing IPv6 listener");
+    sockaddr_in6 local{};
+    local.sin6_family = AF_INET6;
+    local.sin6_addr = in6addr_loopback;
+    require(bind(listener, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == 0 &&
+                listen(listener, 1) == 0,
+            "Bind existing IPv6 listener");
+    int local_size = sizeof(local);
+    require(getsockname(listener, reinterpret_cast<sockaddr*>(&local), &local_size) == 0,
+            "Read existing IPv6 listener address");
+
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(bool(cancel), "Create existing IPv6 cancellation event");
+    const auto suffix = std::to_wstring(GetCurrentProcessId()) + L"-" +
+                        std::to_wstring(GetTickCount64());
+    const auto ready_name = L"Local\\SkewerExistingIpv6Ready-" + suffix;
+    const auto inspect_name = L"Local\\SkewerExistingIpv6Inspect-" + suffix;
+    const auto attempted_name = L"Local\\SkewerExistingIpv6Attempted-" + suffix;
+    const auto release_name = L"Local\\SkewerExistingIpv6Release-" + suffix;
+    Handle ready(CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str()));
+    Handle inspect(CreateEventW(nullptr, TRUE, FALSE, inspect_name.c_str()));
+    Handle attempted(CreateEventW(nullptr, TRUE, FALSE, attempted_name.c_str()));
+    Handle release_event(CreateEventW(nullptr, TRUE, FALSE, release_name.c_str()));
+    require(bool(ready) && bool(inspect) && bool(attempted) && bool(release_event),
+            "Create existing IPv6 fixture events");
+    Child child{launch(executable,
+                       {L"--existing-ipv6-child", ready_name, inspect_name, attempted_name,
+                        release_name, std::to_wstring(ntohs(local.sin6_port))})};
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(listener, &readable);
+    timeval accept_timeout{5, 0};
+    require(select(0, &readable, nullptr, nullptr, &accept_timeout) == 1,
+            "Existing IPv6 fixture did not reach the listener");
+    SOCKET accepted = accept(listener, nullptr, nullptr);
+    require(accepted != INVALID_SOCKET, "Accept existing IPv6 fixture connection");
+    CloseSocket close_accepted{accepted};
+    require(WaitForSingleObject(ready.get(), 5000) == WAIT_OBJECT_0,
+            "Existing IPv6 child did not connect before Attach");
+
+    const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
+        auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+        return exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
+    };
+    const auto initial = command(RoutingCommand::Status, 0);
+    require(initial.result == RoutingResult::Ok &&
+                (initial.phase == RoutingPhase::Idle || initial.phase == RoutingPhase::Failed),
+            "Routing service is busy before existing IPv6 fixture");
+    std::uint64_t generation{};
+    struct Cleanup {
+        Child& child;
+        std::function<void()> stop;
+        ~Cleanup() {
+            child.stop();
+            try { stop(); } catch (...) {}
+        }
+    } cleanup{child, [&] { if (generation) command(RoutingCommand::Stop, generation); }};
+    const auto identity = processKey(child.process.hProcess, child.process.dwProcessId);
+    auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+    const auto started = exchangeSelectedRouting(pipe->get(), name, identity,
+                                                 initial.generation, cancel.get(), 3000);
+    require(started.result == RoutingResult::Ok, "Existing IPv6 process selection failed");
+    generation = started.generation;
+    const auto active_deadline = GetTickCount64() + 30000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == generation &&
+                    (state.phase == RoutingPhase::Starting || state.phase == RoutingPhase::Blocked ||
+                     state.phase == RoutingPhase::Active),
+                "Existing IPv6 routing stopped before readiness");
+        if (state.phase == RoutingPhase::Active) break;
+        require(GetTickCount64() < active_deadline, "Existing IPv6 routing did not become Active");
+        Sleep(50);
+    }
+    require(SetEvent(inspect.get()) && WaitForSingleObject(attempted.get(), 5000) == WAIT_OBJECT_0,
+            "Existing IPv6 protection probe did not run");
+    FD_ZERO(&readable);
+    FD_SET(accepted, &readable);
+    timeval blocked_timeout{2, 0};
+    require(select(0, &readable, nullptr, nullptr, &blocked_timeout) == 0,
+            "Pre-Attach IPv6 traffic escaped selected routing protection");
+
+    const auto stopped = command(RoutingCommand::Stop, generation);
+    require(stopped.result == RoutingResult::Ok, "Stop existing IPv6 routing");
+    const auto stop_deadline = GetTickCount64() + 5000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == generation,
+                "Existing IPv6 stop generation changed");
+        if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) break;
+        require(GetTickCount64() < stop_deadline, "Existing IPv6 routing did not stop");
+        Sleep(25);
+    }
+    generation = 0;
+    require(SetEvent(release_event.get()), "Release existing IPv6 fixture after Stop");
+    // TCP may retransmit the protected byte after explicit Release removes
+    // interception. That is expected: Release restores direct connectivity.
+    // Require the new post-Release marker as proof that the connection resumed.
+    bool restored{};
+    const auto restored_deadline = GetTickCount64() + 5000;
+    while (!restored && GetTickCount64() < restored_deadline) {
+        FD_ZERO(&readable);
+        FD_SET(accepted, &readable);
+        timeval restored_timeout{0, 250000};
+        if (select(0, &readable, nullptr, nullptr, &restored_timeout) != 1) continue;
+        std::array<char, 16> bytes{};
+        const auto received = recv(accepted, bytes.data(), static_cast<int>(bytes.size()), 0);
+        require(received > 0, "Existing IPv6 connection closed during Release recovery");
+        for (int i = 0; i < received; ++i) {
+            require(bytes[i] == 'B' || bytes[i] == 'R',
+                    "Released IPv6 payload was corrupted");
+            restored |= bytes[i] == 'R';
+        }
+    }
+    require(restored, "Existing IPv6 connection did not recover after Release");
+    require(WaitForSingleObject(child.process.hProcess, 5000) == WAIT_OBJECT_0,
+            "Existing IPv6 child did not exit after Release");
+    DWORD exit{};
+    require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0,
+            "Existing IPv6 protection child failed");
+    QTextStream(stdout)
+        << "PASS: pre-Attach IPv6 TCP blocked while selected and recovered after Release\n";
+}
 } // namespace
 
 // Elevated, bounded development fixture: real independent curl process, pinned
@@ -593,13 +764,25 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (args.size() == 7 && args[1] == "--existing-ipv6-child") {
+        try {
+            bool ok{};
+            const auto port = args[6].toUShort(&ok);
+            require(ok && port, "Invalid existing IPv6 fixture port");
+            return runExistingIpv6Child(args[2], args[3], args[4], args[5], port);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
         (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant" &&
          args[6] != "--descendant-udp" && args[6] != "--existing-descendant" &&
-         args[6] != "--existing-tcp" && args[6] != "--existing-udp")) {
+         args[6] != "--existing-tcp" && args[6] != "--existing-udp" &&
+         args[6] != "--existing-ipv6")) {
         QTextStream(stderr)
             << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
-               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant|--existing-tcp|--existing-udp]|--udp]\n";
+               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant|--existing-tcp|--existing-udp|--existing-ipv6]|--udp]\n";
         return 2;
     }
     try {
@@ -641,6 +824,11 @@ int main(int argc, char** argv) {
             if (args.size() == 7 && args[6] == "--existing-udp") {
                 routeExistingUdpThroughService(app.applicationFilePath().toStdWString(), args[4],
                                                args[3], args[5].toStdWString());
+                return 0;
+            }
+            if (args.size() == 7 && args[6] == "--existing-ipv6") {
+                blockExistingIpv6ThroughService(app.applicationFilePath().toStdWString(),
+                                                args[5].toStdWString());
                 return 0;
             }
             const bool descendant_probe = args.size() == 7 && args[6] == "--descendant";

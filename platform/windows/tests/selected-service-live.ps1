@@ -58,6 +58,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach TCP cleanup test failed' }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--existing-udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach UDP tunnel test failed' }
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--existing-ipv6'
+    if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach IPv6 protection test failed' }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected UDP process test failed' }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--descendant-udp'
@@ -91,4 +93,4 @@ try {
     Write-Output "Fixture files retained in Program Files\$name"
 }
 if ((NetworkState) -cne $before) { throw 'Selected fixture changed routes or DNS' }
-Write-Output 'PASS: paired SCM selected root/descendant HTTPS and DNS UDP, pre-Attach TCP reset, unique pre-Attach UDP routed, explicit cleanup, unchanged routes and DNS'
+Write-Output 'PASS: paired SCM selected root/descendant HTTPS and DNS UDP, pre-Attach TCP reset, unique pre-Attach UDP routed, pre-Attach IPv6 blocked, explicit cleanup, unchanged routes and DNS'
