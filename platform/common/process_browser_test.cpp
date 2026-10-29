@@ -27,6 +27,13 @@ int main(int argc, char** argv) {
         };
         browser.setProcesses(records);
         auto* apps = browser.model()->item(0);
+        records[1].icon = QImage(16, 16, QImage::Format_ARGB32);
+        records[1].icon.fill(Qt::red);
+        browser.setProcesses(records);
+        apps = browser.model()->item(0);
+        require(!apps->child(0)->icon().isNull(), "Application icon missing from model");
+        require(apps->child(0)->data(ProcessBrowser::IdentityRole).toString() == records[1].identity(),
+                "Presentation icon changed process identity");
         require(apps->rowCount() == 2, "Separate window-bearing instances were merged");
         require(apps->child(0)->rowCount() == 1, "Renderer missing from application tree");
         require(browser.model()->item(1)->rowCount() == 2, "Background roots missing");

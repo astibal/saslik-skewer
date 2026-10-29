@@ -48,6 +48,18 @@ as implemented. See [the contract and acceptance tests](TUNNEL_PARITY.md).
 
 ## Current implementation
 
+### Native application labels and icons
+
+The inventory reads local executable descriptions and small native icons on its
+existing background worker. Each cache is bounded to 512 paths per GUI session,
+including failed lookups. Icons are decoded into bounded QImages off-thread;
+only the GUI constructs QPixmap/QIcon objects. Fixed-drive resource extraction
+does not execute application code; UNC, device and mapped-network paths are not
+deliberately inspected for icons. Missing resources leave the normal text label.
+Metadata is presentation only: routing and Release still use PID plus birth time.
+Native tests cover cached and repeated fresh extraction, GDI resource lifetime,
+worker-to-GUI image transfer and preservation of process identity in the model.
+
 ### Current-user CA trust
 
 The Windows **CA Trust** page downloads the CA over the existing authenticated

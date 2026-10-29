@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QWidget>
 #include <QSet>
+#include <QImage>
 #include <optional>
 
 namespace skewer::ui {
@@ -15,6 +16,7 @@ struct ProcessRecord {
     quint64 pid{}, created{}, parent{};
     QString name, executable;
     QStringList windows;
+    QImage icon{};
     bool operator==(const ProcessRecord&) const = default;
     QString identity() const;
 };

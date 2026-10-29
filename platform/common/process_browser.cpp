@@ -3,6 +3,8 @@
 #include <QColor>
 #include <QScrollBar>
 #include <QSet>
+#include <QIcon>
+#include <QPixmap>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <functional>
@@ -170,6 +172,7 @@ void ProcessBrowser::rebuildModel() {
         }
         by_pid.insert(record.pid, &record);
         auto* item = new QStandardItem(record.name.isEmpty() ? QString::number(record.pid) : record.name);
+        if (!record.icon.isNull()) item->setIcon(QIcon(QPixmap::fromImage(record.icon)));
         item->setData(record.identity(), IdentityRole);
         item->setData(record.executable, ExecutableRole);
         item->setToolTip(record.windows.join(QLatin1Char('\n')));

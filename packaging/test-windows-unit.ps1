@@ -9,6 +9,7 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 
 $tests = @(
     @{ Name = 'windows_application_names'; File = 'application_names_test.exe' },
+    @{ Name = 'windows_application_icons'; File = 'application_icons_test.exe' },
     @{ Name = 'windows_process_group'; File = 'process_group_test.exe' },
     @{ Name = 'windows_selection_registry'; File = 'selection_registry_test.exe' },
     @{ Name = 'windows_routing_control'; File = 'routing_control_test.exe' },

@@ -54,7 +54,7 @@ install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-rout
 install -m 0644 platform/windows/remove-routing-service.ps1 "$root/remove-routing-service.ps1"
 install -m 0644 platform/windows/INSTALL.md "$root/INSTALL.md"
 
-windows_tests='application_names_test process_group_test selection_registry_test routing_control_test selection_auth_test
+windows_tests='application_names_test application_icons_test process_group_test selection_registry_test routing_control_test selection_auth_test
 selected_packet_epoch_test udp_owners_test tcp_owners_test app_egress_guard_test udp_endpoint_test
 selected_tunnel_device_test tunnel_pump_test tuntom_udp_test skewer-process-probe wintun_device_test
 flow_tracking_test skewer-flow-watch pairing_snapshot_test client_report_test pairing_storage_test

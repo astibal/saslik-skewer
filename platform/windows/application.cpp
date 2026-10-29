@@ -1,5 +1,6 @@
 #include "processes.hpp"
 #include "application_names.hpp"
+#include "application_icons.hpp"
 #include "process_browser.hpp"
 #include "launch_catalog.hpp"
 #include "ui/application_shell.hpp"
@@ -57,7 +58,7 @@ struct ScanResult {
     bool windows{};
     unsigned inaccessible{};
 };
-ScanResult scan(skewer::windows::ApplicationNames& names) {
+ScanResult scan(skewer::windows::ApplicationNames& names, skewer::windows::ApplicationIcons& icons) {
     ScanResult result;
     try {
         const auto snapshot = skewer::windows::scanCurrentUser();
@@ -73,6 +74,7 @@ ScanResult scan(skewer::windows::ApplicationNames& names) {
             for (const auto& title : process.window_titles) {
                 record.windows.append(QString::fromStdWString(title));
             }
+            record.icon = icons.lookup(process.executable);
             result.records.append(std::move(record));
         }
     } catch (const std::exception& error) {
@@ -153,7 +155,7 @@ public:
     }
 
     ~WindowsWindow() override {
-        // Workers only own value arguments. Finish them before destroying the UI;
+        // Finish workers before destroying their inventory caches or the UI;
         // closing Skewer must not terminate any application it launched.
         timer_.stop();
 #ifdef SKEWER_WINDOWS_PAIRING
@@ -171,7 +173,7 @@ public:
         if (scan_watcher_.isRunning() || !isVisible() || isMinimized()) {
             return;
         }
-        scan_watcher_.setFuture(QtConcurrent::run([this] { return scan(application_names_); }));
+        scan_watcher_.setFuture(QtConcurrent::run([this] { return scan(application_names_, application_icons_); }));
     }
 
 private:
@@ -888,6 +890,7 @@ private:
     QLabel* status_{};
     QFutureWatcher<ScanResult> scan_watcher_;
     skewer::windows::ApplicationNames application_names_;
+    skewer::windows::ApplicationIcons application_icons_;
     QFutureWatcher<LaunchResult> launch_watcher_;
     std::shared_ptr<skewer::windows::Handle> launch_cancel_;
     QTimer timer_;
