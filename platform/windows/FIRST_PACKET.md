@@ -517,8 +517,9 @@ Capture holds a child's first packet while the service consumes the job
 notification. When CONNECT predates the child's observer, retained job membership
 plus a fresh single owner row supplies a stable group-flow identity. UDP requires
 exactly one matching bind row as well as one distinct PID; shared binds remain
-held. Orphaned or handed-off processes, existing sockets and shared/ambiguous
-binds remain unsupported and fail closed.
+held. Manual Attach guards the adopted tree before resetting its existing IPv4
+TCP endpoints. Orphaned or handed-off processes, existing UDP/IPv6 sockets and
+shared/ambiguous binds remain unsupported and fail closed.
 The HTTPS fixture supplies IPv4 resolution and disables certificate validation
 for that request only. Attribution failures hold packets rather than guessing
 Direct, so unrelated traffic can stall when attribution is unavailable. Service
@@ -572,8 +573,9 @@ shell is invoked. The routed GUI smoke test launches PowerShell with explicit
 
 The page can also Attach one already running process selected in the process
 tree and Release the service-owned generation without terminating that process.
-PID plus creation time remains the authorization boundary. Existing sockets
-keep their previous route; only fresh supported connections are intercepted.
+PID plus creation time remains the authorization boundary. Attach resets
+existing IPv4 TCP after installing guards; existing UDP/IPv6 remains outside
+the supported path. Fresh supported connections are intercepted.
 
 The LocalSystem routing service publishes only
 `PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE` on its own process object to

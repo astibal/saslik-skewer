@@ -10,8 +10,9 @@ descendants of a routed launch inherit selection through a Windows Job Object.
 Manual Attach adopts descendants whose complete, live, same-owner parent chain
 still leads to the selected root. UDP descendants additionally require exactly
 one matching owner-table bind row. IPv6, orphaned or handed-off processes,
-ambiguous shared binds and already-open sockets are not covered by
-selected-process mode.
+ambiguous shared binds and already-open UDP/IPv6 sockets are not covered by
+selected-process mode. Manual Attach installs guards for the complete adopted
+tree and resets its existing IPv4 TCP endpoints before activation.
 The custom kernel callout prototype is deferred and will not ship in the first
 release. No custom-driver test-signing setup is required for that release.
 
@@ -167,8 +168,9 @@ generation; Busy/Stale return a structured reply and nonzero exit status. The
 client retries connection establishment only, never a possibly committed write.
 `release` is the user-facing alias for `stop`; `attach` retains `start-process`
 and `run` retains `launch` as compatibility aliases. Attach adopts the complete
-live same-owner descendant tree but cannot move already-open sockets. Run creates
-the process suspended and resumes it only after the service reports Active.
+live same-owner descendant tree, guards every retained member and resets its
+existing IPv4 TCP endpoints. Run creates the process suspended and resumes it
+only after the service reports Active.
 Pair reads the existing user-owned DPAPI pairing, verifies the SCM pipe before
 decrypting it, and sends a memory-only snapshot through the authenticated handoff.
 It never accepts a secret in argv, creates a SYSTEM credential file, or starts
@@ -1153,9 +1155,10 @@ and persistent routing selections remain pending. No routing policy is installed
 ### Remaining first-release limits
 
 The native service and GUI now cover authenticated pairing, whole-host IPv4 and
-selected-process IPv4 TCP/UDP routing. Unsupported IPv6, already-open sockets,
-orphaned handoffs and ambiguous shared UDP binds remain explicit limitations;
-they are never presented as successfully routed. The first release uses the
+selected-process IPv4 TCP/UDP routing. Attach resets already-open IPv4 TCP.
+Unsupported IPv6, already-open UDP/IPv6 sockets, orphaned handoffs and ambiguous
+shared UDP binds remain explicit limitations; they are never presented as
+successfully routed. The first release uses the
 documented WinDivert owner-lifetime model rather than the deferred custom driver.
 Skewer application executables are not yet code-signed; the packaged Wintun and
 WinDivert drivers retain their official signatures.

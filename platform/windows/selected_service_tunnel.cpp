@@ -2,6 +2,7 @@
 #include "selected_session_packets.hpp"
 #include "socket_connect_guard.hpp"
 #include "selected_group_resolver.hpp"
+#include "tcp_owners.hpp"
 #include <algorithm>
 #include <exception>
 #include <vector>
@@ -17,16 +18,19 @@ public:
             std::atomic<std::shared_ptr<const std::string>>& retry_error)
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
           published_(published), blocked_(blocked), stage_(stage), retry_error_(retry_error),
-          identity_(target->key()),
           resolver_(dll, std::move(target), owner, [this](const ProcessTarget& member) {
               unsupported_.push_back(std::make_unique<traffic::SocketConnectGuard>(
                   dll_, member, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp,
                   peer_, port_));
-              if (member.key() == identity_) {
-                  startup_ = std::make_unique<traffic::SocketConnectGuard>(
-                      dll_, member, traffic::SocketConnectGuard::Mode::All);
-              }
-          }) {}
+              startup_.push_back(std::make_unique<traffic::SocketConnectGuard>(
+                  dll_, member, traffic::SocketConnectGuard::Mode::All));
+          }) {
+        // ProcessGroup has already adopted the live descendant tree. Drain its
+        // notifications so every member is guarded before old IPv4 TCP sockets
+        // are reset. Fresh attempts remain blocked until packet interception is
+        // ready; launched suspended processes normally have nothing to reset.
+        traffic::resetOwnedIpv4Tcp(resolver_.memberKeys());
+    }
     bool running() const { return resolver_.running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
         stage_ = RoutingStage::Intercepting;
@@ -78,7 +82,7 @@ public:
                 if (packets_->blocked()) {
                     throw std::runtime_error("Selected packet path retired while transport remained ready");
                 }
-                startup_.reset();
+                startup_.clear();
                 // Publish only after interception and removal of the startup
                 // socket block, not merely after the transport handshake.
                 published_ = true;
@@ -127,9 +131,8 @@ private:
     std::atomic_bool& blocked_;
     std::atomic<RoutingStage>& stage_;
     std::atomic<std::shared_ptr<const std::string>>& retry_error_;
-    ProcessKey identity_;
     std::vector<std::unique_ptr<traffic::SocketConnectGuard>> unsupported_;
-    std::unique_ptr<traffic::SocketConnectGuard> startup_;
+    std::vector<std::unique_ptr<traffic::SocketConnectGuard>> startup_;
     traffic::SelectedGroupResolver resolver_;
     std::unique_ptr<traffic::PacketCapture> capture_;
     std::unique_ptr<SelectedSessionPackets> packets_;

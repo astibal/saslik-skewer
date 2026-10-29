@@ -102,5 +102,6 @@ Headless application routing uses the same authenticated service as the GUI:
 ```
 
 Use the opaque generation returned by `status` or `run`. `run` is authoritative
-because the child remains suspended until routing is Active. `attach` cannot
-retroactively reroute existing sockets.
+because the child remains suspended until routing is Active. `attach` installs
+guards before resetting the adopted tree's existing IPv4 TCP connections;
+existing UDP and IPv6 sockets cannot be retroactively rerouted.

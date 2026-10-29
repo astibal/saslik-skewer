@@ -2,6 +2,7 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include "tcp_owners.hpp"
+#include "processes.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -103,5 +104,48 @@ std::vector<std::uint32_t> tcpOwnerCandidates(std::span<const TcpOwnerRow> rows,
     std::sort(result.begin(), result.end());
     result.erase(std::unique(result.begin(), result.end()), result.end());
     return result;
+}
+
+std::vector<TcpOwnerRow> ownedIpv4TcpRows(
+    std::span<const TcpOwnerRow> rows,
+    std::span<const skewer::windows::ProcessKey> processes) {
+    std::vector<TcpOwnerRow> result;
+    for (const auto& row : rows) {
+        if (row.tuple.ipv6 || !row.tuple.source_port || !row.tuple.destination_port ||
+            row.state == MIB_TCP_STATE_LISTEN || row.state == MIB_TCP_STATE_CLOSED) {
+            continue;
+        }
+        const auto process = std::ranges::find_if(processes, [&](const auto& candidate) {
+            return candidate.pid == row.pid;
+        });
+        if (process == processes.end()) continue;
+        result.push_back(row);
+    }
+    return result;
+}
+
+std::size_t resetOwnedIpv4Tcp(std::span<const skewer::windows::ProcessKey> processes) {
+    if (processes.empty()) return 0;
+    const auto snapshot = captureTcpOwners();
+    std::size_t reset{};
+    for (const auto& row : ownedIpv4TcpRows(snapshot.rows, processes)) {
+        // The ProcessTarget retained by SelectedGroupResolver keeps the PID
+        // identity alive while this row is converted and deleted.
+        MIB_TCPROW native{};
+        native.dwState = MIB_TCP_STATE_DELETE_TCB;
+        std::memcpy(&native.dwLocalAddr, row.tuple.source.data(), 4);
+        std::memcpy(&native.dwRemoteAddr, row.tuple.destination.data(), 4);
+        native.dwLocalPort = htons(row.tuple.source_port);
+        native.dwRemotePort = htons(row.tuple.destination_port);
+        const auto status = SetTcpEntry(&native);
+        if (status == NO_ERROR) {
+            ++reset;
+        } else if (status != ERROR_INVALID_PARAMETER && status != ERROR_NOT_FOUND) {
+            throw std::system_error(status, std::system_category(), "Reset selected TCP connection");
+        }
+        // INVALID_PARAMETER/NOT_FOUND means the endpoint disappeared after
+        // the bounded owner snapshot; it no longer needs cleanup.
+    }
+    return reset;
 }
 } // namespace skewer::windows::traffic

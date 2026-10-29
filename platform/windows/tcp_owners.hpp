@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 
+namespace skewer::windows {
+struct ProcessKey;
+}
+
 namespace skewer::windows::traffic {
 struct TcpOwnerRow {
     skewer::traffic::PacketTuple tuple;
@@ -30,4 +34,13 @@ std::vector<std::uint32_t> tcpOwnerCandidates(std::span<const TcpOwnerRow> rows,
 // Candidate predicate only. Freshness, selected process liveness and lifecycle
 // disagreement must still be checked by the policy before any direct delivery.
 bool excludesSelectedTcpOwner(std::span<const std::uint32_t> candidates, std::uint32_t selected);
+
+// Resets only live non-listening IPv4 TCP endpoints owned by retained process
+// identities. This is used after fail-closed guards are installed, so an
+// attached application's next connection cannot race out through the old path.
+// IPv6 and UDP remain explicitly outside this cleanup contract.
+std::vector<TcpOwnerRow> ownedIpv4TcpRows(
+    std::span<const TcpOwnerRow> rows,
+    std::span<const skewer::windows::ProcessKey> processes);
+std::size_t resetOwnedIpv4Tcp(std::span<const skewer::windows::ProcessKey> processes);
 } // namespace skewer::windows::traffic

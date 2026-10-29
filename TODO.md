@@ -26,10 +26,11 @@ Transport milestones verified independently of the remaining service/UI gates:
   verify readiness before resuming forwarding.
 - [x] Retry selected-process and whole-host transport with bounded backoff while
   retaining interception. Publish Active only after a fresh healthy generation.
-- [ ] Complete physical-egress coverage for IPv6, already-open sockets, orphaned
+- [ ] Complete physical-egress coverage for IPv6, already-open UDP/IPv6 sockets, orphaned
   handoffs and ambiguous shared binds. Native VM tests now cover selected-root,
   new-descendant and adopted pre-existing-descendant IPv4 TCP/HTTPS; uniquely
-  bound root/descendant UDP/DNS; initial suspended launch; reconnect; GUI restart;
+  bound root/descendant UDP/DNS; pre-Attach IPv4 TCP reset; initial suspended
+  launch; reconnect; GUI restart;
   whole-host DNS/HTTP/HTTPS; and tunnel-loss blocking. Unsupported cases must
   remain visibly rejected rather than being presented as routed.
 - [x] Report service failure accurately. Test and document that owner termination

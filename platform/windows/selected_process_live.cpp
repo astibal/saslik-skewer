@@ -144,6 +144,43 @@ int runExistingParent(const QString& ready_name, const QString& go_name,
     require(GetExitCodeProcess(process.get(), &exit), "Read existing descendant exit code");
     return static_cast<int>(exit);
 }
+int runExistingTcpChild(const QString& ready_name, const QString& inspect_name,
+                        std::uint16_t port) {
+    WSADATA data{};
+    require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "Existing TCP child Winsock startup failed");
+    struct WinsockCleanup {
+        ~WinsockCleanup() { WSACleanup(); }
+    } winsock_cleanup;
+    Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, ready_name.toStdWString().c_str()));
+    Handle inspect(OpenEventW(SYNCHRONIZE, FALSE, inspect_name.toStdWString().c_str()));
+    require(bool(ready) && bool(inspect), "Open existing TCP fixture events");
+    SOCKET socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    require(socket != INVALID_SOCKET, "Create existing TCP fixture socket");
+    struct CloseSocket {
+        SOCKET value;
+        ~CloseSocket() { closesocket(value); }
+    } close{socket};
+    sockaddr_in peer{};
+    peer.sin_family = AF_INET;
+    peer.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    peer.sin_port = htons(port);
+    require(connect(socket, reinterpret_cast<const sockaddr*>(&peer), sizeof(peer)) == 0,
+            "Connect existing TCP fixture socket");
+    require(SetEvent(ready.get()), "Signal existing TCP fixture readiness");
+    require(WaitForSingleObject(inspect.get(), 30000) == WAIT_OBJECT_0,
+            "Existing TCP fixture was not inspected after Attach");
+    DWORD timeout = 2000;
+    require(setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
+            "Set existing TCP fixture timeout");
+    char byte{};
+    const auto received = recv(socket, &byte, 1, 0);
+    const auto error = received == SOCKET_ERROR ? WSAGetLastError() : 0;
+    require(received == 0 || (received == SOCKET_ERROR &&
+                              (error == WSAECONNRESET || error == WSAENOTCONN)),
+            "Pre-Attach TCP connection remained usable after routing activation");
+    return 0;
+}
 class Worker final : public TunnelPacketWorker {
 public:
     Worker(SelectedSessionPackets& packets, Child& child, HANDLE stop)
@@ -267,6 +304,101 @@ void throughExistingService(const std::wstring& executable, const QString& host,
     generation = 0;
     QTextStream(stdout) << "PASS: pre-existing descendant adopted through SCM service\n";
 }
+void resetExistingTcpThroughService(const std::wstring& executable, const std::wstring& name) {
+    SOCKET listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    require(listener != INVALID_SOCKET, "Create existing TCP listener");
+    struct CloseSocket {
+        SOCKET value;
+        ~CloseSocket() { closesocket(value); }
+    } close_listener{listener};
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(bind(listener, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == 0 &&
+                listen(listener, 1) == 0,
+            "Bind existing TCP listener");
+    int local_size = sizeof(local);
+    require(getsockname(listener, reinterpret_cast<sockaddr*>(&local), &local_size) == 0,
+            "Read existing TCP listener address");
+
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(bool(cancel), "Create existing TCP cancellation event");
+    const auto suffix = std::to_wstring(GetCurrentProcessId()) + L"-" +
+                        std::to_wstring(GetTickCount64());
+    const auto ready_name = L"Local\\SkewerExistingTcpReady-" + suffix;
+    const auto inspect_name = L"Local\\SkewerExistingTcpInspect-" + suffix;
+    Handle ready(CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str()));
+    Handle inspect(CreateEventW(nullptr, TRUE, FALSE, inspect_name.c_str()));
+    require(bool(ready) && bool(inspect), "Create existing TCP fixture events");
+    Child child{launch(executable,
+                       {L"--existing-tcp-child", ready_name, inspect_name,
+                        std::to_wstring(ntohs(local.sin_port))})};
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(listener, &readable);
+    timeval accept_timeout{5, 0};
+    require(select(0, &readable, nullptr, nullptr, &accept_timeout) == 1,
+            "Existing TCP fixture did not reach the listener");
+    SOCKET accepted = accept(listener, nullptr, nullptr);
+    require(accepted != INVALID_SOCKET, "Accept existing TCP fixture connection");
+    CloseSocket close_accepted{accepted};
+    require(WaitForSingleObject(ready.get(), 5000) == WAIT_OBJECT_0,
+            "Existing TCP child did not connect before Attach");
+
+    const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
+        auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+        return exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
+    };
+    const auto initial = command(RoutingCommand::Status, 0);
+    require(initial.result == RoutingResult::Ok &&
+                (initial.phase == RoutingPhase::Idle || initial.phase == RoutingPhase::Failed),
+            "Routing service is busy before existing TCP fixture");
+    std::uint64_t generation{};
+    struct Release {
+        Child& child;
+        std::function<void()> stop;
+        ~Release() {
+            child.stop();
+            try { stop(); } catch (...) {}
+        }
+    } release{child, [&] { if (generation) command(RoutingCommand::Stop, generation); }};
+    const auto identity = processKey(child.process.hProcess, child.process.dwProcessId);
+    auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+    const auto started = exchangeSelectedRouting(pipe->get(), name, identity,
+                                                 initial.generation, cancel.get(), 3000);
+    require(started.result == RoutingResult::Ok, "Existing TCP process selection failed");
+    generation = started.generation;
+    const auto deadline = GetTickCount64() + 30000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == generation &&
+                    (state.phase == RoutingPhase::Starting || state.phase == RoutingPhase::Blocked ||
+                     state.phase == RoutingPhase::Active),
+                "Existing TCP routing stopped before readiness");
+        if (state.phase == RoutingPhase::Active) break;
+        require(GetTickCount64() < deadline, "Existing TCP routing did not become Active");
+        Sleep(50);
+    }
+    require(SetEvent(inspect.get()), "Release existing TCP fixture inspection");
+    require(WaitForSingleObject(child.process.hProcess, 5000) == WAIT_OBJECT_0,
+            "Pre-Attach TCP connection was not reset");
+    DWORD exit{};
+    require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0,
+            "Pre-Attach TCP cleanup child failed");
+    const auto stopped = command(RoutingCommand::Stop, generation);
+    require(stopped.result == RoutingResult::Ok, "Stop existing TCP routing");
+    const auto stop_deadline = GetTickCount64() + 5000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == generation,
+                "Existing TCP stop generation changed");
+        if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) break;
+        require(GetTickCount64() < stop_deadline, "Existing TCP routing did not stop");
+        Sleep(25);
+    }
+    generation = 0;
+    QTextStream(stdout) << "PASS: pre-Attach IPv4 TCP connection reset by SCM service\n";
+}
 } // namespace
 
 // Elevated, bounded development fixture: real independent curl process, pinned
@@ -316,12 +448,24 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (args.size() == 5 && args[1] == "--existing-tcp-child") {
+        try {
+            bool ok{};
+            const auto port = args[4].toUShort(&ok);
+            require(ok && port, "Invalid existing TCP fixture port");
+            return runExistingTcpChild(args[2], args[3], port);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
         (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant" &&
-         args[6] != "--descendant-udp" && args[6] != "--existing-descendant")) {
+         args[6] != "--descendant-udp" && args[6] != "--existing-descendant" &&
+         args[6] != "--existing-tcp")) {
         QTextStream(stderr)
             << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
-               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant]|--udp]\n";
+               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant|--existing-tcp]|--udp]\n";
         return 2;
     }
     try {
@@ -353,6 +497,11 @@ int main(int argc, char** argv) {
             if (existing_probe) {
                 throughExistingService(app.applicationFilePath().toStdWString(), args[4], args[3],
                                        args[5].toStdWString());
+                return 0;
+            }
+            if (args.size() == 7 && args[6] == "--existing-tcp") {
+                resetExistingTcpThroughService(app.applicationFilePath().toStdWString(),
+                                               args[5].toStdWString());
                 return 0;
             }
             const bool descendant_probe = args.size() == 7 && args[6] == "--descendant";

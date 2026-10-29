@@ -1,4 +1,7 @@
+#include <winsock2.h>
 #include "tcp_owners.hpp"
+#include "processes.hpp"
+#include <iphlpapi.h>
 #include <iostream>
 #include <stdexcept>
 
@@ -43,6 +46,26 @@ int main() {
             }
             require(rejected, "UDP was silently resolved through TCP tables");
         }
+        skewer::traffic::PacketTuple connected;
+        connected.protocol = IPPROTO_TCP;
+        connected.source_port = 12345;
+        connected.destination_port = 443;
+        const std::vector<skewer::windows::ProcessKey> processes{{42, 1000}};
+        std::vector<TcpOwnerRow> cleanup_rows{
+            {connected, 42, MIB_TCP_STATE_ESTAB},
+            {connected, 99, MIB_TCP_STATE_ESTAB},
+            {connected, 42, MIB_TCP_STATE_LISTEN},
+        };
+        auto ipv6 = connected;
+        ipv6.ipv6 = true;
+        cleanup_rows.push_back({ipv6, 42, MIB_TCP_STATE_ESTAB});
+        auto incomplete = connected;
+        incomplete.destination_port = 0;
+        cleanup_rows.push_back({incomplete, 42, MIB_TCP_STATE_SYN_SENT});
+        const auto cleanup = ownedIpv4TcpRows(cleanup_rows, processes);
+        require(cleanup.size() == 1 && cleanup.front().pid == 42 &&
+                    cleanup.front().state == MIB_TCP_STATE_ESTAB,
+                "TCP cleanup selected an unsupported or foreign endpoint");
         const auto snapshot = captureTcpOwners();
         require(snapshot.completed >= snapshot.started, "Snapshot timing invalid");
         std::cout << "PASS: TCP owner snapshot and collision matching, rows=" << snapshot.rows.size() << '\n';

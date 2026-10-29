@@ -60,10 +60,14 @@ selected_tunnel_device_test tunnel_pump_test tuntom_udp_test skewer-process-prob
 flow_tracking_test skewer-flow-watch pairing_snapshot_test client_report_test pairing_storage_test
 paired_tunnel_test tunnel_dns_test service_installer_test runtime_trust_test ca_trust_panel_test routing_panel_test
 direct_host_policy_test whole_host_policy_test owned_route_test tunnel_routes_test'
+live_tests='routed_launch_test selected_process_live'
 traffic_tests='tunnel_flows_test packet_rewrite_test tunnel_lease_test routing_scope_test
 owner_evidence_test packet_tuple_test flow_index_test pending_packets_test selected_packets_test'
 ui_tests='tunnel_contract_test process_browser_test launch_catalog_test application_shell_test'
 for file in $windows_tests; do
+    install -m 0755 "$build/platform/windows/$file.exe" "$tests/$file.exe"
+done
+for file in $live_tests; do
     install -m 0755 "$build/platform/windows/$file.exe" "$tests/$file.exe"
 done
 for file in $traffic_tests; do
@@ -81,6 +85,8 @@ for file in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll libssp-0.dll;
     install -m 0644 "$path" "$tests/$file"
 done
 install -m 0644 packaging/test-windows-unit.ps1 "$tests/run-tests.ps1"
+install -m 0644 platform/windows/tests/selected-service-live.ps1 \
+    "$tests/selected-service-live.ps1"
 
 archive="$output/skewer-windows-amd64-$version.zip"
 (cd "$stage" && cmake -E tar cf "$archive" --format=zip "$(basename "$root")")

@@ -418,9 +418,9 @@ private:
 #endif
         auto* disclaimer = new QLabel(tr("Launch through Skewer starts one new process suspended and "
                                          "releases it only after routing is ready. "
-                                         "Attach can move a running process, but its existing sockets keep "
-                                         "their old route. Fresh corroborated IPv4 TCP and UDP are routed, "
-                                         "including new descendants and intact live trees. Existing sockets, "
+                                         "Attach guards the live process tree and resets its existing IPv4 "
+                                         "TCP connections before activation. Fresh corroborated IPv4 TCP and UDP are routed, "
+                                         "including new descendants and intact live trees. Already-open UDP, "
                                          "orphaned handoffs and IPv6 are not covered. "
                                          "Whole-host routing is controlled on the Routing tab."),
                                       page_);
@@ -672,7 +672,8 @@ private:
         }
         page_->attach->setEnabled(false);
         page_->action_status->setText(
-            tr("Attaching PID %1. Existing sockets remain on their previous route…").arg(process->pid));
+            tr("Attaching PID %1. Guarding its tree and resetting existing IPv4 TCP connections…")
+                .arg(process->pid));
         routing_panel_->startSelected(
             {static_cast<DWORD>(process->pid), static_cast<std::uint64_t>(process->created)});
     }

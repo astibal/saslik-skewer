@@ -1,5 +1,6 @@
 param(
     [string]$Directory='C:\SkewerDev\skewer-windows-app',
+    [string]$FixtureDirectory=$Directory,
     [string]$DriverDirectory='C:\SkewerDev\flow-test',
     [string]$WintunDll='C:\SkewerDev\wintun-test\wintun.dll',
     [string]$Endpoint='skewer://172.30.1.73:8766/pair',
@@ -37,7 +38,7 @@ try {
     if ($installed.StartMode -ne 'Auto' -or $installed.State -ne 'Running') {
         throw "Installed routing service is not an automatic idle service"
     }
-    & (Join-Path $Directory 'routed_launch_test.exe') $name
+    & (Join-Path $FixtureDirectory 'routed_launch_test.exe') $name
     if ($LASTEXITCODE -ne 0) { throw 'Rejected routed launch executed child code' }
     & $client pair $name $Endpoint
     if ($LASTEXITCODE -ne 0) { throw 'Selected fixture pairing failed' }
@@ -46,15 +47,17 @@ try {
         & (Join-Path $Directory 'run-routed-application-smoke.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'GUI routed launch test failed' }
     }
-    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
-    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--descendant'
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--descendant'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant test failed' }
-    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--existing-descendant'
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--existing-descendant'
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-existing descendant test failed' }
-    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--existing-tcp'
+    if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach TCP cleanup test failed' }
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected UDP process test failed' }
-    & (Join-Path $Directory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--descendant-udp'
+    & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--descendant-udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant UDP test failed' }
     & curl.exe --noproxy '*' -4 -k --fail --silent --show-error --max-time 12 `
         --resolve "${HostName}:443:${Destination}" --output NUL "https://${HostName}/"
@@ -85,4 +88,4 @@ try {
     Write-Output "Fixture files retained in Program Files\$name"
 }
 if ((NetworkState) -cne $before) { throw 'Selected fixture changed routes or DNS' }
-Write-Output 'PASS: paired SCM selected root/descendant HTTPS and DNS UDP, explicit cleanup, unchanged routes and DNS'
+Write-Output 'PASS: paired SCM selected root/descendant HTTPS and DNS UDP, pre-Attach TCP reset, explicit cleanup, unchanged routes and DNS'

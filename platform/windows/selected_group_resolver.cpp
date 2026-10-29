@@ -24,6 +24,14 @@ bool SelectedGroupResolver::contains(skewer::traffic::ProcessIdentity process) c
     });
 }
 
+std::vector<ProcessKey> SelectedGroupResolver::memberKeys() {
+    refresh();
+    std::vector<ProcessKey> result;
+    result.reserve(members_.size());
+    for (const auto& member : members_) result.push_back(member.process);
+    return result;
+}
+
 void SelectedGroupResolver::enroll(std::unique_ptr<ProcessTarget> target) {
     if (!target || !target->running()) return;
     const auto identity = target->key();
