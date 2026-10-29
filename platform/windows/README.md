@@ -2,6 +2,18 @@
 
 ## Packaged regression checks
 
+The `b639018` build (whole-host tunnel pause and interactive fixtures included)
+passed all 44 bundled native tests and the installation smoke test on 2026-10-29.
+Application ZIP SHA-256:
+`4ad25e0f27a9b59ab5727a28fbebe03785f0301d39efe1c57e7b2cf49c13e8dd`.
+Test ZIP SHA-256:
+`60a977923de481b1faa6c675d30e2e9a4e3cdfc730834d63e8c3d6ea1dca7aa2`.
+The same extracted pair passed the selected-service integration suite, including
+interactive application pause/reopen, independent Release, root/new/adopted
+descendant HTTPS, pre-Attach TCP reset and UDP routing, IPv6 blocking/release,
+DNS and singleton handoff. Host routes and DNS were unchanged after cleanup.
+These are verified development artifacts, not a published release.
+
 The `4cade5e` build passed all 44 bundled native Windows tests and the package
 installation smoke test on 2026-10-29. This includes the disconnected IPC setup
 regression and generation-safe completion of selected routing. Application ZIP
