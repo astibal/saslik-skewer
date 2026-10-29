@@ -229,8 +229,18 @@ an unrelated curl still succeeds. Explicit Release must restore connectivity
 for that same application. Results remain in a uniquely named temporary
 directory. The fixture does not change host routes or DNS. Verified on the
 Rhino Windows VM against an isolated network-namespace HTTP listener attached
-to its virtual LAN. This is external link-local TCP coverage, not proof of
-global IPv6, UDP or pre-existing external socket behavior.
+to its virtual LAN. On 2026-10-29 the same fixture also passed with ULA
+`fd53:534b:2026:1029::2/64` on the VM and a namespace HTTP listener at
+`fd53:534b:2026:1029::1`, using a disposable paired service built from `89716ca`.
+The temporary VM address, service and namespace were removed afterwards; no
+default gateway or DNS change was needed. With a reachable ULA peer, invoke:
+
+```powershell
+.\selected-ipv6-egress.ps1 -Service YOUR_PAIRED_TEST_SERVICE -Url 'http://[fd53:534b:2026:1029::1]:18081/'
+```
+
+These are external link-local and on-link ULA TCP checks, not proof of public
+IPv6 internet reachability, routed IPv6, UDP or pre-existing external socket behavior.
 
 The [first-packet experiment](FIRST_PACKET.md) confirms that a WinDivert SOCKET
 filter can deny fresh TCP/UDP attempts for one PID, but new connections become

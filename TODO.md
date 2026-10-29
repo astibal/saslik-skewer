@@ -44,9 +44,9 @@ Transport milestones verified independently of the remaining service/UI gates:
   launch; reconnect; GUI restart; whole-host DNS/HTTP/HTTPS; and tunnel-loss
   blocking. Unsupported cases must remain visibly rejected rather than being
   presented as routed.
-  External link-local IPv6 TCP is also verified across the VM NIC: a selected
+  External link-local and on-link ULA IPv6 TCP are also verified across the VM NIC: a selected
   descendant cannot connect, an unrelated process still can, and the released
-  application reconnects. Global IPv6, pre-existing external connections and
+  application reconnects. Public/routed IPv6, pre-existing external connections and
   ambiguous/shared UDP remain separate coverage requirements.
 - [x] Report service failure accurately. Test and document that owner termination
   removes WinDivert filters and may restore direct connectivity. Automatic restart
