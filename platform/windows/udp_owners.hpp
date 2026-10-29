@@ -19,6 +19,11 @@ struct UdpOwnerCandidates {
     // Preserve row multiplicity: distinct-PID de-duplication alone cannot
     // prove that one process does not share a UDP bind with another socket.
     std::size_t matching_rows{};
+
+    // Snapshot evidence only: lifecycle and freshness still need validation.
+    bool uniqueBind() const {
+        return matching_rows == 1 && !unknown_owner && pids.size() == 1 && pids.front() != 0;
+    }
 };
 
 struct UdpOwnerSnapshot {

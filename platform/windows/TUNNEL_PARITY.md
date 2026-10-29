@@ -300,6 +300,23 @@ the same service generation remains Active, restarts the GUI, recovers the
 authoritative selection and releases it explicitly. This covers GUI crash and
 restart without treating GUI lifetime as routing ownership.
 
+## UDP owner snapshot regression (2026-10-29)
+
+The per-process resolver now requires a unique UDP bind row before tunnelling,
+even when the socket observer reports a matching lifecycle. Multiple binds owned
+by the same PID must not become unique through PID de-duplication: an observer
+attached later may not have seen all existing sockets. Ambiguous selected traffic
+is held, while positive evidence excluding the selection retains the existing
+unrelated-traffic policy. The owner-candidate test covers duplicate same-PID rows,
+missing evidence and unknown owners for both address families. Its native Windows
+run also checks live wildcard owner snapshots; these checks alone do not prove
+physical-egress behaviour for live shared UDP sockets.
+
+The full selected-service VM integration passed with the updated service,
+including selected root/descendant HTTPS and DNS, unique pre-Attach UDP, existing
+TCP handling, independent group Release, GUI crash survival and unchanged host
+routes and DNS after cleanup.
+
 ## References
 
 - Tuntom: `docs/PROTOCOL_V5.md`, `src/tun_device.hpp`, `src/udp_endpoint.hpp`.

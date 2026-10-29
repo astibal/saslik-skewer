@@ -60,6 +60,12 @@ void check(bool ipv6) {
     packet.source_port = 1234;
     packet.destination_port = 53;
     UdpOwnerRow exact{ipv6, packet.source, 1234, 42};
+    require(udpOwnerCandidates(std::vector<UdpOwnerRow>{exact}, packet).uniqueBind(),
+            "Unique known bind rejected");
+    const auto shared = udpOwnerCandidates(std::vector<UdpOwnerRow>{exact, exact}, packet);
+    require(shared.pids.size() == 1 && !shared.uniqueBind(),
+            "Same-PID shared bind became unique after PID de-duplication");
+    require(!UdpOwnerCandidates{}.uniqueBind(), "Missing snapshot became a unique bind");
     UdpOwnerRow wildcard{ipv6, {}, 1234, 99};
     UdpOwnerRow unknown{ipv6, {}, 1234, 0};
     auto other = exact;
@@ -96,6 +102,7 @@ void check(bool ipv6) {
     match = udpOwnerCandidates(rows, packet);
     require(match.pids.empty() && match.unknown_owner && match.matching_rows == 1,
             "Unknown owner became an empty safe result");
+    require(!match.uniqueBind(), "Unknown owner authorized a unique bind");
     packet.protocol = 6;
     bool rejected = false;
     try {

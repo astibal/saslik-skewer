@@ -50,6 +50,7 @@ SelectedOwnerResolver::Result SelectedOwnerResolver::resolve(skewer::traffic::Pa
     auto flow = lookupFlow(tuple);
     std::vector<std::uint32_t> candidates;
     bool unknown_owner{};
+    bool unique_udp_bind{};
     TcpOwnerSnapshot::Clock::time_point started, completed;
     const auto captureOwners = [&] {
         unknown_owner = false;
@@ -61,6 +62,7 @@ SelectedOwnerResolver::Result SelectedOwnerResolver::resolve(skewer::traffic::Pa
         } else {
             const auto snapshot = captureUdpOwners();
             auto owners = udpOwnerCandidates(snapshot.rows, tuple);
+            unique_udp_bind = owners.uniqueBind();
             candidates = std::move(owners.pids);
             unknown_owner = owners.unknown_owner;
             started = snapshot.started;
@@ -90,6 +92,12 @@ SelectedOwnerResolver::Result SelectedOwnerResolver::resolve(skewer::traffic::Pa
         return {OwnerEvidence::MissingLifecycle, std::nullopt,
                 unrelated && lifecycle.status == skewer::traffic::FlowIndex::Status::Unknown
                     ? Disposition::Direct : Disposition::Hold};
+    }
+    // A single PID can own multiple competing binds. The observer may have
+    // missed a bind created before attachment, so PID de-duplication must not
+    // turn an ambiguous owner-table snapshot into permission to tunnel.
+    if (tuple.protocol == IPPROTO_UDP && !unique_udp_bind) {
+        return {OwnerEvidence::ConflictingLifecycle, std::nullopt, Disposition::Hold};
     }
     const auto evidence = skewer::traffic::assessOwnerEvidence(
         flow->process, lookup(tuple), candidates, unknown_owner, started, completed, now,
