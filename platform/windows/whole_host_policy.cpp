@@ -58,14 +58,14 @@ WholeHostPolicy::WholeHostPolicy(std::string peer, unsigned port, std::string ma
         throw std::invalid_argument("Invalid tunnel control port");
     }
     requireNoConflicts(peer_);
-    underlay_ = bestRoute(peer_);
+    initial_underlay_ = bestRoute(peer_).InterfaceLuid;
 }
 
 std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
     NET_IFINDEX index{}, underlay_index{};
-    if (!tunnel.Value || tunnel.Value == underlay_.InterfaceLuid.Value ||
+    if (!tunnel.Value || tunnel.Value == initial_underlay_.Value ||
         ConvertInterfaceLuidToIndex(&tunnel, &index) != NO_ERROR ||
-        ConvertInterfaceLuidToIndex(&underlay_.InterfaceLuid, &underlay_index) != NO_ERROR) {
+        ConvertInterfaceLuidToIndex(&initial_underlay_, &underlay_index) != NO_ERROR) {
         throw std::invalid_argument("Invalid tunnel guard interface");
     }
     // UDP ports are bounded by the authenticated protocol's endpoint ID range.
@@ -75,10 +75,10 @@ std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
                    " and ((udp.DstPort >= 40001 and udp.DstPort <= 40255)"
                    " or tcp.DstPort == " +
                    std::to_string(control_port_) + "))";
-    // Preserve only the host's DHCPv4 client lease on the original underlay.
-    // This is an infrastructure tuple exemption, not a general LAN bypass.
-    allowed += " or (ifIdx == " + std::to_string(underlay_index) +
-               " and udp.SrcPort == 68 and udp.DstPort == 67)";
+    // Preserve DHCPv4 on a replacement physical interface too. The outer
+    // filter excludes the tunnel adapter; this protocol tuple is a visible
+    // infrastructure exemption, not a general LAN or private-range bypass.
+    allowed += " or (udp.SrcPort == 68 and udp.DstPort == 67)";
     if (!management_.empty()) {
         allowed += " or (ip.DstAddr == " + management_ + " and tcp.SrcPort == 22)";
     }
@@ -89,19 +89,26 @@ std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
 std::vector<MIB_IPFORWARD_ROW2> WholeHostPolicy::routes(NET_LUID tunnel,
                                                         const Tuntom::Endpoint& endpoint) const {
     const auto current = bestRoute(peer_);
-    if (current.InterfaceLuid.Value != underlay_.InterfaceLuid.Value) {
-        throw std::runtime_error("Tunnel underlay interface changed during startup");
-    }
     requireNoConflicts(peer_);
+    return wholeHostRoutePlan(peer_, current, tunnel, endpoint);
+}
+
+std::vector<MIB_IPFORWARD_ROW2> wholeHostRoutePlan(
+    const std::string& peer, const MIB_IPFORWARD_ROW2& underlay, NET_LUID tunnel,
+    const Tuntom::Endpoint& endpoint) {
+    if (!underlay.InterfaceLuid.Value || !tunnel.Value ||
+        underlay.InterfaceLuid.Value == tunnel.Value || underlay.NextHop.si_family != AF_INET) {
+        throw std::invalid_argument("Invalid whole-host underlay route");
+    }
     if (!endpoint.serverAddress.endsWith("/30")) {
         throw std::invalid_argument("Invalid authenticated tunnel gateway");
     }
     const auto gateway = endpoint.serverAddress.chopped(3).toStdString();
     (void)numeric(gateway);
-    // DHCP or an administrator may replace the gateway without replacing the
-    // interface. Pin the peer through the current gateway on every protected
-    // retry instead of preserving a stale next hop from policy construction.
-    return {ipv4Route(current.InterfaceLuid, peer_, 32, text(current.NextHop.Ipv4.sin_addr), 1),
+    // DHCP, Wi-Fi/Ethernet failover or an administrator may replace both the
+    // gateway and interface. Pin the peer through the currently selected
+    // underlay on every protected retry; the guard remains armed throughout.
+    return {ipv4Route(underlay.InterfaceLuid, peer, 32, text(underlay.NextHop.Ipv4.sin_addr), 1),
             ipv4Route(tunnel, "0.0.0.0", 1, gateway, 1), ipv4Route(tunnel, "128.0.0.0", 1, gateway, 1)};
 }
 } // namespace skewer::windows

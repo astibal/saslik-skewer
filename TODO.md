@@ -73,9 +73,11 @@ modes.
 - [x] Before redirecting host traffic, preserve the tunnel peer's underlay path
   using the original gateway/interface. Exempt only required transport/control
   traffic; do not blanket-exempt every application talking to the peer address.
-- [ ] Handle endpoint changes, DNS bootstrap and physical interface/gateway
-  changes without recursively sending tunnel traffic into its own adapter.
-  Install and verify the replacement underlay path before retiring the old one.
+- [x] On protected retries, rediscover the physical interface and gateway and
+  install the replacement peer pin without recursively selecting the tunnel.
+  Keep the existing guard armed while old owned routes are withdrawn.
+- [ ] Handle endpoint changes and DNS bootstrap as explicit control-plane
+  transactions rather than broad host-data exemptions.
 - [ ] Define visible local-network and infrastructure exemptions (loopback,
   DHCP, IPv6 neighbour discovery, control plane); do not silently exempt all
   private networks. Route normal DNS through the chosen path.
@@ -88,8 +90,9 @@ modes.
 - [x] Distinguish pause/block from explicit Release host, which intentionally
   restores normal routing. GUI closure must do neither. Document worker-crash
   behavior separately; no stronger guarantees than the tested backend provides.
-- [ ] Test real egress, peer relocation, DHCP renewal, reconnect, return traffic,
-  DNS and coexistence with another VPN in an isolated VM with console access.
+- [ ] Test real two-NIC failover, peer relocation and coexistence with another
+  VPN in an isolated VM with console access. Real egress, same-interface DHCP
+  renewal, reconnect, return traffic and DNS already have VM coverage.
 
 This is a target capability, not permission to change the development host's
 default routes. Initial implementation tests use isolated VMs and rollback.

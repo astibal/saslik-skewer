@@ -93,12 +93,14 @@ service owner. Direct mode passed real HTTP/HTTPS and exact route/DNS rollback
 in the disposable Windows VM; this is lab routing, not a persistent kill switch.
 
 Tunnel activation must first retain a verified underlay route to the peer via
-the pre-existing gateway/interface, then establish narrowly scoped transport and
+the current gateway/interface, then establish narrowly scoped transport and
 control-plane exemptions, verify the tunnel data path, and finally admit host
-traffic to it. Endpoint relocation or interface changes repeat this sequence
-while keeping host traffic blocked. An exemption is not permission for arbitrary
-applications to bypass through the same peer IP. DNS bootstrap and recovery need
-explicit bounded exceptions, distinct from normal host DNS traffic.
+traffic to it. A protected retry withdraws old owned routes and rediscovers the
+physical interface and gateway while the guard remains armed. Endpoint
+relocation still needs its own control-plane transaction. An exemption is not
+permission for arbitrary applications to bypass through the same peer IP. DNS
+bootstrap and recovery need explicit bounded exceptions, distinct from normal
+host DNS traffic.
 
 The worker owns routing/protection independently of the GUI. Tunnel failure
 must not restore the ordinary default path while protection is active. Explicit

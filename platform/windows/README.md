@@ -98,23 +98,24 @@ authenticated client. The release ZIP includes the service installer, while the
 per-user desktop installer deliberately leaves privileged service installation
 as a separate explicit action.
 
-`WholeHostPolicy` snapshots the underlay, rejects existing conflicting /1 or peer
-/32 routes, arms the physical-egress guard, assigns the authenticated Wintun
+`WholeHostPolicy` validates the initial underlay, rejects existing conflicting
+/1 or peer /32 routes, arms the physical-egress guard, assigns the authenticated Wintun
 address, waits for transport health, then installs a peer /32 and tunnel /1 routes.
 The peer stays outside its tunnel. Cleanup withdraws routes before retiring the
 adapter. Physical IPv6 egress is blocked; IPv6 tunneling remains unfinished.
-Each protected retry re-reads the gateway on the original underlay interface,
-so a DHCP gateway update cannot leave the peer pinned through a stale next hop.
-Changing the physical interface remains fail-closed until guard replacement is
-transactional.
+Each protected retry withdraws its old owned routes, rediscovers the best
+physical interface and gateway, and pins the peer through that current underlay
+before restoring the tunnel routes. The same physical-egress guard stays armed,
+so recovery from a DHCP, Wi-Fi or Ethernet path change remains fail-closed.
 The configured numeric IPv4 DNS server is assigned only to the fresh Wintun
 adapter using SetInterfaceDnsSettings (Windows 10 build 19041 or newer); physical
 adapter DNS settings are never changed. Adapter destruction removes its DNS
 settings. Registration and LLMNR are disabled only on that adapter. Tuple
 exceptions allow control TCP and protocol UDP ports 40001–40255 to the
-configured peer. DHCPv4 client renewal (UDP 68 to 67) is also preserved, but
-only on the original underlay adapter. There is no general LAN, private-network
-or DNS bypass. These exceptions are not process isolation. The optional
+configured peer. DHCPv4 client renewal (UDP 68 to 67) is also preserved on
+non-tunnel adapters so a replacement physical interface can obtain or renew its
+lease. There is no general LAN, private-network or DNS bypass. These exceptions
+are not process isolation. The optional
 management IP allows SSH replies only and is explicit lab administration policy.
 
 `tests/native-routing-service-live.ps1` installs a disposable real service from
@@ -132,8 +133,11 @@ adapter and unchanged default routes. Binaries are retained for diagnostics.
 is Active and requires the service to remain Active. Use it only in a disposable
 DHCP-backed VM because it deliberately changes live host network state.
 
-The DNS-enabled SCM integration passed on the Windows VM on 2026-10-28, including
-system resolution, ordinary HTTPS, tunnel loss blocking and owned-resource cleanup.
+The DNS-enabled SCM integration passed again on the Windows VM on 2026-10-29,
+including DHCP renewal, system resolution, ordinary HTTPS, tunnel loss,
+recovery without direct fallback and owned-resource cleanup. Route-plan tests
+cover replacement-interface selection and recursive-tunnel rejection; a real
+two-NIC failover remains a separate release validation case.
 The packaged elevated native suite also exercises exact route ownership, partial
 activation rollback and preservation of an administrator-modified route.
 The per-interface API contract is documented at

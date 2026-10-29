@@ -26,30 +26,16 @@ NET_LUID loopbackLuid() {
     throw std::runtime_error("No Windows loopback interface found");
 }
 
-NET_IFINDEX underlayIndex() {
-    SOCKADDR_INET destination{};
-    destination.si_family = AF_INET;
-    require(InetPtonA(AF_INET, "1.1.1.1", &destination.Ipv4.sin_addr) == 1,
-            "Cannot parse policy peer");
-    MIB_IPFORWARD_ROW2 route{};
-    SOCKADDR_INET source{};
-    const auto status = GetBestRoute2(nullptr, 0, nullptr, &destination, 0, &route, &source);
-    if (status != NO_ERROR) {
-        throw std::system_error(status, std::system_category(), "Find policy underlay");
-    }
-    return route.InterfaceIndex;
-}
 } // namespace
 
 int main() {
     try {
         const auto tunnel = loopbackLuid();
-        const auto underlay = underlayIndex();
         WholeHostPolicy policy("1.1.1.1", 8766, "192.0.2.1");
         const auto filter = policy.filter(tunnel);
-        require(filter.find("ifIdx == " + std::to_string(underlay) +
-                            " and udp.SrcPort == 68 and udp.DstPort == 67") != std::string::npos,
-                "Whole-host guard does not preserve bounded DHCPv4 renewal");
+        require(filter.find("udp.SrcPort == 68 and udp.DstPort == 67") != std::string::npos &&
+                    filter.find("ifIdx == ") == std::string::npos,
+                "Whole-host guard cannot preserve DHCPv4 across underlay failover");
         require(filter.find("tcp.SrcPort == 22") != std::string::npos,
                 "Whole-host guard lost explicit SSH return-path policy");
         require(filter.starts_with("outbound and !loopback") &&
@@ -63,7 +49,26 @@ int main() {
                     routes[1].DestinationPrefix.PrefixLength == 1 &&
                     routes[2].DestinationPrefix.PrefixLength == 1,
                 "Whole-host route plan lost peer pin or covering routes");
-        std::cout << "PASS: peer pin, covering routes, DHCP renewal and bounded management policy\n";
+
+        MIB_IPFORWARD_ROW2 replacement{};
+        replacement.InterfaceLuid = tunnel;
+        replacement.NextHop.si_family = AF_INET;
+        require(InetPtonA(AF_INET, "192.0.2.1", &replacement.NextHop.Ipv4.sin_addr) == 1,
+                "Cannot parse replacement gateway");
+        const auto plan_tunnel = routes.front().InterfaceLuid;
+        const auto replaced = wholeHostRoutePlan("1.1.1.1", replacement, plan_tunnel, endpoint);
+        require(replaced.front().InterfaceLuid.Value == replacement.InterfaceLuid.Value &&
+                    replaced.front().InterfaceLuid.Value != routes.front().InterfaceLuid.Value,
+                "Whole-host route plan retained the original underlay interface");
+        bool recursive_rejected{};
+        replacement.InterfaceLuid = plan_tunnel;
+        try {
+            (void)wholeHostRoutePlan("1.1.1.1", replacement, plan_tunnel, endpoint);
+        } catch (const std::invalid_argument&) {
+            recursive_rejected = true;
+        }
+        require(recursive_rejected, "Whole-host route plan accepted the tunnel as its underlay");
+        std::cout << "PASS: peer pin, underlay failover, DHCP renewal and bounded management policy\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
