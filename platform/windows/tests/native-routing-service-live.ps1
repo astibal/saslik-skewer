@@ -8,6 +8,7 @@ param(
     [string]$DnsServer = '1.1.1.1',
     [switch]$TestTunnelLoss,
     [switch]$TestDhcpRenew,
+    [uint32]$FailoverInterface = 0,
     [switch]$GuiClient
 )
 $ErrorActionPreference = 'Stop'
@@ -44,7 +45,13 @@ foreach ($prefix in $prefixes) {
 }
 function Defaults {
     @(Get-NetRoute | Where-Object DestinationPrefix -In @('0.0.0.0/0','::/0') |
-      Sort-Object InterfaceIndex,DestinationPrefix | Select-Object DestinationPrefix,InterfaceIndex,NextHop,RouteMetric) |
+      Sort-Object InterfaceIndex,DestinationPrefix | Select-Object DestinationPrefix,InterfaceIndex,NextHop,
+        @{Name='RouteMetric';Expression={
+            # DHCP can recalculate this NIC's route metric after re-enable.
+            # Preserve that OS-owned update; all other route fields stay exact.
+            if ($FailoverInterface -and $_.InterfaceIndex -eq $FailoverInterface) { 'DHCP' }
+            else { $_.RouteMetric }
+        }}) |
       ConvertTo-Json -Compress
 }
 function DnsState {
@@ -71,6 +78,7 @@ $testIp = (Resolve-DnsName example.com -Type A -DnsOnly | Where-Object Type -EQ 
 if (!$testIp) { throw 'Cannot pre-resolve HTTPS destination' }
 $created = $false
 $firewallRule = $null
+$disabledAdapter = $null
 try {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $command = '"' + $exe + '" --service ' + $name + ' ' + $sid + ' ' + $Endpoint + ' ' + $Peer + ' ' + $DnsServer + ' ' + $Management
@@ -126,6 +134,30 @@ try {
         --connect-timeout 5 --max-time 15 https://example.com/
     if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw 'HTTPS with system DNS failed' }
     Write-Output 'PASS: system DNS and HTTPS without --resolve through the tunnel'
+    if ($FailoverInterface) {
+        if ($pin.InterfaceIndex -ne $FailoverInterface) { throw 'Tunnel did not select the requested failover interface' }
+        $disabledAdapter = Get-NetAdapter | Where-Object ifIndex -EQ $FailoverInterface
+        # Caller supplies a disposable secondary NIC, never the management NIC.
+        # Keep the service alive so its guard spans underlay replacement.
+        $disabledAdapter | Disable-NetAdapter -Confirm:$false
+        $deadline = (Get-Date).AddSeconds(60)
+        do {
+            $state = Status
+            if ($state.generation -ne $active.generation -or $state.phase -eq 5) {
+                throw 'Failover retired the routing generation'
+            }
+            $replacement = @(Get-NetRoute -DestinationPrefix "$Peer/32" -ErrorAction SilentlyContinue |
+                Where-Object InterfaceIndex -NE $FailoverInterface)
+            if ($state.phase -eq 2 -and $replacement.Count -eq 1) { break }
+            Start-Sleep -Milliseconds 200
+        } while ((Get-Date) -lt $deadline)
+        if ($state.phase -ne 2 -or $replacement.Count -ne 1) { throw 'No active replacement underlay after adapter loss' }
+        if ($replacement[0].InterfaceIndex -eq $adapter.ifIndex) { throw 'Replacement peer route recurses into tunnel' }
+        $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
+            --resolve "example.com:443:$testIp" --connect-timeout 5 --max-time 15 https://example.com/
+        if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw 'HTTPS failed on replacement underlay' }
+        Write-Output 'PASS: live adapter loss replaces peer pin and restores tunneled HTTPS in the same generation'
+    }
     if ($TestTunnelLoss) {
         # Remove only this service's authenticated UDP transport. The owned
         # Wintun device stays intact, so this tests remote/path loss rather
@@ -154,6 +186,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Stop failed' }
     $null = Await 0
 } finally {
+    if ($disabledAdapter) {
+        $disabledAdapter | Enable-NetAdapter -Confirm:$false
+        $deadline = (Get-Date).AddSeconds(20)
+        while (!(Get-NetRoute -InterfaceIndex $FailoverInterface -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200
+        }
+    }
     if ($firewallRule) {
         Remove-NetFirewallRule -Name $firewallRule -ErrorAction SilentlyContinue
     }

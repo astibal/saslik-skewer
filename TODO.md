@@ -48,8 +48,13 @@ Transport milestones verified independently of the remaining service/UI gates:
   descendant cannot connect, an unrelated process still can, and the released
   application reconnects. A pre-existing external ULA TCP connection also passes
   peer-side no-delivery checks while selected and resumes on the same socket
-  after Release. Public/routed IPv6 and ambiguous/shared UDP remain separate
-  coverage requirements.
+  after Release. External shared UDP now also has peer-side delivery coverage:
+  two pre-Attach binds and one fresh same-process bind remain blocked until
+  Release. Public/routed IPv6 and orphaned handoffs remain coverage requirements.
+- [ ] Investigate whole-host DNS with a preferred physical NIC at interface
+  metric 1. A two-NIC VM run passed HTTP/HTTPS with a pre-resolved address but
+  timed out resolving a subsequent ordinary HTTPS request. Interface metric 20
+  passed the DNS path; do not treat that as resolving the low-metric case.
 - [x] Report service failure accurately. Test and document that owner termination
   removes WinDivert filters and may restore direct connectivity. Automatic restart
   improves availability but cannot guarantee leak-free recovery.

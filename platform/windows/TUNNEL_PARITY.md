@@ -347,6 +347,23 @@ the KVM host's IPv4 bridge endpoint using the updated disposable Windows service
 It proves this shared-bind delivery case, not arbitrary destination, adapter
 failover or service-crash isolation. The accepted WinDivert lifetime limit remains.
 
+## Live dual-adapter failover (2026-10-29)
+
+`native-routing-service-live.ps1 -FailoverInterface INDEX` exercises loss of the
+caller-designated disposable secondary NIC. The peer pin must initially use that
+NIC. The test disables it while the service remains alive, requires an Active
+replacement peer pin on another physical interface in the same generation, then
+checks real HTTPS before explicit Stop. Cleanup re-enables the NIC and verifies
+default routes and DNS. DHCP may recompute that NIC's route metric on re-enable;
+the test preserves this OS-owned change rather than overwriting it. Other default
+route fields and other interfaces' metrics remain compared exactly.
+
+This passed on two e1000e adapters on the development VM's isolated KVM network,
+with the preferred secondary interface metric 20. The temporary NIC was removed
+afterwards. This verifies interface loss, not a different gateway, VPN coexistence
+or peer-address relocation. An earlier metric-1 run timed out in ordinary DNS
+before the failover step; that remains an explicit open issue in `TODO.md`.
+
 ## References
 
 - Tuntom: `docs/PROTOCOL_V5.md`, `src/tun_device.hpp`, `src/udp_endpoint.hpp`.
