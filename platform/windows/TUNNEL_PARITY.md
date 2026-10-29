@@ -59,6 +59,14 @@ children. Choosing another process-tree row returns Release to that row's root.
 
 ## Routed shell
 
+Launcher feedback follows the exact process handle returned by Windows, using
+an event notification rather than PID polling. When the latest launched root
+exits, its success message is replaced by the exit code and a possible
+single-instance handoff warning. This does not infer a handoff destination or
+adopt an older process. Surviving selected descendants remain service-owned;
+closing the GUI or observing root exit does not send Stop/Release. The desktop
+fixture includes a fast `exit 7` child before its routing and GUI-crash checks.
+
 The Applications launcher offers **Shell** when selected routing is available.
 It launches the system `cmd.exe /D /K` as the current user in a new console,
 using the same suspended-child transaction as **Launch through Skewer**.

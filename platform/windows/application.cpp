@@ -31,6 +31,7 @@
 #include <QComboBox>
 #include <QSignalBlocker>
 #include <QScopedValueRollback>
+#include <QWinEventNotifier>
 #ifdef SKEWER_WINDOWS_PAIRING
 #include "client_report.hpp"
 #include "ca_trust_panel.hpp"
@@ -87,6 +88,7 @@ struct LaunchResult {
     std::uint64_t generation{};
     bool routed{};
     QString error;
+    std::shared_ptr<skewer::windows::Handle> process{};
 };
 #ifdef SKEWER_WINDOWS_PAIRING
 struct PairedStatusResult {
@@ -109,13 +111,15 @@ LaunchResult launch(const QString& executable, const QStringList& arguments, con
             const auto result = skewer::windows::launchRouted(service.toStdWString(),
                                                               executable.toStdWString(), native_arguments,
                                                               cancel->get(), environment, 30000, console);
-            skewer::windows::Handle thread(result.process.hThread), handle(result.process.hProcess);
-            return {result.identity.pid, result.generation, true, {}};
+            skewer::windows::Handle thread(result.process.hThread);
+            auto handle = std::make_shared<skewer::windows::Handle>(result.process.hProcess);
+            return {result.identity.pid, result.generation, true, {}, std::move(handle)};
         }
         const auto process = skewer::windows::launch(executable.toStdWString(), native_arguments,
                                                      skewer::windows::LaunchMode::Running, environment, console);
-        skewer::windows::Handle thread(process.hThread), handle(process.hProcess);
-        return {process.dwProcessId, 0, false, {}};
+        skewer::windows::Handle thread(process.hThread);
+        auto handle = std::make_shared<skewer::windows::Handle>(process.hProcess);
+        return {process.dwProcessId, 0, false, {}, std::move(handle)};
     } catch (const std::exception& error) {
         return {0, 0, routed, QString::fromUtf8(error.what())};
     }
@@ -601,6 +605,26 @@ private:
                                        "hand off to an existing process.")
                                         .arg(result.pid));
         }
+        if (result.process) {
+            launch_process_ = result.process;
+            launch_exit_ = std::make_unique<QWinEventNotifier>(launch_process_->get(), this);
+            connect(launch_exit_.get(), &QWinEventNotifier::activated, this,
+                    [this, pid = result.pid, routed = result.routed] {
+                launch_exit_->setEnabled(false);
+                DWORD code{};
+                const auto exit = GetExitCodeProcess(launch_process_->get(), &code)
+                    ? tr("exit code %1").arg(code) : tr("exit code unavailable");
+                launch_status_->setText(
+                    tr("Launched PID %1 exited (%2). A single-instance application may have "
+                       "handed off to an existing process; that instance is not automatically adopted.")
+                        .arg(pid).arg(exit));
+                if (routed) {
+                    launch_status_->setText(launch_status_->text() + tr(
+                        " Surviving selected descendants remain managed by the routing service."));
+                }
+                refresh();
+            });
+        }
         refresh();
     }
 
@@ -839,6 +863,10 @@ private:
             launch_status_->setText(tr("Choose an executable first."));
             return;
         }
+        // Observe only the latest launch, retaining its exact OS process object.
+        // Stop the previous notification before replacing the launch feedback.
+        launch_exit_.reset();
+        launch_process_.reset();
         start_->setEnabled(false);
 #ifdef SKEWER_WINDOWS_PAIRING
         routed_start_->setEnabled(false);
@@ -893,6 +921,8 @@ private:
     skewer::windows::ApplicationIcons application_icons_;
     QFutureWatcher<LaunchResult> launch_watcher_;
     std::shared_ptr<skewer::windows::Handle> launch_cancel_;
+    std::shared_ptr<skewer::windows::Handle> launch_process_;
+    std::unique_ptr<QWinEventNotifier> launch_exit_;
     QTimer timer_;
 #ifdef SKEWER_WINDOWS_PAIRING
     QLineEdit* endpoint_{};

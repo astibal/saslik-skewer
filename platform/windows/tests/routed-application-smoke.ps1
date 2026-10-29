@@ -74,6 +74,20 @@ try {
         $statusText=if ($status) { $status.Current.Name } else { '<missing>' }
         throw "Routed launcher controls unavailable (status: $statusText)"
     }
+    # A fast launcher exit must replace stale success feedback without following
+    # a recycled PID or implicitly adopting a single-instance handoff target.
+    $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
+    $arguments.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        '-NoProfile -NonInteractive -Command "exit 7"')
+    (FindNamed $window 'Launch normally').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $text=WindowText $window
+    } while ($text -notmatch 'Launched PID \d+ exited \(exit code 7\)' -and (Get-Date) -lt $deadline)
+    if ($text -notmatch 'Launched PID \d+ exited \(exit code 7\)') { throw "Missing launch exit feedback: $text" }
+    'PASS: fast process exit replaces launch feedback with exact exit code' | Out-File $log -Append
     $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
         'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
     $arguments.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
