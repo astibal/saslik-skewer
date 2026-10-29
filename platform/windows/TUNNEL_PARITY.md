@@ -1,5 +1,30 @@
 # Windows tunnel parity contract
 
+### Selected-application direct routing: unresolved architecture
+
+The implemented mode matrix is:
+
+| Scope | Tuntom | Direct next-hop |
+| --- | --- | --- |
+| Selected applications | Implemented IPv4 TCP/UDP | Not implemented |
+| Whole host | Implemented IPv4 | Implemented IPv4 |
+
+The [WinDivert 2.2 injection contract](https://reqrypt.org/windivert-doc.html#divert_send)
+states that outbound `IfIdx`/`SubIfIdx` are ignored. Therefore selecting an
+interface in the captured metadata cannot be presented as selecting a gateway.
+Installing destination routes would affect unrelated applications too; it is not
+a substitute for the selected-application contract.
+
+A separate link-layer injection backend or proxy/transport architecture would
+require design and native validation of return traffic, application attribution,
+failure protection and coexistence. This is an architectural gap, not proof that
+Windows cannot implement the feature. No such backend is currently enabled.
+For example, [Npcap](https://npcap.com/guide/) adds a driver and redistribution
+licensing requirements; it must not be silently added to the installer. The
+existing decision to exclude a custom kernel driver from the first release also
+remains in force. Using Tuntom even for a nearby lab is available today but does
+not itself complete direct-routing parity.
+
 ### Routed IPv6 blocking evidence
 
 On 2026-10-29, `selected-ipv6-egress.ps1` passed across this isolated topology:

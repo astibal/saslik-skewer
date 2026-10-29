@@ -6,6 +6,13 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows IPv4 routing is implemented and has
 passed the native VM cases listed below; unchecked items remain release gates.
 
+- [ ] Resolve selected-application **direct next-hop** parity explicitly. Windows
+  application selection currently uses Tuntom; Direct applies to whole-host
+  routing only. Do not treat the completed whole-host Direct item below as
+  evidence for per-application Direct. WinDivert 2.2 ignores outbound injection
+  interface indices, so changing `IfIdx` is not a next-hop implementation.
+  See the architecture constraint in `platform/windows/TUNNEL_PARITY.md`.
+
 - [ ] Diagnose intermittent client pipe setup failure (`Cannot configure routing
   pipe message mode`) observed during the selected-service IPv6 fixture on
   2026-10-29. The service remained Idle and fixture cleanup completed. Preserve
