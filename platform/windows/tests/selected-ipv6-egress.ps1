@@ -2,6 +2,7 @@ param(
     [string]$Directory='C:\SkewerDev\skewer-windows-app',
     [string]$Service='SkewerRouting',
     [Parameter(Mandatory=$true)][string]$Url,
+    [string]$ExpectedNextHop='',
     [string]$ResultDirectory='',
     [switch]$Child
 )
@@ -26,6 +27,15 @@ if ($Child) {
     exit 0
 }
 if ($Url -notmatch '^http://\[') { throw 'Expected an explicit IPv6 HTTP URL' }
+if ($ExpectedNextHop) {
+    # An explicit /128 route makes the routed fixture distinct from an on-link
+    # control. Do not silently accept a topology that never exercises a router.
+    $destination=[Net.IPAddress]::Parse(([Uri]$Url).DnsSafeHost.Trim('[',']')).ToString()
+    $routes=@(Get-NetRoute -AddressFamily IPv6 -DestinationPrefix "$destination/128" -ErrorAction SilentlyContinue)
+    if ($ExpectedNextHop -eq '::' -or $routes.Count -ne 1 -or $routes[0].NextHop -ne $ExpectedNextHop) {
+        throw 'Expected a unique routed IPv6 host route through the requested next hop'
+    }
+}
 $client=Join-Path $Directory 'skewer-routing-control.exe'
 $state=& $client status $Service | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0 -or $state.phase -ne 0 -or !$state.paired) {

@@ -66,7 +66,10 @@ Transport milestones verified independently of the remaining service/UI gates:
   peer-side no-delivery checks while selected and resumes on the same socket
   after Release. External shared UDP now also has peer-side delivery coverage:
   two pre-Attach binds and one fresh same-process bind remain blocked until
-  Release. Public/routed IPv6 and orphaned handoffs remain coverage requirements.
+  Release. Routed ULA IPv6 also passed through a separate forwarding namespace:
+  selected descendant blocked, unrelated process connected, and Release restored
+  connectivity. The fixture verifies an explicit /128 route and next hop.
+  Public/global IPv6 and orphaned handoffs remain coverage requirements.
 - [x] Fix whole-host DNS preference against a physical NIC at interface metric 1.
   Wintun's automatic metric 5 lost DNS preference. The owned tunnel now uses
   explicit metric 0 with native read-back validation; physical NICs are untouched.

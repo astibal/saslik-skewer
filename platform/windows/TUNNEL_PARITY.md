@@ -1,5 +1,27 @@
 # Windows tunnel parity contract
 
+### Routed IPv6 blocking evidence
+
+On 2026-10-29, `selected-ipv6-egress.ps1` passed across this isolated topology:
+
+```
+Windows fd53:4b:29:1::2/64
+  -> router fd53:4b:29:1::1 / fd53:4b:29:2::1
+  -> HTTP peer fd53:4b:29:2::2:18086
+```
+
+Two temporary Linux namespaces provided the router and peer. Packet capture on
+both router interfaces confirmed forwarding rather than an on-link shortcut.
+The selected descendant could not connect, an unrelated process could, and the
+released process regained connectivity. The Windows temporary address and /128
+route, both namespaces, and their veth links were removed afterwards; host
+forwarding remained disabled. This verifies routed ULA, not public/global IPv6.
+
+Use `-ExpectedNextHop fd53:4b:29:1::1` with the fixture to require the unique
+host route for this scenario. Its normal baseline remains mandatory: inability
+to reach the peer before selection is failure, never evidence of protection.
+IPv6 remains blocked for selected applications, not transported by the tunnel.
+
 ### Protected pause during live recovery
 
 `tests/selected-pause-live.ps1 -RecoveryPeer <IPv4>` exercises a disposable
