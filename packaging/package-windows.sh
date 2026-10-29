@@ -89,7 +89,8 @@ for file in selected-service-live.ps1 selected-ipv6-egress.ps1 selected-existing
             ipv6-marker-peer.py selected-shared-udp.ps1 udp-marker-peer.py routed-application-smoke.ps1 \
             run-routed-application-smoke.ps1 application_smoke.ps1 \
             run-application-smoke.ps1 native-routing-service-live.ps1 \
-            direct-routing-service-live.ps1 service-upgrade-live.ps1 routing-ipc-contention.ps1; do
+            direct-routing-service-live.ps1 service-upgrade-live.ps1 routing-ipc-contention.ps1 \
+            selected-pause-live.ps1; do
     install -m 0644 "platform/windows/tests/$file" "$tests/$file"
 done
 

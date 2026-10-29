@@ -123,13 +123,17 @@ using SelectedRoutingHandler =
 using DirectRoutingHandler =
     std::function<RoutingReply(std::array<std::uint8_t, 4>, std::uint64_t)>;
 using SelectionChangeHandler = std::function<RoutingReply(SelectionOperation, ProcessKey, std::uint64_t)>;
+using PauseChangeHandler = std::function<RoutingReply(bool, std::uint64_t)>;
 // Dedicated connection; actual caller PID/birth and trusted owner token are
 // checked before invoking the handler. Status is authenticated too.
 void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler);
 void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler, const SelectedRoutingHandler& selected = {},
-                         const DirectRoutingHandler& direct = {}, const SelectionChangeHandler& change = {});
+                         const DirectRoutingHandler& direct = {}, const SelectionChangeHandler& change = {},
+                         const PauseChangeHandler& pause = {});
+RoutingReply exchangePauseChange(HANDLE pipe, const std::wstring& service_name, bool paused,
+                                 std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
                                     std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
 // Separate operation: never reinterpret a selected start as whole-host Start.

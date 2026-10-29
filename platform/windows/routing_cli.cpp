@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
     const auto args = app.arguments();
     if (args.size() < 3) {
         QTextStream(stderr) << "Usage: skewer-routing-control status SERVICE\n"
-                               "       skewer-routing-control start|stop|release SERVICE GENERATION\n"
+                               "       skewer-routing-control start|stop|release|pause|resume SERVICE GENERATION\n"
                                "       skewer-routing-control start-direct SERVICE GENERATION IPV4_GATEWAY\n"
                                "       skewer-routing-control pair SERVICE PAIRED_ENDPOINT\n"
                                "       skewer-routing-control attach SERVICE GENERATION PID BIRTH\n"
@@ -52,9 +52,10 @@ int main(int argc, char** argv) {
         const bool change = action == "add" || action == "remove";
         const bool direct = action == "start-direct";
         const bool stopping = action == "stop" || action == "release";
+        const bool pausing = action == "pause" || action == "resume";
         const int expected = (selected || change) ? 6 : direct ? 5 : action == "status" ? 3 : 4;
         if (args.size() != expected ||
-            (action != "status" && action != "start" && !stopping && !pairing && !selected && !change && !direct)) {
+            (action != "status" && action != "start" && !stopping && !pausing && !pairing && !selected && !change && !direct)) {
             throw std::invalid_argument("Invalid routing command");
         }
         Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -80,7 +81,10 @@ int main(int argc, char** argv) {
                                : stopping        ? RoutingCommand::Stop
                                                  : RoutingCommand::Status;
         RoutingReply response;
-        if (selected || change) {
+        if (pausing) {
+            response = exchangePauseChange(pipe->get(), name, action == "pause", generation,
+                                           cancel.get(), 30000);
+        } else if (selected || change) {
             bool pid_valid{}, birth_valid{};
             const auto pid = args[4].toULongLong(&pid_valid);
             const auto birth = args[5].toULongLong(&birth_valid);

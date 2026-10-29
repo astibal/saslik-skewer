@@ -13,7 +13,7 @@ foreach ($fixture in @('selected-service-live.ps1','selected-ipv6-egress.ps1',
     'selected-existing-ipv6.ps1','ipv6-marker-peer.py','selected-shared-udp.ps1',
     'udp-marker-peer.py','routed-application-smoke.ps1','run-routed-application-smoke.ps1',
     'native-routing-service-live.ps1','direct-routing-service-live.ps1','service-upgrade-live.ps1',
-    'routing-ipc-contention.ps1')) {
+    'routing-ipc-contention.ps1','selected-pause-live.ps1')) {
     if (!(Test-Path -LiteralPath (Join-Path $Root $fixture) -PathType Leaf)) {
         throw "Incomplete Windows test bundle: missing $fixture"
     }

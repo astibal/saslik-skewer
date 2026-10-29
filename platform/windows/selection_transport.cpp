@@ -432,7 +432,8 @@ void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD t
 }
 void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler, const SelectedRoutingHandler& selected,
-                         const DirectRoutingHandler& direct, const SelectionChangeHandler& change) {
+                         const DirectRoutingHandler& direct, const SelectionChangeHandler& change,
+                         const PauseChangeHandler& pause) {
     if (!handler) {
         throw std::invalid_argument("Missing routing handler");
     }
@@ -440,7 +441,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 8 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 10 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -453,7 +454,10 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         throw std::runtime_error("Routing caller exited");
     }
     RoutingReply result;
-    if (request[22] == 3) {
+    if (request[22] == 9 || request[22] == 10) {
+        if (!pause) throw std::runtime_error("Protected pause is not supported by this service");
+        result = pause(request[22] == 9, getGeneration(request.data() + 24));
+    } else if (request[22] == 3) {
         if (!selected) {
             throw std::runtime_error("Selected routing is not supported by this service");
         }
@@ -661,5 +665,10 @@ RoutingReply exchangeSelectionChange(HANDLE pipe, const std::wstring& service_na
     const auto selection = encodeSelectionRequest(process);
     return exchangeRouting(pipe, service_name, operation == SelectionOperation::Add ? 5 : 6,
                            generation, cancel, timeout_ms, &selection, nullptr);
+}
+RoutingReply exchangePauseChange(HANDLE pipe, const std::wstring& service_name, bool paused,
+                                 std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+    return exchangeRouting(pipe, service_name, paused ? 9 : 10, generation, cancel,
+                           timeout_ms, nullptr, nullptr);
 }
 } // namespace skewer::windows

@@ -148,13 +148,19 @@ transport's access-data gate and apply required CONFIG items successfully.
 | Explicit Disable | Stop routing while retaining protection for still-selected applications |
 | Explicit application Release | Deliberately return that application's future traffic to normal routing |
 
-Protected Disable/Resume is not exposed by the current service protocol or GUI
-yet. Its packet-layer foundation keeps capture active, discards queued data in
+Protected pause is available through `skewer-routing-control pause SERVICE
+GENERATION` and `resume` for selected applications; the GUI action is still
+pending. Authenticated operations 9/10 retain the version-7 mutation reply and
+reject stale generations. The service waits for packet-worker acknowledgement;
+an uncertain response must be reconciled through status, never blindly resent.
+Its packet layer keeps capture active, discards queued data in
 both directions and preserves flow identities for a healthy resume. Native
 WinDivert tests verify that unrelated Direct traffic continues, selected packets
 do not bypass the tunnel, unsupported IPv6 remains blocked, and Resume cannot
-revive an epoch retired by transport failure. Service acknowledgement, recovery
-intent and end-to-end UI coverage remain required before exposing this action.
+revive an epoch retired by transport failure. Pause intent survives replacement
+packet sessions. The native paired HTTPS fixture checks successful transfer,
+pause blocking, stale Resume rejection and recovery in the same generation.
+GUI state/capability presentation and end-to-end UI coverage remain required.
 
 Unselected applications must remain unaffected. Auto mode may initially choose
 a known direct lab route, as Linux does. Once a tunnel has been selected, its

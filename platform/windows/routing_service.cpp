@@ -93,6 +93,32 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             }
         };
     }
+    const PauseChangeHandler changePause = [&](bool paused, std::uint64_t generation) {
+        auto current = describe(controller.command(RoutingCommand::Status, 0));
+        if (current.generation != generation) {
+            current.result = RoutingResult::Stale;
+            return current;
+        }
+        if (current.scope != RoutingScope::SelectedProcess)
+            throw std::runtime_error("Protected pause currently requires selected applications");
+        const auto request = controller.changePause(paused, generation);
+        const auto deadline = GetTickCount64() + 25000;
+        for (;;) {
+            current = describe(controller.command(RoutingCommand::Status, 0));
+            const auto phase = request->phase.load();
+            if (phase == PauseChange::Phase::Complete) {
+                if (!request->error.empty()) throw std::runtime_error(request->error);
+                return describe(controller.command(RoutingCommand::Status, 0));
+            }
+            if (phase == PauseChange::Phase::Cancelled)
+                throw std::runtime_error("Pause change cancelled");
+            if (WaitForSingleObject(stop, 10) != WAIT_TIMEOUT || GetTickCount64() >= deadline) {
+                const bool cancelled = request->cancel();
+                throw std::runtime_error(cancelled ? "Pause change cancelled before execution"
+                                                  : "Pause outcome uncertain; inspect routing status");
+            }
+        }
+    };
     DirectRoutingHandler startDirect;
     const SelectionChangeHandler changeSelection = [&](SelectionOperation operation, ProcessKey process,
                                                         std::uint64_t generation) {
@@ -190,7 +216,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                                         selected_identity.reset();
                                     }
                                     return describe(state);
-                                }, startSelected, startDirect, changeSelection);
+                                }, startSelected, startDirect, changeSelection, changePause);
             finishSelection(commands->get(), stop, 500);
         } catch (const std::exception&) {
             // Malformed, disconnected and unauthorized clients affect only
