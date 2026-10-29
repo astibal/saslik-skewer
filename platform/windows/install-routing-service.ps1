@@ -112,12 +112,19 @@ if ($Upgrade) {
     }
     $backup = Join-Path ([IO.Path]::GetTempPath()) ('skewer-upgrade-' + [Guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $backup
+    $backupAcl = [Security.AccessControl.DirectorySecurity]::new()
+    $backupAcl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
+    Set-Acl -LiteralPath $backup -AclObject $backupAcl
+    $retainBackup = $false
     try {
+        [pscustomobject]@{ Service=$Name; PathName=$oldService.PathName; StartMode=$oldStartMode } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $backup 'service.json') -Encoding UTF8
         foreach ($file in $files + @('wintun.dll','WinDivert.dll','WinDivert64.sys')) {
             Copy-Item -LiteralPath (Join-Path $root $file) -Destination (Join-Path $backup $file)
         }
         # Do not interrupt a working service until its complete rollback set exists.
         Stop-Service $Name -Force
+        $retainBackup = $true
         try {
             foreach ($file in $sources.Keys) { CopyRuntimeFile $sources[$file] (Join-Path $root $file) }
             VerifyDrivers $root $sources
@@ -128,6 +135,7 @@ if ($Upgrade) {
             if ($changed.ReturnValue -ne 0) { throw "Service configuration update failed ($($changed.ReturnValue))" }
             SetRecoveryPolicy $Name
             Start-Service $Name
+            $retainBackup = $false
         } catch {
             foreach ($file in $files + @('wintun.dll','WinDivert.dll','WinDivert64.sys')) {
                 CopyRuntimeFile (Join-Path $backup $file) (Join-Path $root $file)
@@ -136,11 +144,17 @@ if ($Upgrade) {
                 PathName=$oldService.PathName
                 StartMode=$oldStartMode
             }
-            if ($restored.ReturnValue -eq 0) { Start-Service $Name }
+            if ($restored.ReturnValue -ne 0) { throw "Service configuration rollback failed ($($restored.ReturnValue)); backup: $backup" }
+            Start-Service $Name
+            $retainBackup = $false
             throw
         }
     } finally {
-        Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+        if ($retainBackup) {
+            Write-Warning "Routing service recovery was not completed. Runtime backup retained at: $backup"
+        } else {
+            Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     [pscustomobject]@{ Service=$Name; OwnerSid=$OwnerSid; Directory=$root; Routing='Not started'; Startup='Automatic'; Updated=$true }
     return

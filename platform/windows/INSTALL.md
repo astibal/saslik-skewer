@@ -51,7 +51,14 @@ runtime under `Program Files\SkewerRouting`, with Users read/execute access and
 SYSTEM/Administrators write access. An existing directory or service is rejected
 unless `-Upgrade` is explicit. Upgrade stops routing, backs up the exact runtime,
 updates and revalidates it, updates the SCM command line and starts in Idle. A
-failed update restores both runtime files and the previous command line.
+failed update attempts to restore both runtime files and the previous command
+line. If restoration or restarting the old service fails, the installer retains
+the runtime backup and `service.json` (original command line and startup mode),
+and prints its exact path. The backup is restricted to Administrators and SYSTEM.
+Do not delete it until recovery is verified. Successful upgrades and successful
+rollbacks remove their redundant backup. The disposable upgrade regression
+injects failure in both the new-service start and the rollback start, verifies
+retention/configuration, then recovers and cleans up its own test resources.
 
 For a packaged CMake install, configure both `WINTUN_RUNTIME_DLL` and
 `WINDIVERT_RUNTIME_DIR`. CMake then installs the service, control client,
