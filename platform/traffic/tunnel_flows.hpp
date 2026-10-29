@@ -14,6 +14,7 @@ public:
     bool outbound(FlowIdentity owner, std::span<std::uint8_t> packet, Time now);
     std::optional<FlowIdentity> inbound(std::span<std::uint8_t> packet, Time now);
     void release(FlowIdentity owner);
+    void releaseProcess(ProcessIdentity process);
     void expire(Time now);
     void stop();
     std::size_t size() const { return flows_.size(); }

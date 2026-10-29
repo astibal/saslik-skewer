@@ -58,6 +58,16 @@ void TunnelFlows::release(FlowIdentity owner) {
         }
     }
 }
+void TunnelFlows::releaseProcess(ProcessIdentity process) {
+    for (auto it = flows_.begin(); it != flows_.end();) {
+        if (it->first.owner.process == process) {
+            reverse_.erase(it->second.translated.source_port);
+            it = flows_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
 bool TunnelFlows::outbound(FlowIdentity owner, std::span<std::uint8_t> packet, Time now) {
     if (!advance(now) || !owner.process.pid || !owner.process.created || !owner.endpoint) {
         return false;

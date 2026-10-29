@@ -35,6 +35,10 @@ void SelectedSessionPackets::poll() {
     // A zero timeout leaves lease renewal/health checks in control of the loop.
     bridge_->step(cancel_, 0);
 }
+void SelectedSessionPackets::releaseProcess(skewer::traffic::ProcessIdentity process) {
+    if (bridge_) bridge_->releaseProcess(process);
+    else if (device_) device_->releaseProcess(process);
+}
 void SelectedSessionPackets::block() noexcept {
     blocked_ = true;
     if (bridge_) {

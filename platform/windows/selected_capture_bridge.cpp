@@ -2,6 +2,10 @@
 #include <tuple>
 
 namespace skewer::windows {
+void SelectedCaptureBridge::releaseProcess(skewer::traffic::ProcessIdentity process) {
+    device_.releaseProcess(process);
+    std::erase_if(origins_, [&](const auto& entry) { return entry.second.owner.process == process; });
+}
 bool SelectedCaptureBridge::Less::operator()(const skewer::traffic::PacketTuple& a,
                                              const skewer::traffic::PacketTuple& b) const {
     const auto fields = [](const auto& t) {

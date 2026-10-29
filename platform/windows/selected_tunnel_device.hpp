@@ -28,6 +28,7 @@ public:
     bool writePacket(std::span<const std::uint8_t> packet) override;
     HANDLE readEvent() const override { return event_.get(); }
     void release(Identity owner);
+    void releaseProcess(skewer::traffic::ProcessIdentity process);
     void stop();
 
 private:

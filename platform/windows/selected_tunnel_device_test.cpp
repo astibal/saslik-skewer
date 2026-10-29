@@ -105,6 +105,29 @@ int main() {
         live = false;
         check(!bounded.takeReceived(), "Queued reply survived owner exit");
         bool fail = true;
+        SelectedTunnelDevice applications({10, 253, 0, 10}, [](auto) { return true; }, [] { return true; }, 8);
+        const FlowIdentity other{{43, 101}, 2};
+        check(applications.enqueue(owner, original), "First application enqueue failed");
+        auto sent = applications.readPacket(buffer);
+        check(sent.has_value(), "First application read failed");
+        const auto firstReply = reply(std::vector(buffer.begin(), buffer.begin() + *sent));
+        check(applications.enqueue(other, original), "Second application enqueue failed");
+        sent = applications.readPacket(buffer);
+        check(sent.has_value(), "Second application read failed");
+        const auto secondReply = reply(std::vector(buffer.begin(), buffer.begin() + *sent));
+        check(applications.writePacket(firstReply) && applications.writePacket(secondReply),
+              "Cannot queue application replies");
+        check(applications.enqueue(owner, original) && applications.enqueue(other, original),
+              "Cannot queue application requests");
+        applications.releaseProcess(owner.process);
+        auto retained = applications.takeReceived();
+        check(retained && retained->owner == other && !applications.takeReceived(),
+              "Process Release retained a reply or removed the other application's reply");
+        check(applications.readPacket(buffer).has_value() && !applications.readPacket(buffer),
+              "Process Release did not remove only its queued requests");
+        check(applications.enqueue(owner, original), "Reattached application enqueue failed");
+        check(applications.readPacket(buffer).has_value(), "Reattached application read failed");
+        check(!applications.writePacket(firstReply), "Late reply survived process Release and reattach");
         SelectedTunnelDevice broken({10, 253, 0, 10}, [&](auto) {
             if (fail) { throw std::runtime_error("Injected identity lookup failure"); }
             return true;

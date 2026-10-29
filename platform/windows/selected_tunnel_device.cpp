@@ -30,6 +30,12 @@ void SelectedTunnelDevice::release(Identity owner) {
     std::erase_if(inbound_, [&](const auto& packet) { return packet.owner == owner; });
     syncEvent();
 }
+void SelectedTunnelDevice::releaseProcess(skewer::traffic::ProcessIdentity process) {
+    flows_.releaseProcess(process);
+    std::erase_if(outbound_, [&](const auto& packet) { return packet.owner.process == process; });
+    std::erase_if(inbound_, [&](const auto& packet) { return packet.owner.process == process; });
+    syncEvent();
+}
 bool SelectedTunnelDevice::allowed(Identity owner) try {
     if (stopped_) {
         return false;

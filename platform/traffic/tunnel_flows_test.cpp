@@ -83,6 +83,20 @@ int main() {
         multi.release(a);
         check(multi.size() == 0, "Socket release left peer mappings");
         TunnelFlows exhausted({10, 253, 0, 10}, 2, 10s, 65535);
+        TunnelFlows applications({10, 253, 0, 10});
+        auto appOne = request(), appTwo = request(), appOneOtherSocket = request();
+        check(applications.outbound(a, appOne, now) && applications.outbound(b, appTwo, now) &&
+                  applications.outbound({a.process, 9}, appOneOtherSocket, now), "Application setup failed");
+        applications.releaseProcess(a.process);
+        check(applications.size() == 1, "Process Release affected another lifetime or retained sockets");
+        auto oldReply = reply(appOne), otherReply = reply(appTwo), oldSocketReply = reply(appOneOtherSocket);
+        check(!applications.inbound(oldReply, now) && !applications.inbound(oldSocketReply, now),
+              "Released process retained reverse mappings");
+        check(applications.inbound(otherReply, now) == b, "Other application's reply was discarded");
+        auto reattached = request();
+        check(applications.outbound(a, reattached, now), "Reattachment failed");
+        oldReply = reply(appOne);
+        check(!applications.inbound(oldReply, now), "Late reply reached a reattached application");
         extra = request();
         check(exhausted.outbound(a, extra, now), "Last port unavailable");
         exhausted.release(a);

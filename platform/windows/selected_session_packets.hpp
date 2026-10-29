@@ -14,6 +14,9 @@ public:
     void prepare(const Tuntom::Endpoint& endpoint) override;
     void poll() override;
     void block() noexcept override;
+    // Retire queued packets and reverse mappings before acknowledging Release.
+    // Ports remain retired for this tunnel epoch, including after re-attachment.
+    void releaseProcess(skewer::traffic::ProcessIdentity process);
     bool blocked() const { return blocked_ || (bridge_ && bridge_->tunnelBlocked()); }
     HANDLE captureEvent() const override { return capture_.readEvent(); }
     HANDLE readEvent() const override;
