@@ -22,11 +22,31 @@ RoutingReply awaitPhase(RoutingController& controller, RoutingPhase phase) {
 int main() {
     try {
         {
-            RoutingController finished([](HANDLE, RoutingSignals& signals) { signals.completed = true; });
+            std::atomic_uint generations{};
+            std::atomic_bool parked{}, release{};
+            RoutingController finished([&](HANDLE, RoutingSignals& signals) {
+                if (++generations != 1) return; // Unmarked return is still a failure.
+                signals.ready = true;
+                signals.completed = true;
+                parked = true;
+                while (!release) Sleep(1);
+            });
+            struct ReleaseWorker {
+                std::atomic_bool& release;
+                ~ReleaseWorker() { release = true; }
+            } release_worker{release};
             const auto initial = finished.command(RoutingCommand::Status, 0);
             finished.command(RoutingCommand::Start, initial.generation);
-            require(awaitPhase(finished, RoutingPhase::Idle).detail.empty(),
+            for (unsigned i = 0; i < 200 && !parked; ++i) Sleep(5);
+            require(parked && finished.command(RoutingCommand::Status, 0).phase == RoutingPhase::Active,
+                    "Completion intent published Idle before the worker joined");
+            release = true;
+            const auto idle = awaitPhase(finished, RoutingPhase::Idle);
+            require(idle.detail.empty(),
                     "Normal selected-group completion was reported as failure");
+            finished.command(RoutingCommand::Start, idle.generation);
+            require(awaitPhase(finished, RoutingPhase::Failed).generation == idle.generation + 1,
+                    "Previous completion hid an unexpected return in the next generation");
             RoutingController failed([](HANDLE, RoutingSignals& signals) {
                 signals.completed = true;
                 throw std::runtime_error("cleanup failed");

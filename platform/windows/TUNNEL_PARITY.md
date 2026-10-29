@@ -17,6 +17,11 @@ now explicitly signals successful completion after the last member exits. The
 controller returns Idle only after joining the worker with no error; a cleanup
 exception still reports Failed, and an unexpected unmarked worker return retains
 its previous failure behavior. Native controller tests cover both outcomes.
+The completion regression also holds the worker behind a barrier after publishing
+completion intent: Idle must wait for its join. A subsequent unmarked worker
+return must still become Failed, proving completion state is reset per generation.
+The handoff fixture now runs as part of `selected-service-live.ps1`; the complete
+network suite passed with the new completion behavior and unchanged routes/DNS.
 
 ### Selected-application direct routing: unresolved architecture
 
