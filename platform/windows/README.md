@@ -2,6 +2,18 @@
 
 ## Packaged regression checks
 
+The `4cade5e` build passed all 44 bundled native Windows tests and the package
+installation smoke test on 2026-10-29. This includes the disconnected IPC setup
+regression and generation-safe completion of selected routing. Application ZIP
+SHA-256: `6b7893693daa466f7e4c38f92a66189505e368e5fa4804e930c009c4d3dbaa80`.
+Matching test ZIP SHA-256:
+`fa909a52ce20e52ce6b56543dc30ef173ba24b9ec796f179d301566d6ff34d56`.
+The package check covered driver signatures, licenses, installation, refusal to
+update a running GUI, uninstall and GUI startup. Interactive window assertions
+are explicitly skipped by the noninteractive unit runner; this result does not
+replace routed GUI or external-network integration checks. These ZIPs remain
+development artifacts, not a published release.
+
 The release build produces separate application and test ZIPs with SHA-256
 sidecars. Extract the matching versions and run `run-tests.ps1 -Root <test-dir>`
 from the test bundle in an elevated development VM. The suite includes temporary
