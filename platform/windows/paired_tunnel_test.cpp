@@ -80,6 +80,7 @@ class Packets final : public TunnelPacketWorker {
 public:
     explicit Packets(std::atomic_bool& ready) : ready_(ready) {}
     unsigned preparations{}, polls{}, blocks{}, control_polls{};
+    unsigned gate_calls{}, gate_denials{};
     HANDLE cancel_on_control{};
     bool bad_order{}, fail_prepare{}, fail_poll{};
     void prepare(const Tuntom::Endpoint& endpoint) override {
@@ -94,6 +95,17 @@ public:
         ++control_polls;
         bad_order |= blocks || GetCurrentThreadId() != thread_;
         if (cancel_on_control) SetEvent(cancel_on_control);
+    }
+    bool dataAllowed() override {
+        ++gate_calls;
+        bad_order |= blocks || GetCurrentThreadId() != thread_;
+        // Exercise the service's payload gate while allowing handshake and
+        // renewal to proceed. The pump must count these packets as discarded.
+        if (gate_denials < 32) {
+            ++gate_denials;
+            return false;
+        }
+        return true;
     }
     void poll() override {
         ++polls;
@@ -192,8 +204,9 @@ void exercise(bool reject, bool late = false, bool route_failure = false, bool t
     }
     SetEvent(stop.get());
     bool failed = false;
+    TunnelPump::Counters counters{};
     try {
-        (void)run.get();
+        counters = run.get();
     } catch (const std::exception&) {
         failed = true;
     }
@@ -221,6 +234,11 @@ void exercise(bool reject, bool late = false, bool route_failure = false, bool t
     require(saw_ready && !ready, "Readiness lifecycle incorrect");
     require(control.opens == 1 && control.renewals == 1 && control.closes == 1, "Control lifetime incorrect");
     require(device.received > during_renewal + 8, "Packet pump stalled during renewal");
+    if (!failed) {
+        require(packets.gate_denials == 32 && packets.gate_calls > packets.gate_denials &&
+                    counters.not_ready >= packets.gate_denials,
+                "Paired transport bypassed the worker-owned payload gate");
+    }
 }
 } // namespace
 int main(int argc, char** argv) {

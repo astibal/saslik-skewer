@@ -49,6 +49,10 @@ public:
     // Service commands while authentication is pending, without admitting data.
     // Runs on the same worker as poll and must remain bounded/nonblocking.
     virtual void pollControl() {}
+    // Evaluated on the packet worker at both payload boundaries. Returning
+    // false drops data without suppressing authenticated transport keepalives.
+    // This does not withdraw routes or replace the external egress guard.
+    virtual bool dataAllowed() { return true; }
     virtual void poll() = 0;
     // Optional borrowed capture event; used only once the transport is ready.
     // poll must consume/re-arm it so an idle worker cannot spin the loop.

@@ -99,7 +99,10 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
     UdpEndpoint udp(UdpAddress::numeric("0.0.0.0", 0));
     const auto peer = UdpAddress::numeric(numeric_peer.toStdString(), 40000 + paired.endpoint.id);
     TunnelPump pump(device, udp, peer, paired.endpoint.id, key, false,
-                    [&] { return !cancelled(stop) && lease.valid(TunnelPump::Clock::now()); });
+                    [&] {
+                        return !cancelled(stop) && lease.valid(TunnelPump::Clock::now()) &&
+                               (!packets || packets->dataAllowed());
+                    });
     tuntom::secure_zero(key.data(), key.size());
     std::fill(paired.key.begin(), paired.key.end(), '\0');
     const auto interval = std::chrono::seconds(paired.endpoint.leaseSeconds / 3);
