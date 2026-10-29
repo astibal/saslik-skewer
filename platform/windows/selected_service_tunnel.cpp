@@ -85,13 +85,17 @@ public:
             throw;
         }
     }
-    void poll() override {
+    void pollControl() override {
         applySelectionChange();
         applyPauseChange();
         if (GetTickCount64() >= next_membership_refresh_) publishSelection();
         if (!running()) {
             throw std::runtime_error("Selected process exited");
         }
+    }
+    void poll() override {
+        // Backoff also invokes poll, outside the paired transport loop.
+        pollControl();
         if (packets_) {
             packets_->poll();
             if (ready_.load()) {

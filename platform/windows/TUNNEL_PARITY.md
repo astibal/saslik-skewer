@@ -1,5 +1,26 @@
 # Windows tunnel parity contract
 
+### Protected pause during live recovery
+
+`tests/selected-pause-live.ps1 -RecoveryPeer <IPv4>` exercises a disposable
+`SkewerRouting-Test-<GUID>` service against a real paired appliance. It blocks
+only that service's UDP data transport (ports 40001-40255), waits for Blocked,
+requests Pause, restores the path, and requires repeated paused status and failed
+HTTPS until explicit Resume. The selected generation must remain unchanged and
+HTTPS must succeed after Resume. This scenario passed in the development VM.
+
+The test exposed command starvation during the authentication handshake: packet
+polling correctly waited for readiness, but pause/selection commands waited with
+it. A separate worker-thread control poll now remains responsive before readiness
+without admitting packets. The native paired-tunnel regression also checks this
+ordering with no authenticated peer. No GUI lifetime or owner-crash guarantee
+changes are implied.
+
+Validation note: the paired-tunnel test failed with `Unexpected renewal result`
+when run concurrently with the live interception fixture, then passed in an
+isolated run. The cause of that concurrent failure is not established; serialize
+these network fixtures rather than treating this run as concurrency coverage.
+
 Linux is the behavioral reference, not just the widget layout. No Windows UI
 control may claim routing protection before a privileged backend actually
 enforces it. This document records the implementation boundary. Windows

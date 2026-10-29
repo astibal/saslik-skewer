@@ -79,7 +79,8 @@ private:
 class Packets final : public TunnelPacketWorker {
 public:
     explicit Packets(std::atomic_bool& ready) : ready_(ready) {}
-    unsigned preparations{}, polls{}, blocks{};
+    unsigned preparations{}, polls{}, blocks{}, control_polls{};
+    HANDLE cancel_on_control{};
     bool bad_order{}, fail_prepare{}, fail_poll{};
     void prepare(const Tuntom::Endpoint& endpoint) override {
         thread_ = GetCurrentThreadId();
@@ -88,6 +89,11 @@ public:
         if (fail_prepare) {
             throw std::runtime_error("Fixture packet preparation failed");
         }
+    }
+    void pollControl() override {
+        ++control_polls;
+        bad_order |= blocks || GetCurrentThreadId() != thread_;
+        if (cancel_on_control) SetEvent(cancel_on_control);
     }
     void poll() override {
         ++polls;
@@ -220,6 +226,20 @@ void exercise(bool reject, bool late = false, bool route_failure = false, bool t
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        {
+            Control control;
+            Device device;
+            Handle stop(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            require(bool(stop), "Cannot create pending-handshake cancellation event");
+            std::atomic_bool ready{};
+            Packets packets(ready);
+            packets.cancel_on_control = stop.get();
+            // No peer is listening: control must run before authenticated data.
+            runPairedTunnel(device, control, "127.0.0.1", stop.get(), ready, nullptr, &packets);
+            require(packets.control_polls == 1 && !packets.polls && !packets.bad_order &&
+                        !ready && control.closes == 1,
+                    "Pending handshake starved control or admitted packet processing");
+        }
         exercise(false);
         exercise(true);
         exercise(false, true);

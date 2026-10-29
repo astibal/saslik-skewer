@@ -124,6 +124,8 @@ TunnelPump::Counters runPairedTunnel(PacketDevice& device, TunnelControl& contro
     } reset{ready, routes, packets};
     bool installed = false;
     while (!cancelled(stop)) {
+        if (packets) packets->pollControl();
+        if (cancelled(stop)) break;
         auto now = TunnelPump::Clock::now();
         if (!lease.valid(now)) {
             throw std::runtime_error("Tunnel lease expired; traffic remains blocked");

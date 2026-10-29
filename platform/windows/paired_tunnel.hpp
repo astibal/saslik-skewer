@@ -46,6 +46,9 @@ class TunnelPacketWorker {
 public:
     virtual ~TunnelPacketWorker() = default;
     virtual void prepare(const Tuntom::Endpoint&) = 0;
+    // Service commands while authentication is pending, without admitting data.
+    // Runs on the same worker as poll and must remain bounded/nonblocking.
+    virtual void pollControl() {}
     virtual void poll() = 0;
     // Optional borrowed capture event; used only once the transport is ready.
     // poll must consume/re-arm it so an idle worker cannot spin the loop.
