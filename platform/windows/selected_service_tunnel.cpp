@@ -39,6 +39,7 @@ public:
         // ready; launched suspended processes normally have nothing to reset.
         traffic::resetOwnedIpv4Tcp(resolver_.memberKeys());
         signals_.selection_supported = true;
+        signals_.pause_supported = true;
         publishSelection();
         enrolling_root_ = false;
     }
@@ -74,6 +75,7 @@ public:
             },
             cancel_, ready_);
         try {
+            packets_->setPaused(signals_.paused.load());
             packets_->prepare(endpoint);
             stage_ = RoutingStage::StartingSession;
         } catch (...) {
@@ -85,6 +87,7 @@ public:
     }
     void poll() override {
         applySelectionChange();
+        applyPauseChange();
         if (GetTickCount64() >= next_membership_refresh_) publishSelection();
         if (!running()) {
             throw std::runtime_error("Selected process exited");
@@ -95,11 +98,12 @@ public:
                 if (packets_->blocked()) {
                     throw std::runtime_error("Selected packet path retired while transport remained ready");
                 }
-                startup_.clear();
+                const bool paused = signals_.paused.load();
+                if (!paused) startup_.clear();
                 // Publish only after interception and removal of the startup
                 // socket block, not merely after the transport handshake.
-                published_ = true;
-                blocked_ = false;
+                published_ = !paused;
+                blocked_ = paused;
                 stage_ = RoutingStage::None;
                 retry_error_.store({});
             }
@@ -135,6 +139,26 @@ public:
     }
 
 private:
+    void applyPauseChange() {
+        const auto request = signals_.pause_change.load();
+        if (!request || !request->claim()) return;
+        try {
+            // The same worker owns capture, packet queues and tunnel I/O.
+            // Acknowledge only after both directions have adopted the gate.
+            if (packets_) packets_->setPaused(request->paused);
+            signals_.paused = request->paused;
+            if (request->paused) {
+                published_ = false;
+                blocked_ = true;
+            }
+            // Resume does not publish readiness here: poll() still verifies
+            // transport health, and recovery carries pause intent to prepare().
+            request->complete();
+        } catch (const std::exception& error) {
+            block();
+            request->complete(error.what());
+        }
+    }
     void publishSelection() {
         // This runs only on the packet worker. Refresh installs guards before
         // exposing new members; readers receive an immutable coherent snapshot.
@@ -163,7 +187,8 @@ private:
                 std::erase_if(added, [&](auto key) { return std::ranges::find(before, key) != before.end(); });
                 // Never reset sockets of an application that was already selected.
                 traffic::resetOwnedIpv4Tcp(added);
-                if (ready_.load() && packets_ && !packets_->blocked()) startup_.clear();
+                if (ready_.load() && !signals_.paused.load() && packets_ && !packets_->blocked())
+                    startup_.clear();
             } else {
                 const auto removed = resolver_.remove(request->process);
                 for (const auto key : removed) {

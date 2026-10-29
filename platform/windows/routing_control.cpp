@@ -29,6 +29,7 @@ RoutingController::RoutingController(Runner runner)
     generation_ &= 0x7fffffffffffffffULL;
 }
 RoutingController::~RoutingController() {
+    if (const auto pending = signals_.pause_change.load()) pending->cancel();
     if (const auto pending = signals_.selection_change.load()) pending->cancel();
     SetEvent(stop_.get());
     if (work_.valid()) {
@@ -52,6 +53,13 @@ void RoutingController::reap() {
     signals_.stage = RoutingStage::None;
     signals_.retry_error.store({});
     signals_.selection_supported = false;
+    signals_.pause_supported = false;
+    signals_.paused = false;
+    if (const auto pending = signals_.pause_change.load()) {
+        const auto phase = pending->phase.load();
+        if (phase == PauseChange::Phase::Pending || phase == PauseChange::Phase::Applying)
+            pending->complete("Routing worker stopped before confirming pause change");
+    }
     if (const auto pending = signals_.selection_change.load()) {
         const auto phase = pending->phase.load();
         if (phase == SelectionChange::Phase::Pending || phase == SelectionChange::Phase::Applying) {
@@ -78,6 +86,9 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
                 throw std::runtime_error("Cannot start routing generation");
             }
             signals_.ready = false;
+            signals_.pause_supported = false;
+            signals_.paused = false;
+            signals_.pause_change.store({});
             signals_.selection_supported = false;
             signals_.selection_change.store({});
             signals_.selection_snapshot.store({});
@@ -102,6 +113,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             throw std::runtime_error("Cannot stop routing generation");
         }
         if (const auto pending = signals_.selection_change.load()) pending->cancel();
+        if (const auto pending = signals_.pause_change.load()) pending->cancel();
         stopping_ = true;
     } else if (command == RoutingCommand::Stop) {
         terminal_ = RoutingPhase::Idle;
@@ -109,7 +121,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
     }
     const auto phase = !work_.valid()            ? terminal_
                        : stopping_               ? RoutingPhase::Stopping
-                       : signals_.blocked.load() ? RoutingPhase::Blocked
+                       : signals_.paused.load() || signals_.blocked.load() ? RoutingPhase::Blocked
                        : signals_.ready.load()   ? RoutingPhase::Active
                                                  : RoutingPhase::Starting;
     auto detail = detail_;
@@ -121,6 +133,8 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             detail = stageDetail(signals_.stage.load());
         }
     }
+    if (work_.valid() && !stopping_ && signals_.paused.load())
+        detail = "Routing paused; selected traffic remains blocked";
     RoutingReply reply{result, phase, generation_, RoutingScope::None, RoutingTransport::None,
             std::nullopt, detail, false, false, false};
     if (work_.valid()) {
@@ -130,6 +144,21 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
         }
     }
     return reply;
+}
+std::shared_ptr<PauseChange> RoutingController::changePause(bool paused, std::uint64_t generation) {
+    const auto state = command(RoutingCommand::Status, 0);
+    if (generation != state.generation) throw std::runtime_error("Stale pause generation");
+    if (!signals_.pause_supported ||
+        (state.phase != RoutingPhase::Active && state.phase != RoutingPhase::Blocked))
+        throw std::runtime_error("Routing does not support protected pause in this state");
+    if (const auto previous = signals_.pause_change.load()) {
+        const auto phase = previous->phase.load();
+        if (phase == PauseChange::Phase::Pending || phase == PauseChange::Phase::Applying)
+            throw std::runtime_error("Another pause change is still pending");
+    }
+    auto request = std::make_shared<PauseChange>(paused);
+    signals_.pause_change = request;
+    return request;
 }
 std::shared_ptr<SelectionChange> RoutingController::changeSelection(SelectionOperation operation,
                                                                    ProcessKey process,

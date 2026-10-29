@@ -144,6 +144,47 @@ int main() {
                 "Stopped controller exposed stale Job membership");
         require(stopped->phase == SelectionChange::Phase::Cancelled,
                 "Stopped worker left a selection pending forever");
+        std::atomic_bool apply_pause{};
+        RoutingController pauses([&](HANDLE stop, RoutingSignals& signals) {
+            signals.pause_supported = true;
+            signals.ready = true;
+            while (WaitForSingleObject(stop, 1) == WAIT_TIMEOUT) {
+                if (!apply_pause) continue;
+                const auto request = signals.pause_change.load();
+                if (!request || !request->claim()) continue;
+                signals.paused = request->paused;
+                request->complete();
+            }
+        });
+        const auto pauseInitial = pauses.command(RoutingCommand::Status, 0);
+        const auto pauseStarted = pauses.command(RoutingCommand::Start, pauseInitial.generation);
+        awaitPhase(pauses, RoutingPhase::Active);
+        auto pauseRequest = pauses.changePause(true, pauseStarted.generation);
+        require(pauses.command(RoutingCommand::Status, 0).phase == RoutingPhase::Active,
+                "Unacknowledged pause claimed protection");
+        bool pauseBusy{};
+        try { pauses.changePause(false, pauseStarted.generation); }
+        catch (const std::runtime_error&) { pauseBusy = true; }
+        require(pauseBusy, "Pending pause was overwritten");
+        apply_pause = true;
+        awaitPhase(pauses, RoutingPhase::Blocked);
+        for (unsigned i = 0; i < 200 && pauseRequest->phase != PauseChange::Phase::Complete; ++i) Sleep(5);
+        require(pauseRequest->phase == PauseChange::Phase::Complete && !pauseRequest->cancel(),
+                "Applied pause did not complete exactly once");
+        bool pauseStale{};
+        try { pauses.changePause(false, pauseInitial.generation); }
+        catch (const std::runtime_error&) { pauseStale = true; }
+        require(pauseStale, "Stale generation resumed routing");
+        auto resumeRequest = pauses.changePause(false, pauseStarted.generation);
+        awaitPhase(pauses, RoutingPhase::Active);
+        for (unsigned i = 0; i < 200 && resumeRequest->phase != PauseChange::Phase::Complete; ++i) Sleep(5);
+        require(resumeRequest->phase == PauseChange::Phase::Complete, "Resume was not acknowledged");
+        pauses.command(RoutingCommand::Stop, pauseStarted.generation);
+        awaitPhase(pauses, RoutingPhase::Idle);
+        bool idlePause{};
+        try { pauses.changePause(true, pauseStarted.generation); }
+        catch (const std::runtime_error&) { idlePause = true; }
+        require(idlePause, "Idle routing accepted protected pause");
         std::cout
             << "PASS: controller generations, cleanup, failure and retry diagnostics\n";
         return 0;

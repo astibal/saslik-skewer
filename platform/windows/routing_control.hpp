@@ -60,12 +60,34 @@ struct SelectionChange final {
         phase = Phase::Complete;
     }
 };
+// Completion acknowledges the packet worker's applied state, not receipt by IPC.
+struct PauseChange final {
+    enum class Phase { Pending, Applying, Complete, Cancelled };
+    explicit PauseChange(bool value) : paused(value) {}
+    const bool paused;
+    std::atomic<Phase> phase{Phase::Pending};
+    std::string error;
+    bool claim() {
+        auto expected = Phase::Pending;
+        return phase.compare_exchange_strong(expected, Phase::Applying);
+    }
+    bool cancel() {
+        auto expected = Phase::Pending;
+        return phase.compare_exchange_strong(expected, Phase::Cancelled);
+    }
+    void complete(std::string failure = {}) {
+        error = std::move(failure);
+        phase = Phase::Complete;
+    }
+};
 struct RoutingSignals {
     std::atomic_bool ready{};
     std::atomic_bool blocked{};
     std::atomic<RoutingStage> stage{RoutingStage::None};
     std::atomic<std::shared_ptr<const std::string>> retry_error{};
     std::atomic_bool selection_supported{};
+    std::atomic_bool pause_supported{}, paused{};
+    std::atomic<std::shared_ptr<PauseChange>> pause_change{};
     std::atomic<std::shared_ptr<SelectionChange>> selection_change{};
     std::atomic<std::shared_ptr<const SelectionSnapshot>> selection_snapshot{};
 };
@@ -79,6 +101,7 @@ public:
     explicit RoutingController(Runner runner);
     ~RoutingController();
     RoutingReply command(RoutingCommand command, std::uint64_t generation);
+    std::shared_ptr<PauseChange> changePause(bool paused, std::uint64_t generation);
     std::shared_ptr<SelectionChange> changeSelection(SelectionOperation operation, ProcessKey process,
                                                     std::uint64_t generation);
 
