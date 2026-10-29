@@ -22,10 +22,12 @@ struct ProcessRecord {
 class ProcessBrowser final : public QWidget {
 public:
     enum Role { IdentityRole = Qt::UserRole + 1, ExecutableRole };
+    enum class RoutingDisplay { Unavailable, Direct, Selected, WholeHost, BlockedSelected, BlockedHost, Transition };
     explicit ProcessBrowser(QWidget* parent = nullptr, QTreeView* view = nullptr);
     void setProcesses(QVector<ProcessRecord> processes);
     void setRoutingState(bool available, const QString& routed_identity = {});
     void setRoutingSelections(bool available, const QStringList& identities);
+    void setRoutingDisplay(RoutingDisplay display, const QStringList& identities = {});
     void setFilterText(const QString& text);
     QStringList launchSuggestions() const;
     const QVector<ProcessRecord>& processes() const { return records_; }
@@ -49,7 +51,7 @@ private:
     QTreeView* tree_;
     QVector<ProcessRecord> records_;
     bool initialized_{};
-    bool routing_available_{};
+    RoutingDisplay routing_display_{RoutingDisplay::Unavailable};
     QStringList routed_identities_;
     QString filter_;
 };

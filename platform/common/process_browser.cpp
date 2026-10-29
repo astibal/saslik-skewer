@@ -108,14 +108,18 @@ void ProcessBrowser::setRoutingState(bool available, const QString& routed_ident
     setRoutingSelections(available, routed_identity.isEmpty() ? QStringList{} : QStringList{routed_identity});
 }
 void ProcessBrowser::setRoutingSelections(bool available, const QStringList& identities) {
-    auto normalized = available ? identities : QStringList{};
+    setRoutingDisplay(!available ? RoutingDisplay::Unavailable : identities.isEmpty()
+        ? RoutingDisplay::Direct : RoutingDisplay::Selected, identities);
+}
+void ProcessBrowser::setRoutingDisplay(RoutingDisplay display, const QStringList& identities) {
+    auto normalized = display == RoutingDisplay::Unavailable ? QStringList{} : identities;
     normalized.removeDuplicates();
     normalized.sort();
-    if (routing_available_ == available && routed_identities_ == normalized) {
+    if (routing_display_ == display && routed_identities_ == normalized) {
         return;
     }
     const auto state = captureViewState();
-    routing_available_ = available;
+    routing_display_ = display;
     routed_identities_ = normalized;
     rebuildModel();
     restoreViewState(state);
@@ -206,9 +210,24 @@ void ProcessBrowser::rebuildModel() {
         }
         auto* details = new QStandardItem(record.executable);
         details->setToolTip(record.executable + QLatin1Char('\n') + record.windows.join(QLatin1Char('\n')));
-        auto* routing = new QStandardItem(routing_available_ ? tr("Direct") : tr("Unavailable"));
-        if (routing_available_ && routed_identities_.contains(record.identity())) {
-            routing->setText(tr("Routed"));
+        auto* routing = new QStandardItem;
+        const bool selected = routed_identities_.contains(record.identity());
+        switch (routing_display_) {
+        case RoutingDisplay::Unavailable: routing->setText(tr("Unavailable")); break;
+        case RoutingDisplay::Direct: routing->setText(tr("Direct")); break;
+        case RoutingDisplay::WholeHost: routing->setText(tr("Host policy")); break;
+        case RoutingDisplay::BlockedHost: routing->setText(tr("Host blocked")); break;
+        case RoutingDisplay::Transition: routing->setText(tr("Transitioning")); break;
+        case RoutingDisplay::Selected:
+            routing->setText(selected ? tr("Routed") : tr("Unconfirmed")); break;
+        case RoutingDisplay::BlockedSelected:
+            routing->setText(selected ? tr("Blocked") : tr("Unconfirmed")); break;
+        }
+        // A process-tree snapshot is not authoritative Job membership. An
+        // unlisted child may still be selected, even after its parent exits.
+        routing->setToolTip(tr("Selected roots are confirmed by the service. Descendant membership is not inferred. "
+                               "Host policy includes configured exemptions; routing currently covers IPv4."));
+        if (selected && routing_display_ == RoutingDisplay::Selected) {
             auto font = routing->font();
             font.setBold(true);
             routing->setFont(font);

@@ -598,7 +598,22 @@ private:
                 identities.append(QString::number(root.pid) + QLatin1Char(':') + QString::number(root.created));
             }
         }
-        browser_->setRoutingSelections(known, identities);
+        using Display = skewer::ui::ProcessBrowser::RoutingDisplay;
+        using Phase = skewer::windows::RoutingPhase;
+        const bool whole_host = state.scope == skewer::windows::RoutingScope::WholeHost;
+        auto display = Display::Unavailable;
+        if (known) {
+            if (state.phase == Phase::Starting || state.phase == Phase::Stopping) {
+                display = Display::Transition;
+            } else if (state.phase == Phase::Blocked) {
+                display = whole_host ? Display::BlockedHost : Display::BlockedSelected;
+            } else if (state.phase == Phase::Active) {
+                display = whole_host ? Display::WholeHost : Display::Selected;
+            } else if (state.phase == Phase::Idle) {
+                display = Display::Direct;
+            }
+        }
+        browser_->setRoutingDisplay(display, identities);
         connections_->setRoutingState(known, state);
         updateRoutingSummary(known, state, selected, retained);
         updateApplicationActions();
@@ -619,7 +634,7 @@ private:
                                                                               : tr("transitioning")));
         } else if (state.scope == skewer::windows::RoutingScope::WholeHost && retained) {
             page_->action_status->setText(
-                tr("Whole-host routing is active (generation %1); see the Routing tab.")
+                tr("Whole-host policy is selected (generation %1); see its current state in the Routing tab.")
                     .arg(state.generation));
         } else {
             page_->action_status->setText(tr("No process is individually routed."));

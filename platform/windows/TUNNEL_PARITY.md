@@ -18,6 +18,15 @@ tree to the active session. Every selected root receives a routing badge.
 Release targets the selected root row; with only one tree it can also release
 that sole selection without requiring a row selection.
 
+The Applications and Connections views distinguish Active, Blocked, transition,
+idle and unavailable states. Whole-host policy is labeled as policy (including
+its configured exemptions), not proof that every displayed socket is tunneled.
+The current IPC status lists roots, not the complete authoritative Job member
+set: unlisted processes are shown as unconfirmed while selected routing is
+active. They must not be called direct merely because a root has exited or a
+window-bearing descendant is displayed as a separate application. Exporting
+live member identities remains a GUI parity improvement.
+
 Add revalidates the configured owner and process creation time. Remove accepts
 an exact previously selected root, including an exited root with live children.
 It retires that tree's packet queues, reverse mappings and guards without killing

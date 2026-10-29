@@ -35,15 +35,25 @@ int main(int argc, char** argv) {
         browser.setRoutingState(true, records[1].identity());
         apps = browser.model()->item(0);
         require(apps->child(0, 2)->text() == "Routed", "Exact routed identity was not marked");
-        require(apps->child(1, 2)->text() == "Direct", "Unselected process was not marked direct");
+        require(apps->child(1, 2)->text() == "Unconfirmed", "Unlisted process was incorrectly declared direct");
         browser.setRoutingSelections(true, {records[1].identity(), records[3].identity()});
         apps = browser.model()->item(0);
         require(apps->child(0, 2)->text() == "Routed" && apps->child(1, 2)->text() == "Routed",
                 "Multiple selected applications were not marked");
         browser.setRoutingSelections(true, {records[3].identity()});
         apps = browser.model()->item(0);
-        require(apps->child(0, 2)->text() == "Direct" && apps->child(1, 2)->text() == "Routed",
+        require(apps->child(0, 2)->text() == "Unconfirmed" && apps->child(1, 2)->text() == "Routed",
                 "Per-application Release cleared the wrong badge");
+        browser.setRoutingDisplay(ProcessBrowser::RoutingDisplay::BlockedSelected, {records[3].identity()});
+        apps = browser.model()->item(0);
+        require(apps->child(1, 2)->text() == "Blocked" && !apps->child(1, 2)->font().bold(),
+                "Blocked selection retained an active badge");
+        browser.setRoutingDisplay(ProcessBrowser::RoutingDisplay::WholeHost);
+        require(browser.model()->item(0)->child(0, 2)->text() == "Host policy",
+                "Whole-host policy was presented as direct");
+        browser.setRoutingDisplay(ProcessBrowser::RoutingDisplay::Transition);
+        require(browser.model()->item(0)->child(0, 2)->text() == "Transitioning",
+                "Transition retained an active badge");
         browser.setRoutingState(false);
         apps = browser.model()->item(0);
         require(apps->child(0, 2)->text() == "Unavailable", "Lost service retained routed state");

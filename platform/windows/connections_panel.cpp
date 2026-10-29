@@ -121,6 +121,18 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
             return root.pid == pid && root.created == created;
         });
     };
+    const auto policy = [&](quint64 pid, quint64 created, bool ipv6, bool udp) {
+        if (!routing_known_ || routing_.phase == RoutingPhase::Failed) return tr("Unknown");
+        if (routing_.phase == RoutingPhase::Idle) return tr("Outside Skewer");
+        if (routing_.phase == RoutingPhase::Starting || routing_.phase == RoutingPhase::Stopping)
+            return tr("Transitioning");
+        const bool host = routing_.scope == RoutingScope::WholeHost;
+        if (!host && !selected(pid, created)) return tr("Membership unconfirmed");
+        if (routing_.phase == RoutingPhase::Blocked) return tr("Blocked policy");
+        if (ipv6) return tr("IPv6 blocked policy");
+        if (host) return tr("Host policy (with exemptions)");
+        return udp ? tr("Skewer candidate (selected UDP)") : tr("Skewer (selected policy)");
+    };
     for (const auto& process : processes_->processes()) owners.insert(process.pid, process);
     const auto scroll = table_->verticalScrollBar()->value();
     table_->setSortingEnabled(false);
@@ -131,15 +143,7 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
     for (const auto& row : snapshot.tcp.rows) {
         if (!owners.contains(row.pid)) continue;
         const auto owner = owners.value(row.pid);
-        QString route = tr("Outside Skewer");
-        if (!routing_known_) {
-            route = tr("Unknown");
-        } else if (routing_.scope == RoutingScope::WholeHost && routing_.phase == RoutingPhase::Active) {
-            route = tr("Skewer (whole host)");
-        } else if (routing_.scope == RoutingScope::SelectedProcess &&
-                   routing_.phase == RoutingPhase::Active && selected(row.pid, owner.created)) {
-            route = row.tuple.ipv6 ? tr("Not routed (selected IPv4 only)") : tr("Skewer (selected)");
-        }
+        const auto route = policy(row.pid, owner.created, row.tuple.ipv6, false);
         const QStringList cells{owner.name.isEmpty() ? tr("Unknown process") : owner.name,
                                 QString::number(row.pid), stateName(row.state), address(row.tuple, true),
                                 address(row.tuple, false), row.tuple.ipv6 ? QStringLiteral("IPv6")
@@ -154,16 +158,7 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
     for (const auto& row : snapshot.udp.rows) {
         if (!owners.contains(row.pid)) continue;
         const auto owner = owners.value(row.pid);
-        QString route = tr("Outside Skewer");
-        if (!routing_known_) {
-            route = tr("Unknown");
-        } else if (routing_.scope == RoutingScope::WholeHost &&
-                   routing_.phase == RoutingPhase::Active) {
-            route = tr("Skewer (whole host)");
-        } else if (routing_.scope == RoutingScope::SelectedProcess && selected(row.pid, owner.created)) {
-            route = row.ipv6 ? tr("Not routed (selected IPv4 only)")
-                             : tr("Skewer candidate (selected UDP)");
-        }
+        const auto route = policy(row.pid, owner.created, row.ipv6, true);
         const QStringList cells{owner.name.isEmpty() ? tr("Unknown process") : owner.name,
                                 QString::number(row.pid), tr("BOUND"), udpAddress(row),
                                 QStringLiteral("—"), row.ipv6 ? QStringLiteral("IPv6 / UDP")
