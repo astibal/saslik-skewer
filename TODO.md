@@ -76,8 +76,11 @@ modes.
 - [x] On protected retries, rediscover the physical interface and gateway and
   install the replacement peer pin without recursively selecting the tunnel.
   Keep the existing guard armed while old owned routes are withdrawn.
-- [ ] Handle endpoint changes and DNS bootstrap as explicit control-plane
-  transactions rather than broad host-data exemptions.
+- [x] Resolve a hostname endpoint before elevated installation or upgrade and
+  pin one deterministic numeric IPv4 peer in the service configuration. Do not
+  add a normal host-DNS bypass to the active routing guard.
+- [ ] Handle endpoint/peer relocation while protection is active as an explicit
+  control-plane transaction.
 - [ ] Define visible local-network and infrastructure exemptions (loopback,
   DHCP, IPv6 neighbour discovery, control plane); do not silently exempt all
   private networks. Route normal DNS through the chosen path.

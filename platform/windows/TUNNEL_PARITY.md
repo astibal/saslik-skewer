@@ -99,8 +99,14 @@ traffic to it. A protected retry withdraws old owned routes and rediscovers the
 physical interface and gateway while the guard remains armed. Endpoint
 relocation still needs its own control-plane transaction. An exemption is not
 permission for arbitrary applications to bypass through the same peer IP. DNS
-bootstrap and recovery need explicit bounded exceptions, distinct from normal
-host DNS traffic.
+needed after protection is active requires an explicit bounded transaction,
+distinct from normal host DNS traffic.
+
+For installation, a hostname endpoint is resolved before elevation and before
+protection is active. One deterministic usable IPv4 address is pinned into the
+SCM configuration while the original hostname remains the pairing identity.
+This is not runtime relocation: an installed active generation never changes
+peer from an ambient DNS answer.
 
 The worker owns routing/protection independently of the GUI. Tunnel failure
 must not restore the ordinary default path while protection is active. Explicit

@@ -10,7 +10,7 @@ Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
   Idle, retains fail-closed routing during tunnel loss, and uses bounded SCM
   crash recovery without automatically reactivating routing.
 - Windows release verification covers the signed Wintun/WinDivert dependencies,
-  41 native tests, route ownership, package install/uninstall, GUI startup and a
+  42 native tests, route ownership, package install/uninstall, GUI startup and a
   real service crash/restart/upgrade/removal lifecycle.
 - Shell status recognizes active Tuntom routes instead of comparing their
   gateway with Saslik's direct gateway. Missing routes and inactive tunnel

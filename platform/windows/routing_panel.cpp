@@ -100,8 +100,11 @@ RoutingPanel::RoutingPanel(QWidget* parent)
         const auto service = service_->text().trimmed();
         const auto endpoint = endpoint_->text().trimmed();
         const bool upgrade = routingServiceInstalled(service);
-        status_->setText(upgrade ? tr("Waiting for approval to upgrade the routing service…")
-                                 : tr("Waiting for approval to install the routing service…"));
+        const auto action = upgrade ? tr("upgrade") : tr("installation");
+        status_->setText(endpoint.isEmpty()
+                             ? tr("Waiting for approval to continue service %1…").arg(action)
+                             : tr("Resolving the paired endpoint, then waiting for approval to continue "
+                                  "service %1…").arg(action));
         updateControls();
         install_watcher_.setFuture(QtConcurrent::run(runRoutingServiceInstaller, script, package,
                                                      service, endpoint, upgrade));

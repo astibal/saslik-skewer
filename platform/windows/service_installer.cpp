@@ -4,8 +4,10 @@
 #include "service_installer.hpp"
 #include "processes.hpp"
 #include <QHostAddress>
+#include <QHostInfo>
 #include <QFileInfo>
 #include <QUrl>
+#include <algorithm>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -72,6 +74,30 @@ bool routingServiceInstalled(const QString& name) {
     return service != nullptr;
 }
 
+QString selectBootstrapIpv4(const QString& host, const QList<QHostAddress>& addresses) {
+    QHostAddress literal;
+    if (literal.setAddress(host)) {
+        if (literal.protocol() != QAbstractSocket::IPv4Protocol || literal.isNull() ||
+            literal.isLoopback() || literal.isMulticast()) {
+            throw std::invalid_argument("Tunnel endpoint must resolve to a unicast non-loopback IPv4 address");
+        }
+        return literal.toString();
+    }
+    QStringList candidates;
+    for (const auto& address : addresses) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isNull() &&
+            !address.isLoopback() && !address.isMulticast()) {
+            candidates.push_back(address.toString());
+        }
+    }
+    candidates.removeDuplicates();
+    std::sort(candidates.begin(), candidates.end());
+    if (candidates.isEmpty()) {
+        throw std::runtime_error("Tunnel endpoint DNS bootstrap returned no usable IPv4 address");
+    }
+    return candidates.front();
+}
+
 InstallerResult runRoutingServiceInstaller(const QString& script, const QString& package,
                                            const QString& service, const QString& endpoint,
                                            bool upgrade) {
@@ -85,16 +111,20 @@ InstallerResult runRoutingServiceInstaller(const QString& script, const QString&
                                              L"-OwnerSid", currentSid()};
         if (!endpoint.trimmed().isEmpty()) {
             const QUrl url(endpoint);
-            QHostAddress peer;
             if (!url.isValid() || url.scheme() != QStringLiteral("skewer") ||
-                url.path() != QStringLiteral("/pair") || url.port() <= 0 || url.port() > 65535 ||
-                !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment() ||
-                !peer.setAddress(url.host()) || peer.protocol() != QAbstractSocket::IPv4Protocol) {
+                url.host().isEmpty() || url.path() != QStringLiteral("/pair") ||
+                url.port() <= 0 || url.port() > 65535 ||
+                !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()) {
                 throw std::invalid_argument(
-                    "Tunnel-ready installation requires a paired endpoint with a numeric IPv4 host");
+                    "Tunnel-ready installation requires a valid paired endpoint");
             }
+            QHostAddress literal;
+            const auto addresses = literal.setAddress(url.host())
+                                       ? QList<QHostAddress>{literal}
+                                       : QHostInfo::fromName(url.host()).addresses();
+            const auto peer = selectBootstrapIpv4(url.host(), addresses);
             arguments.insert(arguments.end(), {L"-Endpoint", endpoint.toStdWString(),
-                                               L"-Peer", peer.toString().toStdWString()});
+                                               L"-Peer", peer.toStdWString()});
         }
         if (upgrade) arguments.push_back(L"-Upgrade");
         return runElevated(arguments, QStringLiteral("installer"));

@@ -1,11 +1,36 @@
 #include "service_installer.hpp"
 #include <QCoreApplication>
+#include <QHostAddress>
 #include <iostream>
 #include <stdexcept>
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        const QList<QHostAddress> bootstrap{QHostAddress(QStringLiteral("203.0.113.9")),
+                                            QHostAddress(QStringLiteral("192.0.2.20")),
+                                            QHostAddress(QStringLiteral("::1")),
+                                            QHostAddress(QStringLiteral("127.0.0.1")),
+                                            QHostAddress(QStringLiteral("192.0.2.20"))};
+        if (skewer::windows::selectBootstrapIpv4(QStringLiteral("lab.example"), bootstrap) !=
+            QStringLiteral("192.0.2.20")) {
+            throw std::runtime_error("DNS bootstrap selection is not deterministic");
+        }
+        if (skewer::windows::selectBootstrapIpv4(QStringLiteral("198.51.100.7"), {}) !=
+            QStringLiteral("198.51.100.7")) {
+            throw std::runtime_error("Numeric endpoint changed during bootstrap");
+        }
+        bool unusable_rejected{};
+        try {
+            (void)skewer::windows::selectBootstrapIpv4(
+                QStringLiteral("local.example"), {QHostAddress(QStringLiteral("127.0.0.1")),
+                                                   QHostAddress(QStringLiteral("::1"))});
+        } catch (const std::runtime_error&) {
+            unusable_rejected = true;
+        }
+        if (!unusable_rejected) {
+            throw std::runtime_error("Unusable DNS bootstrap result was accepted");
+        }
         const auto missing = QStringLiteral("SkewerRouting-Test-Missing-Installer-Test");
         if (skewer::windows::routingServiceInstalled(missing))
             throw std::runtime_error("Unexpected test service exists");
@@ -28,7 +53,7 @@ int main(int argc, char** argv) {
             QStringLiteral("missing.ps1"), missing);
         if (remover.error.isEmpty())
             throw std::runtime_error("Non-production service reached remover UAC execution");
-        std::cout << "PASS: service detection and pre-UAC installer validation\n";
+        std::cout << "PASS: service detection, deterministic DNS bootstrap and pre-UAC validation\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

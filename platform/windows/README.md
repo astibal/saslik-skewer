@@ -107,6 +107,12 @@ Each protected retry withdraws its old owned routes, rediscovers the best
 physical interface and gateway, and pins the peer through that current underlay
 before restoring the tunnel routes. The same physical-egress guard stays armed,
 so recovery from a DHCP, Wi-Fi or Ethernet path change remains fail-closed.
+The desktop installer accepts either a numeric peer or hostname in the paired
+endpoint. Before UAC and before any routing protection exists, it resolves the
+hostname once, deterministically selects a usable IPv4 address and writes that
+numeric peer into the administrator-owned SCM command. Pairing identity keeps
+the original endpoint hostname. An active generation never silently re-resolves
+or relocates its peer; changing it requires an explicit stopped-service upgrade.
 The configured numeric IPv4 DNS server is assigned only to the fresh Wintun
 adapter using SetInterfaceDnsSettings (Windows 10 build 19041 or newer); physical
 adapter DNS settings are never changed. Adapter destruction removes its DNS
