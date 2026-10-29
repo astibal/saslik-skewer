@@ -233,7 +233,7 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
-                if (state_.paused) status_->setText(tr("Paused — selected traffic remains blocked"));
+                if (state_.protectedPause()) status_->setText(tr("Paused — selected traffic remains blocked"));
                 if (state_.phase == RoutingPhase::Idle) {
                     if (!state_.tunnel_available) {
                         status_->setText(

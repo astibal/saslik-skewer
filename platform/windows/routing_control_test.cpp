@@ -21,6 +21,23 @@ RoutingReply awaitPhase(RoutingController& controller, RoutingPhase phase) {
 } // namespace
 int main() {
     try {
+        {
+            RoutingReply state;
+            state.scope = RoutingScope::SelectedProcess;
+            state.paused = true;
+            for (const auto phase : {RoutingPhase::Idle, RoutingPhase::Starting, RoutingPhase::Active,
+                                     RoutingPhase::Stopping, RoutingPhase::Failed}) {
+                state.phase = phase;
+                require(!state.protectedPause(), "Retained pause hid the authoritative lifecycle phase");
+            }
+            state.phase = RoutingPhase::Blocked;
+            require(state.protectedPause(), "Acknowledged selected pause was not presented");
+            state.paused = false;
+            require(!state.protectedPause(), "Transport failure was presented as user pause");
+            state.paused = true;
+            state.scope = RoutingScope::WholeHost;
+            require(!state.protectedPause(), "Unsupported whole-host pause was presented");
+        }
         std::atomic_uint starts{};
         std::atomic_bool finish_cleanup{};
         RoutingController controller([&](HANDLE stop, RoutingSignals& signals) {

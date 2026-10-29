@@ -28,6 +28,11 @@ struct RoutingReply {
     std::vector<ProcessKey> selection_members{};
     bool members_truncated{};
     bool pause_available{}, paused{};
+    // Pause intent may outlive the active session while cleanup joins its worker.
+    // Presentation must not let that retained flag hide Stopping or Failed.
+    bool protectedPause() const {
+        return scope == RoutingScope::SelectedProcess && phase == RoutingPhase::Blocked && paused;
+    }
 };
 // Publish roots and live Job members together; UI readers must never combine
 // membership from one selection revision with roots from another revision.
