@@ -26,6 +26,10 @@ void checkLiveWildcard(bool ipv6) {
         }
     } socket{::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP)};
     require(socket.value != INVALID_SOCKET, "Create wildcard UDP socket failed");
+    const BOOL reuse = TRUE;
+    require(setsockopt(socket.value, SOL_SOCKET, SO_REUSEADDR,
+                       reinterpret_cast<const char*>(&reuse), sizeof(reuse)) == 0,
+            "Enable UDP bind sharing failed");
     sockaddr_storage address{};
     auto* v4 = reinterpret_cast<sockaddr_in*>(&address);
     auto* v6 = reinterpret_cast<sockaddr_in6*>(&address);
@@ -50,6 +54,27 @@ void checkLiveWildcard(bool ipv6) {
     require(std::find(candidates.pids.begin(), candidates.pids.end(), GetCurrentProcessId()) !=
                 candidates.pids.end(),
             "Live wildcard owner missing");
+    require(candidates.uniqueBind(), "Fresh live UDP bind is not unique");
+
+    {
+        // Sharing one port within one process must preserve two table rows,
+        // even though the candidate PID list deliberately removes duplicates.
+        Socket shared{::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP)};
+        require(shared.value != INVALID_SOCKET, "Create shared UDP socket failed");
+        require(setsockopt(shared.value, SOL_SOCKET, SO_REUSEADDR,
+                           reinterpret_cast<const char*>(&reuse), sizeof(reuse)) == 0,
+                "Enable second UDP bind sharing failed");
+        require(bind(shared.value, reinterpret_cast<sockaddr*>(&address), size) == 0,
+                "Second live UDP bind failed");
+        const auto shared_snapshot = captureUdpOwners();
+        const auto owners = udpOwnerCandidates(shared_snapshot.rows, packet);
+        require(owners.pids == std::vector<std::uint32_t>{GetCurrentProcessId()} &&
+                    owners.matching_rows == 2 && !owners.uniqueBind(),
+                "Live same-PID shared UDP bind was not recognized as ambiguous");
+    }
+    const auto released_snapshot = captureUdpOwners();
+    require(udpOwnerCandidates(released_snapshot.rows, packet).uniqueBind(),
+            "Closing competing UDP socket did not restore unique bind evidence");
 }
 #endif
 void check(bool ipv6) {
@@ -134,7 +159,7 @@ int main() {
         } cleanup;
         checkLiveWildcard(false);
         checkLiveWildcard(true);
-        std::cout << "PASS: live IPv4/IPv6 UDP wildcard owner snapshots\n";
+        std::cout << "PASS: live IPv4/IPv6 UDP wildcard, shared bind and close snapshots\n";
 #endif
         std::cout << "PASS: conservative UDP bind candidates\n";
     } catch (const std::exception& error) {

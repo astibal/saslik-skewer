@@ -309,7 +309,9 @@ attached later may not have seen all existing sockets. Ambiguous selected traffi
 is held, while positive evidence excluding the selection retains the existing
 unrelated-traffic policy. The owner-candidate test covers duplicate same-PID rows,
 missing evidence and unknown owners for both address families. Its native Windows
-run also checks live wildcard owner snapshots; these checks alone do not prove
+run also creates two live wildcard sockets sharing one port in the same process,
+checks that both rows survive PID de-duplication, then closes the competitor and
+requires unique evidence again (IPv4 and IPv6). These checks alone do not prove
 physical-egress behaviour for live shared UDP sockets.
 
 The full selected-service VM integration passed with the updated service,
