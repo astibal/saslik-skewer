@@ -14,6 +14,17 @@ are explicitly skipped by the noninteractive unit runner; this result does not
 replace routed GUI or external-network integration checks. These ZIPs remain
 development artifacts, not a published release.
 
+The same unmodified `4cade5e` application/test ZIP pair also passed the paired
+SCM integration suite on 2026-10-29, including the interactive GUI test. Pause
+and routing survived GUI termination; reopening restored authoritative state.
+Independent application Release preserved the other selection and generation.
+Root/new/adopted descendant HTTPS, pre-Attach TCP reset, unique pre-Attach UDP,
+root/descendant DNS and existing IPv6 blocking with Release recovery passed.
+The singleton handoff fixture retained the existing broker outside selection and
+normal selected-launcher exit returned Idle. The temporary test service was
+removed and host routes/DNS matched their pre-test snapshots. This does not
+establish public IPv6 or arbitrary breakaway/orphan coverage.
+
 The release build produces separate application and test ZIPs with SHA-256
 sidecars. Extract the matching versions and run `run-tests.ps1 -Root <test-dir>`
 from the test bundle in an elevated development VM. The suite includes temporary
