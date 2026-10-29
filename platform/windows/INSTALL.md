@@ -86,10 +86,11 @@ Use `-WhatIf` to validate without installation. The elevated regression script
 `tests/install-routing-service-live.ps1` checks dry-run behavior, ACLs, Idle IPC,
 overwrite rejection, upgrade and complete removal of its unique test service.
 
-Current routing supports whole-host IPv4 or one explicitly selected process's
-fresh corroborated IPv4 TCP and UDP traffic. Ambiguous ownership remains blocked.
-A tunnel failure keeps the live guard blocking until explicit
-Stop; a WinDivert owner/driver failure cannot provide that guarantee. This is a
+Current routing supports whole-host IPv4 (direct gateway or tunnel), or up to 64
+independently selected application trees over the tunnel. Corroborated IPv4 TCP
+and UDP are routed; ambiguous ownership remains blocked. Tunnel failure keeps
+the live guard blocking while transport recovery is attempted; explicit Stop
+restores normal routing. A WinDivert owner/driver failure cannot provide that guarantee. This is a
 lab tool, not a security boundary against an administrator or driver failure.
 
 Headless application routing uses the same authenticated service as the GUI:
@@ -98,6 +99,8 @@ Headless application routing uses the same authenticated service as the GUI:
 .\skewer-routing-control.exe status SkewerRouting
 .\skewer-routing-control.exe run SkewerRouting C:\Path\Application.exe --argument
 .\skewer-routing-control.exe attach SkewerRouting GENERATION PID BIRTH
+.\skewer-routing-control.exe add SkewerRouting GENERATION PID BIRTH
+.\skewer-routing-control.exe remove SkewerRouting GENERATION PID BIRTH
 .\skewer-routing-control.exe release SkewerRouting GENERATION
 ```
 
@@ -106,3 +109,12 @@ because the child remains suspended until routing is Active. `attach` installs
 guards before resetting the adopted tree's existing IPv4 TCP connections;
 unique IPv4 UDP sockets opened before Attach are routed after owner corroboration;
 ambiguous/shared UDP binds and IPv6 sockets cannot be retroactively rerouted.
+
+`attach` starts an idle selection; `add` joins an Active selection. `run` can do
+either and keeps each launched tree independently releasable. `remove` releases
+only the exact root (PID plus creation time), leaving its processes alive and
+other selected trees routed. The GUI's routed-group picker also lists roots
+whose original process has exited while descendants remain. CLI `release` is an
+alias for **Stop of the entire generation**, not one application. Status includes
+root identities and a bounded live-member snapshot; an absent member is not proof
+of direct routing. Upgrade the service with the GUI when updating IPC versions.

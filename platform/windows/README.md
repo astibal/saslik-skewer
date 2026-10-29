@@ -10,20 +10,22 @@ The package smoke test (`packaging/test-windows-package.ps1`) additionally check
 dependency signatures, per-user installation, update refusal while running,
 uninstall, version resources and GUI startup.
 
-On 2026-10-29 the Release build passed all 42 bundled native tests plus package
-installation/uninstallation on the Rhino Windows VM. Noninteractive process
+On 2026-10-29 the Release build at `f354df9` passed all 43 bundled native tests
+plus package installation/uninstallation on the Rhino Windows VM. Noninteractive process
 tests explicitly skip visible-window assertions; this does not replace the
 interactive `routed-application-smoke.ps1` coverage. The test ZIP also includes
 `selected-service-live.ps1` for a paired lab and `selected-ipv6-egress.ps1` for
-an externally reachable IPv6 HTTP peer. Those need explicit environment inputs
+an externally reachable IPv6 HTTP peer. `selected-existing-ipv6.ps1` and its
+`ipv6-marker-peer.py` companion cover peer-side delivery on a pre-Attach TCP
+socket and recovery of that same connection after Release. Those need explicit environment inputs
 and are not silently treated as passing by the offline test runner.
 
 ## First-release direction and limitation
 
 The selected backend is WinDivert interception with either Wintun/Tuntom or an
 explicit on-link next hop, owned by a privileged service independent of the
-GUI. Whole-host IPv4 and a selected process's fresh corroborated IPv4 TCP and
-UDP are integrated. New
+GUI. Whole-host IPv4 supports direct gateway or tunnel; selected application
+trees use the tunnel and support corroborated IPv4 TCP and UDP. New
 descendants of a routed launch inherit selection through a Windows Job Object.
 Manual Attach adopts descendants whose complete, live, same-owner parent chain
 still leads to the selected root. UDP descendants additionally require exactly
@@ -67,9 +69,11 @@ Idle/Starting/Active/Blocked/Stopping/Failed feedback. Periodic status reads do
 not toggle controls; unknown state disables mutations. A click arriving during
 a read is queued once with its original generation, never silently retried.
 The panel remembers the successful service/endpoint choice. Closing it cancels
-only local IPC, not routing. The Applications page can attach one running
-process or launch it suspended and resume it only after the service reports
-Active. The panel can explicitly install or upgrade the service through UAC;
+only local IPC, not routing. The Applications page can attach multiple independent
+application trees or launch them suspended and resume each only after the service
+reports Active. Each tree has an independent Release action; the routed-group
+picker preserves its identity across refreshes and remains usable after the
+original root exits. The panel can explicitly install or upgrade the service through UAC;
 an absent, unpaired or incompatible service never enables routing controls.
 Direct mode instead requires a canonical on-link IPv4 gateway and does not
 require tunnel pairing. The authoritative service status restores both scope
