@@ -97,6 +97,8 @@ int main() {
         std::atomic_uint changes{};
         RoutingController selections([&](HANDLE stop, RoutingSignals& signals) {
             signals.selection_supported = true;
+            signals.selection_snapshot = std::make_shared<const SelectionSnapshot>(
+                SelectionSnapshot{{{42, 100}}, {{42, 100}, {43, 101}}});
             signals.ready = true;
             while (WaitForSingleObject(stop, 1) == WAIT_TIMEOUT) {
                 if (!apply_changes) { parked = true; continue; }
@@ -110,7 +112,10 @@ int main() {
         });
         const auto selection_initial = selections.command(RoutingCommand::Status, 0);
         const auto selection_started = selections.command(RoutingCommand::Start, selection_initial.generation);
-        awaitPhase(selections, RoutingPhase::Active);
+        const auto selected_state = awaitPhase(selections, RoutingPhase::Active);
+        require(selected_state.selections == std::vector<ProcessKey>{{42, 100}} &&
+                    selected_state.selection_members == std::vector<ProcessKey>{{42, 100}, {43, 101}},
+                "Controller lost authoritative root/member snapshot");
         auto cancelled = selections.changeSelection(SelectionOperation::Add, {42, 100}, selection_started.generation);
         require(cancelled->cancel(), "Pending selection could not be cancelled");
         auto pending = selections.changeSelection(SelectionOperation::Add, {43, 101}, selection_started.generation);
@@ -134,7 +139,9 @@ int main() {
         require(parked, "Selection worker did not reach test barrier");
         auto stopped = selections.changeSelection(SelectionOperation::Remove, {43, 101}, selection_started.generation);
         selections.command(RoutingCommand::Stop, selection_started.generation);
-        awaitPhase(selections, RoutingPhase::Idle);
+        const auto idle_state = awaitPhase(selections, RoutingPhase::Idle);
+        require(idle_state.selections.empty() && idle_state.selection_members.empty(),
+                "Stopped controller exposed stale Job membership");
         require(stopped->phase == SelectionChange::Phase::Cancelled,
                 "Stopped worker left a selection pending forever");
         std::cout

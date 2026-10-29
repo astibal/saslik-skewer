@@ -25,6 +25,14 @@ struct RoutingReply {
     bool tunnel_available{};
     bool direct_available{};
     std::vector<ProcessKey> selections{};
+    std::vector<ProcessKey> selection_members{};
+};
+// Publish roots and live Job members together; UI readers must never combine
+// membership from one selection revision with roots from another revision.
+struct SelectionSnapshot {
+    std::vector<ProcessKey> roots;
+    std::vector<ProcessKey> members;
+    bool operator==(const SelectionSnapshot&) const = default;
 };
 enum class RoutingStage : std::uint8_t { None, Preparing, Connecting, Intercepting, StartingSession };
 enum class SelectionOperation { Add, Remove };
@@ -58,7 +66,7 @@ struct RoutingSignals {
     std::atomic<std::shared_ptr<const std::string>> retry_error{};
     std::atomic_bool selection_supported{};
     std::atomic<std::shared_ptr<SelectionChange>> selection_change{};
-    std::atomic<std::shared_ptr<const std::vector<ProcessKey>>> selections{};
+    std::atomic<std::shared_ptr<const SelectionSnapshot>> selection_snapshot{};
 };
 
 // One service command thread owns this controller. The runner owns all runtime

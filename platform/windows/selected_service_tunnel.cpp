@@ -32,7 +32,7 @@ public:
         // ready; launched suspended processes normally have nothing to reset.
         traffic::resetOwnedIpv4Tcp(resolver_.memberKeys());
         signals_.selection_supported = true;
-        signals_.selections = std::make_shared<const std::vector<ProcessKey>>(resolver_.roots());
+        publishSelection();
     }
     bool running() const { return resolver_.running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
@@ -77,6 +77,7 @@ public:
     }
     void poll() override {
         applySelectionChange();
+        if (GetTickCount64() >= next_membership_refresh_) publishSelection();
         if (!running()) {
             throw std::runtime_error("Selected process exited");
         }
@@ -126,6 +127,22 @@ public:
     }
 
 private:
+    void publishSelection() {
+        // This runs only on the packet worker. Refresh installs guards before
+        // exposing new members; readers receive an immutable coherent snapshot.
+        SelectionSnapshot snapshot;
+        snapshot.members = resolver_.memberKeys();
+        snapshot.roots = resolver_.roots();
+        const auto order = [](ProcessKey a, ProcessKey b) {
+            return a.pid < b.pid || (a.pid == b.pid && a.created < b.created);
+        };
+        std::ranges::sort(snapshot.members, order);
+        const auto previous = signals_.selection_snapshot.load();
+        if (!previous || *previous != snapshot) {
+            signals_.selection_snapshot = std::make_shared<const SelectionSnapshot>(std::move(snapshot));
+        }
+        next_membership_refresh_ = GetTickCount64() + 250;
+    }
     void applySelectionChange() {
         const auto request = signals_.selection_change.load();
         if (!request || !request->claim()) return;
@@ -149,10 +166,10 @@ private:
                 std::erase_if(startup_, released);
                 std::erase_if(unsupported_, released);
             }
-            signals_.selections = std::make_shared<const std::vector<ProcessKey>>(resolver_.roots());
+            publishSelection();
             request->complete();
         } catch (const std::exception& error) {
-            signals_.selections = std::make_shared<const std::vector<ProcessKey>>(resolver_.roots());
+            publishSelection();
             request->complete(error.what());
         } catch (...) {
             request->complete("Selection change failed with an unknown exception");
@@ -173,6 +190,7 @@ private:
     std::atomic<std::shared_ptr<const std::string>>& retry_error_;
     ServiceOwner owner_;
     RoutingSignals& signals_;
+    ULONGLONG next_membership_refresh_{};
     std::vector<Guard> unsupported_;
     std::vector<Guard> startup_;
     traffic::SelectedGroupResolver resolver_;

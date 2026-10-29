@@ -19,6 +19,16 @@ if (!$Destination) { throw 'Cannot pre-resolve selected HTTPS destination' }
 $name='SkewerRouting-Test-'+[Guid]::NewGuid().ToString('N')
 $client=Join-Path $Directory 'skewer-routing-control.exe'
 $created=$false
+function WaitRoutingIdle {
+    $deadline=(Get-Date).AddSeconds(15)
+    do {
+        $state=& $client status $name | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot observe routing cleanup' }
+        if ($state.phase -in @(0,5)) { return }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    throw 'Previous selected fixture did not finish routing cleanup'
+}
 function NetworkState {
     @{
         Routes=@(Get-NetRoute | Sort-Object InterfaceIndex,DestinationPrefix,NextHop |
@@ -59,20 +69,28 @@ try {
     if ($state.phase -notin @(0,5)) { throw 'Final application Release did not retire routing' }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--descendant'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--existing-descendant'
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-existing descendant test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--existing-tcp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach TCP cleanup test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--existing-udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach UDP tunnel test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--existing-ipv6'
     if ($LASTEXITCODE -ne 0) { throw 'SCM pre-Attach IPv6 protection test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected UDP process test failed' }
+    WaitRoutingIdle
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer '1.1.1.1' $HostName $name '--descendant-udp'
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected descendant UDP test failed' }
+    WaitRoutingIdle
     & curl.exe --noproxy '*' -4 -k --fail --silent --show-error --max-time 12 `
         --resolve "${HostName}:443:${Destination}" --output NUL "https://${HostName}/"
     if ($LASTEXITCODE -ne 0) { throw 'Unrelated HTTPS unavailable after selected session' }
