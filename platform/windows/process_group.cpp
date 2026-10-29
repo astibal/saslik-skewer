@@ -194,6 +194,7 @@ void ProcessSelection::add(ProcessKey root) {
     ProcessTarget authorized(root, owner_);
     if (!authorized.running()) throw std::runtime_error("Cannot select an exited application");
     if (std::ranges::any_of(groups_, [&](const auto& group) { return group->root() == root; })) return;
+    if (groups_.size() >= 64) throw std::runtime_error("At most 64 application trees may be selected");
     if (contains(root.pid)) {
         throw std::runtime_error("Application is already covered by a selected tree");
     }

@@ -80,6 +80,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             signals_.ready = false;
             signals_.selection_supported = false;
             signals_.selection_change.store({});
+            signals_.selections.store({});
             signals_.blocked = false;
             signals_.stage = RoutingStage::None;
             signals_.retry_error.store({});
@@ -117,8 +118,12 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
             detail = stageDetail(signals_.stage.load());
         }
     }
-    return {result, phase, generation_, RoutingScope::None, RoutingTransport::None,
+    RoutingReply reply{result, phase, generation_, RoutingScope::None, RoutingTransport::None,
             std::nullopt, detail, false, false, false};
+    if (work_.valid()) {
+        if (const auto selections = signals_.selections.load()) reply.selections = *selections;
+    }
+    return reply;
 }
 std::shared_ptr<SelectionChange> RoutingController::changeSelection(SelectionOperation operation,
                                                                    ProcessKey process,

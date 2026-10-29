@@ -19,6 +19,7 @@ public:
     bool running() const { return group_.running(); }
     bool contains(skewer::traffic::ProcessIdentity process) const;
     bool covers(ProcessKey process) const;
+    std::vector<ProcessKey> roots() const { return group_.roots(); }
     // Drains initial Job Object membership before activation. Retained process
     // handles keep every returned PID bound to its creation-time identity.
     std::vector<ProcessKey> memberKeys();

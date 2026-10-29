@@ -32,6 +32,7 @@ public:
         // ready; launched suspended processes normally have nothing to reset.
         traffic::resetOwnedIpv4Tcp(resolver_.memberKeys());
         signals_.selection_supported = true;
+        signals_.selections = std::make_shared<const std::vector<ProcessKey>>(resolver_.roots());
     }
     bool running() const { return resolver_.running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
@@ -148,8 +149,10 @@ private:
                 std::erase_if(startup_, released);
                 std::erase_if(unsupported_, released);
             }
+            signals_.selections = std::make_shared<const std::vector<ProcessKey>>(resolver_.roots());
             request->complete();
         } catch (const std::exception& error) {
+            signals_.selections = std::make_shared<const std::vector<ProcessKey>>(resolver_.roots());
             request->complete(error.what());
         } catch (...) {
             request->complete("Selection change failed with an unknown exception");

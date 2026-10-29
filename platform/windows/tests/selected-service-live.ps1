@@ -48,6 +48,15 @@ try {
             -Directory $Directory -FixtureDirectory $FixtureDirectory
         if ($LASTEXITCODE -ne 0) { throw 'GUI routed launch test failed' }
     }
+    & (Join-Path $FixtureDirectory 'multi_selection_live.exe') $name $HostName $Destination
+    if ($LASTEXITCODE -ne 0) { throw 'Concurrent application selection test failed' }
+    # Final per-application Release may still be joining the packet worker.
+    $deadline=(Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 100
+        $state=& $client status $name | ConvertFrom-Json
+    } while ($state.phase -notin @(0,5) -and (Get-Date) -lt $deadline)
+    if ($state.phase -notin @(0,5)) { throw 'Final application Release did not retire routing' }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name
     if ($LASTEXITCODE -ne 0) { throw 'SCM selected process test failed' }
     & (Join-Path $FixtureDirectory 'selected_process_live.exe') $Endpoint $Peer $Destination $HostName $name '--descendant'

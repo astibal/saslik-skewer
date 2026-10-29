@@ -428,7 +428,7 @@ void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD t
 }
 void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler, const SelectedRoutingHandler& selected,
-                         const DirectRoutingHandler& direct) {
+                         const DirectRoutingHandler& direct, const SelectionChangeHandler& change) {
     if (!handler) {
         throw std::invalid_argument("Missing routing handler");
     }
@@ -436,7 +436,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 4 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 7 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -464,6 +464,22 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
             throw std::runtime_error("Selected routing identity exited during authorization");
         }
         result = selected(std::move(target), getGeneration(request.data() + 24));
+    } else if (request[22] == 5 || request[22] == 6) {
+        if (!change) throw std::runtime_error("Live selection changes are not supported by this service");
+        SelectionRequest selection{};
+        handoffTransfer(pipe, selection.data(), selection.size(), false, cancel, deadline);
+        const auto target_key = decodeSelectionRequest(selection);
+        if (request[22] == 5) {
+            auto target = authorizePipeSelection(pipe, target_key);
+            ProcessTarget target_owner(target_key, owner);
+            if (!target->running() || !target_owner.running()) {
+                throw std::runtime_error("Application exited during selection authorization");
+            }
+        }
+        // Remove may refer to an exited root with live descendants. It only
+        // releases an exact identity already owned by this authenticated service.
+        result = change(request[22] == 5 ? SelectionOperation::Add : SelectionOperation::Remove,
+                        target_key, getGeneration(request.data() + 24));
     } else if (request[22] == 4) {
         if (!direct) {
             throw std::runtime_error("Direct routing is not supported by this service");
@@ -476,7 +492,8 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         }
         result = direct(gateway, getGeneration(request.data() + 24));
     } else {
-        result = handler(static_cast<RoutingCommand>(request[22]), getGeneration(request.data() + 24));
+        result = handler(request[22] == 7 ? RoutingCommand::Status : static_cast<RoutingCommand>(request[22]),
+                         getGeneration(request.data() + 24));
     }
     const bool has_scope = result.scope != RoutingScope::None;
     const bool has_transport = result.transport != RoutingTransport::None;
@@ -492,14 +509,13 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         throw std::logic_error("Invalid routing backend response");
     }
     if (result.detail.size() > 255) result.detail.resize(255);
-    std::array<std::uint8_t, 296> response{'S',
-                                          'K',
-                                          'R',
-                                          'C',
-                                          6,
-                                          static_cast<std::uint8_t>(result.result),
-                                          static_cast<std::uint8_t>(result.phase),
-                                          static_cast<std::uint8_t>(result.scope)};
+    const bool extended = request[22] >= 5;
+    if (result.selections.size() > 64) throw std::logic_error("Too many selected applications");
+    std::vector<std::uint8_t> response(extended ? 1577 : 296);
+    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(extended ? 7 : 6),
+        static_cast<std::uint8_t>(result.result), static_cast<std::uint8_t>(result.phase),
+        static_cast<std::uint8_t>(result.scope)};
+    std::copy(header.begin(), header.end(), response.begin());
     putGeneration(response.data() + 8, result.generation);
     if (result.selected) {
         const auto selection = encodeSelectionRequest(*result.selected);
@@ -510,6 +526,13 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     response[38] = static_cast<std::uint8_t>(result.transport);
     response[39] = (result.tunnel_available ? 1 : 0) | (result.direct_available ? 2 : 0);
     std::copy(result.detail.begin(), result.detail.end(), response.begin() + 40);
+    if (extended) {
+        response[296] = static_cast<std::uint8_t>(result.selections.size());
+        for (std::size_t i = 0; i < result.selections.size(); ++i) {
+            const auto selection = encodeSelectionRequest(result.selections[i]);
+            std::copy(selection.begin(), selection.end(), response.begin() + 297 + 20 * i);
+        }
+    }
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
 namespace {
@@ -535,10 +558,11 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         auto bytes = *gateway;
         handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
     }
-    std::array<std::uint8_t, 296> response{};
+    const bool extended = operation >= 5;
+    std::vector<std::uint8_t> response(extended ? 1577 : 296);
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != 6 || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
+        response[4] != (extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
         response[38] > static_cast<unsigned>(RoutingTransport::Direct) ||
         (response[39] & ~3U) != 0 ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
@@ -555,15 +579,30 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         selected = decodeSelectionRequest(encoded);
     }
     const auto detail_size = response[36];
-    if (std::ranges::any_of(std::span(response).subspan(40 + detail_size),
+    if (std::ranges::any_of(std::span(response).subspan(40 + detail_size, 256 - detail_size),
                            [](std::uint8_t value) { return value != 0; })) {
         throw std::runtime_error("Invalid routing response padding");
     }
     std::string detail(reinterpret_cast<const char*>(response.data() + 40), detail_size);
-    return {static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
+    RoutingReply result{static_cast<RoutingResult>(response[5]), static_cast<RoutingPhase>(response[6]),
             getGeneration(response.data() + 8), scope, static_cast<RoutingTransport>(response[38]),
             selected, std::move(detail), response[37] != 0,
             bool(response[39] & 1), bool(response[39] & 2)};
+    if (extended) {
+        const auto count = response[296];
+        if (count > 64) throw std::runtime_error("Invalid selection count");
+        for (unsigned i = 0; i < count; ++i) {
+            const auto identity = decodeSelectionRequest(std::span(response).subspan(297 + 20 * i, 20));
+            if (std::ranges::find(result.selections, identity) != result.selections.end()) {
+                throw std::runtime_error("Duplicate selected application");
+            }
+            result.selections.push_back(identity);
+        }
+        if (std::ranges::any_of(std::span(response).subspan(297 + 20 * count), [](auto byte) { return byte != 0; })) {
+            throw std::runtime_error("Invalid selection padding");
+        }
+    }
+    return result;
 }
 } // namespace
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
@@ -571,7 +610,7 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
     if (command > RoutingCommand::Stop) {
         throw std::invalid_argument("Unknown routing command");
     }
-    return exchangeRouting(pipe, service_name, static_cast<std::uint8_t>(command), generation, cancel,
+    return exchangeRouting(pipe, service_name, command == RoutingCommand::Status ? 7 : static_cast<std::uint8_t>(command), generation, cancel,
                            timeout_ms, nullptr, nullptr);
 }
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
@@ -583,5 +622,14 @@ RoutingReply exchangeDirectRouting(HANDLE pipe, const std::wstring& service_name
                                    std::array<std::uint8_t, 4> gateway, std::uint64_t generation,
                                    HANDLE cancel, DWORD timeout_ms) {
     return exchangeRouting(pipe, service_name, 4, generation, cancel, timeout_ms, nullptr, &gateway);
+}
+RoutingReply exchangeSelectionChange(HANDLE pipe, const std::wstring& service_name, SelectionOperation operation,
+                                     ProcessKey process, std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+    if (operation != SelectionOperation::Add && operation != SelectionOperation::Remove) {
+        throw std::invalid_argument("Invalid selection operation");
+    }
+    const auto selection = encodeSelectionRequest(process);
+    return exchangeRouting(pipe, service_name, operation == SelectionOperation::Add ? 5 : 6,
+                           generation, cancel, timeout_ms, &selection, nullptr);
 }
 } // namespace skewer::windows

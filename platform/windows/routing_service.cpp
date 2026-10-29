@@ -1,4 +1,5 @@
 #include "routing_service.hpp"
+#include <algorithm>
 
 namespace skewer::windows {
 void serveRoutingService(const std::wstring& name, HANDLE owner_token, HANDLE stop,
@@ -28,6 +29,14 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         }
         state.scope = scope;
         state.transport = transport;
+        if (scope == RoutingScope::SelectedProcess) {
+            if (!state.selections.empty()) selected_identity = state.selections.front();
+            else if (state.phase == RoutingPhase::Starting && selected_identity) {
+                state.selections.push_back(*selected_identity);
+            }
+        } else {
+            state.selections.clear();
+        }
         state.selected = selected_identity;
         state.paired = bool(pairing);
         state.tunnel_available = bool(runner);
@@ -85,6 +94,44 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         };
     }
     DirectRoutingHandler startDirect;
+    const SelectionChangeHandler changeSelection = [&](SelectionOperation operation, ProcessKey process,
+                                                        std::uint64_t generation) {
+        auto current = describe(controller.command(RoutingCommand::Status, 0));
+        if (current.generation != generation) {
+            current.result = RoutingResult::Stale;
+            return current;
+        }
+        if (current.scope != RoutingScope::SelectedProcess ||
+            (current.phase != RoutingPhase::Active && current.phase != RoutingPhase::Blocked)) {
+            current.result = RoutingResult::Busy;
+            return current;
+        }
+        const bool present = std::ranges::find(current.selections, process) != current.selections.end();
+        if ((operation == SelectionOperation::Add && present) ||
+            (operation == SelectionOperation::Remove && !present)) return current;
+        const auto request = controller.changeSelection(operation, process, generation);
+        const auto deadline = GetTickCount64() + 25000;
+        for (;;) {
+            // Reap joins a failed worker and completes any abandoned request.
+            current = describe(controller.command(RoutingCommand::Status, 0));
+            const auto phase = request->phase.load();
+            if (phase == SelectionChange::Phase::Complete) {
+                if (!request->error.empty()) throw std::runtime_error(request->error);
+                break;
+            }
+            if (phase == SelectionChange::Phase::Cancelled) throw std::runtime_error("Selection change cancelled");
+            if (WaitForSingleObject(stop, 10) != WAIT_TIMEOUT || GetTickCount64() >= deadline) {
+                const bool cancelled = request->cancel();
+                throw std::runtime_error(cancelled ? "Selection change cancelled before execution"
+                    : "Selection result uncertain; inspect status before retrying");
+            }
+        }
+        current = describe(controller.command(RoutingCommand::Status, 0));
+        if (current.selections.empty() && current.scope == RoutingScope::SelectedProcess) {
+            controller.command(RoutingCommand::Stop, generation);
+        }
+        return describe(controller.command(RoutingCommand::Status, 0));
+    };
     if (direct) {
         startDirect = [&](std::array<std::uint8_t, 4> gateway, std::uint64_t generation) {
             auto state = controller.command(RoutingCommand::Status, 0);
@@ -117,7 +164,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         }
         try {
             acceptSelection(commands->get(), stop, 100);
-            serveRoutingCommand(commands->get(), owner, stop, 2000,
+            serveRoutingCommand(commands->get(), owner, stop, 30000,
                                 [&](RoutingCommand command, std::uint64_t generation) {
                                     if (command == RoutingCommand::Start && !runner) {
                                         throw std::runtime_error(
@@ -143,7 +190,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                                         selected_identity.reset();
                                     }
                                     return describe(state);
-                                }, startSelected, startDirect);
+                                }, startSelected, startDirect, changeSelection);
             finishSelection(commands->get(), stop, 500);
         } catch (const std::exception&) {
             // Malformed, disconnected and unauthorized clients affect only

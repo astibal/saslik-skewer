@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QHostAddress>
 #include <QTextStream>
 
@@ -17,6 +18,7 @@ int main(int argc, char** argv) {
                                "       skewer-routing-control start-direct SERVICE GENERATION IPV4_GATEWAY\n"
                                "       skewer-routing-control pair SERVICE PAIRED_ENDPOINT\n"
                                "       skewer-routing-control attach SERVICE GENERATION PID BIRTH\n"
+                               "       skewer-routing-control add|remove SERVICE GENERATION PID BIRTH\n"
                                "       skewer-routing-control run SERVICE EXECUTABLE [ARGUMENTS...]\n"
                                "       (aliases: start-process=attach, launch=run)\n";
         return 2;
@@ -47,11 +49,12 @@ int main(int argc, char** argv) {
         }
         const bool pairing = action == "pair";
         const bool selected = action == "start-process" || action == "attach";
+        const bool change = action == "add" || action == "remove";
         const bool direct = action == "start-direct";
         const bool stopping = action == "stop" || action == "release";
-        const int expected = selected ? 6 : direct ? 5 : action == "status" ? 3 : 4;
+        const int expected = (selected || change) ? 6 : direct ? 5 : action == "status" ? 3 : 4;
         if (args.size() != expected ||
-            (action != "status" && action != "start" && !stopping && !pairing && !selected && !direct)) {
+            (action != "status" && action != "start" && !stopping && !pairing && !selected && !change && !direct)) {
             throw std::invalid_argument("Invalid routing command");
         }
         Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -77,15 +80,21 @@ int main(int argc, char** argv) {
                                : stopping        ? RoutingCommand::Stop
                                                  : RoutingCommand::Status;
         RoutingReply response;
-        if (selected) {
+        if (selected || change) {
             bool pid_valid{}, birth_valid{};
             const auto pid = args[4].toULongLong(&pid_valid);
             const auto birth = args[5].toULongLong(&birth_valid);
             if (!pid_valid || !birth_valid || !pid || pid > MAXDWORD || !birth) {
                 throw std::invalid_argument("Invalid selected process identity");
             }
-            response = exchangeSelectedRouting(pipe->get(), name, {static_cast<DWORD>(pid), birth},
-                                               generation, cancel.get(), 3000);
+            if (change) {
+                response = exchangeSelectionChange(pipe->get(), name,
+                    action == "add" ? SelectionOperation::Add : SelectionOperation::Remove,
+                    {static_cast<DWORD>(pid), birth}, generation, cancel.get(), 30000);
+            } else {
+                response = exchangeSelectedRouting(pipe->get(), name, {static_cast<DWORD>(pid), birth},
+                                                   generation, cancel.get(), 3000);
+            }
         } else if (direct) {
             QHostAddress address;
             if (!address.setAddress(args[4]) || address.protocol() != QAbstractSocket::IPv4Protocol ||
@@ -114,6 +123,12 @@ int main(int argc, char** argv) {
                                                {"birth", QString::number(response.selected->created)}};
         }
         if (!response.detail.empty()) output["detail"] = QString::fromUtf8(response.detail);
+        QJsonArray selections;
+        for (const auto process : response.selections) {
+            selections.append(QJsonObject{{"pid", static_cast<qint64>(process.pid)},
+                                           {"birth", QString::number(process.created)}});
+        }
+        output["selections"] = selections;
         QTextStream(stdout) << QJsonDocument(output).toJson(QJsonDocument::Compact) << '\n';
         return response.result == RoutingResult::Ok ? 0 : 1;
     } catch (const std::exception& error) {
