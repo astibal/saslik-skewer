@@ -406,8 +406,45 @@ void directBridgePacket(const std::wstring& path, int family) {
     const auto count = recv(destination.value, received.data(), received.size(), 0);
     require(count == payload.size() && std::equal(payload.begin(), payload.end(), received.begin()),
             "Direct bridge changed payload");
+    bridge.setPaused(true);
+    for (auto decision : {SelectedCaptureBridge::Disposition::Tunnel,
+                          SelectedCaptureBridge::Disposition::Hold,
+                          SelectedCaptureBridge::Disposition::Direct}) {
+        disposition = decision;
+        require(sendto(source.value, payload.data(), 64, 0,
+                       reinterpret_cast<const sockaddr*>(&remote), address_size) == 64,
+                "Send paused bridge fixture");
+        auto packet = capture.next(cancel.get(), 2000);
+        require(packet.packet.has_value(), "Paused bridge packet not captured");
+        const bool direct = decision == SelectedCaptureBridge::Disposition::Direct;
+        require(bridge.accept(std::move(*packet.packet)) == direct, "Incorrect paused decision");
+        require(readable(destination.value, direct ? 2000 : 30) == direct,
+                "Pause leaked selected traffic or blocked unrelated traffic");
+        if (direct) require(recv(destination.value, received.data(), received.size(), 0) == 64,
+                            "Paused direct payload changed");
+    }
+    std::array<std::uint8_t, 1280> pausedBuffer{};
+    require(!device.readPacket(pausedBuffer) && bridge.deliver() == 0,
+            "Pause left selected packets pending");
+    bridge.setPaused(false);
+    disposition = SelectedCaptureBridge::Disposition::Tunnel;
+    require(sendto(source.value, payload.data(), 64, 0,
+                   reinterpret_cast<const sockaddr*>(&remote), address_size) == 64,
+            "Send resumed bridge fixture");
+    auto resumed = capture.next(cancel.get(), 2000);
+    require(resumed.packet.has_value(), "Resumed bridge packet not captured");
+    const bool supported = family == AF_INET;
+    require(bridge.accept(std::move(*resumed.packet)) == supported,
+            "Resume changed supported-family admission");
+    require(device.readPacket(pausedBuffer).has_value() == supported,
+            "Resume did not restore selected tunnel delivery");
+    require(!readable(destination.value, 30), "Resume bypassed tunnel through direct path");
+    bridge.setPaused(true);
     healthy = false;
-    require(bridge.deliver() == 0, "Blocked tunnel delivered replies");
+    require(bridge.deliver() == 0 && bridge.tunnelBlocked(),
+            "Pause masked transport failure");
+    bridge.setPaused(false);
+    require(bridge.tunnelBlocked(), "Resume revived a failed tunnel epoch");
     // Exercise the same capture after failure. Selected and unknown decisions
     // must drop, while explicit unrelated traffic must still reach its socket.
     for (auto decision : {SelectedCaptureBridge::Disposition::Tunnel,
@@ -433,6 +470,7 @@ void directBridgePacket(const std::wstring& path, int family) {
     }
     std::cout << "PASS: explicit " << (family == AF_INET ? "IPv4" : "IPv6")
               << " direct decision preserves packets larger than tunnel MTU\n";
+    std::cout << "PASS: protected pause/resume preserves unrelated traffic and cannot revive failure\n";
     std::cout << "PASS: tunnel failure blocks selected/unknown traffic but preserves explicit "
               << (family == AF_INET ? "IPv4" : "IPv6") << " direct traffic\n";
 }

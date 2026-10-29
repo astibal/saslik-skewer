@@ -31,6 +31,10 @@ void SelectedCaptureBridge::blockTunnel() {
     origins_.clear();
     device_.stop();
 }
+void SelectedCaptureBridge::setPaused(bool paused) {
+    paused_ = paused;
+    device_.setPaused(paused);
+}
 bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
     if (stopped_) {
         return false;
@@ -60,7 +64,7 @@ bool SelectedCaptureBridge::accept(traffic::PacketCapture::Packet packet) try {
         // positively unrelated IPv6 was already reinjected above.
         return false;
     }
-    if (decision.disposition != Disposition::Tunnel || tunnel_blocked_) {
+    if (decision.disposition != Disposition::Tunnel || tunnel_blocked_ || paused_) {
         return false;
     }
     // Only selected traffic is constrained by the encrypted transport MTU.
@@ -111,6 +115,7 @@ std::size_t SelectedCaptureBridge::deliver() try {
         blockTunnel();
         return 0;
     }
+    if (paused_) return 0;
     std::size_t count{};
     for (unsigned i = 0; i < 64; ++i) {
         auto reply = device_.takeReceived();

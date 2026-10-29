@@ -27,6 +27,11 @@ void SelectedSessionPackets::prepare(const Tuntom::Endpoint& endpoint) {
     };
     device_ = std::make_unique<SelectedTunnelDevice>(address, live_, healthy);
     bridge_ = std::make_unique<SelectedCaptureBridge>(capture_, *device_, resolver_, live_, healthy);
+    bridge_->setPaused(paused_);
+}
+void SelectedSessionPackets::setPaused(bool paused) {
+    paused_ = paused;
+    if (bridge_) bridge_->setPaused(paused);
 }
 void SelectedSessionPackets::poll() {
     if (!bridge_) {

@@ -148,6 +148,14 @@ transport's access-data gate and apply required CONFIG items successfully.
 | Explicit Disable | Stop routing while retaining protection for still-selected applications |
 | Explicit application Release | Deliberately return that application's future traffic to normal routing |
 
+Protected Disable/Resume is not exposed by the current service protocol or GUI
+yet. Its packet-layer foundation keeps capture active, discards queued data in
+both directions and preserves flow identities for a healthy resume. Native
+WinDivert tests verify that unrelated Direct traffic continues, selected packets
+do not bypass the tunnel, unsupported IPv6 remains blocked, and Resume cannot
+revive an epoch retired by transport failure. Service acknowledgement, recovery
+intent and end-to-end UI coverage remain required before exposing this action.
+
 Unselected applications must remain unaffected. Auto mode may initially choose
 a known direct lab route, as Linux does. Once a tunnel has been selected, its
 loss must not silently switch back to direct mode. User-authorized mode changes

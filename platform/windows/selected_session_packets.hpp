@@ -14,6 +14,9 @@ public:
     void prepare(const Tuntom::Endpoint& endpoint) override;
     void poll() override;
     void block() noexcept override;
+    // Set on the packet worker, including before prepare(). Recovery must carry
+    // the user's pause intent into each replacement session explicitly.
+    void setPaused(bool paused);
     // Retire queued packets and reverse mappings before acknowledging Release.
     // Ports remain retired for this tunnel epoch, including after re-attachment.
     void releaseProcess(skewer::traffic::ProcessIdentity process);
@@ -29,7 +32,7 @@ private:
     SelectedTunnelDevice::Live live_;
     HANDLE cancel_;
     std::atomic_bool& ready_;
-    bool prepared_{}, blocked_{};
+    bool prepared_{}, blocked_{}, paused_{};
     std::unique_ptr<SelectedTunnelDevice> device_;
     std::unique_ptr<SelectedCaptureBridge> bridge_;
 };

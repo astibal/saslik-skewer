@@ -27,6 +27,9 @@ public:
     // Retire this tunnel epoch without releasing interception or unrelated
     // Direct traffic. Recovery requires a fresh device and bridge.
     void blockTunnel();
+    // Worker-thread pause keeps interception and unrelated Direct traffic alive.
+    // Clearing pause cannot undo blockTunnel() or stop().
+    void setPaused(bool paused);
     void releaseProcess(skewer::traffic::ProcessIdentity process);
     bool tunnelBlocked() const { return stopped_ || tunnel_blocked_; }
     void stop();
@@ -47,6 +50,7 @@ private:
     const std::size_t capacity_;
     bool stopped_{};
     bool tunnel_blocked_{};
+    bool paused_{};
     std::map<skewer::traffic::PacketTuple, Origin, Less> origins_;
 };
 } // namespace skewer::windows
