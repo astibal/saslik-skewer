@@ -319,6 +319,15 @@ including selected root/descendant HTTPS and DNS, unique pre-Attach UDP, existin
 TCP handling, independent group Release, GUI crash survival and unchanged host
 routes and DNS after cleanup.
 
+## Packaged regression checkpoint (2026-10-29)
+
+The complete Windows ZIP built from `ecd34b1` passed all 44 native test programs,
+archive/dependency verification, per-user install/uninstall, version checks and
+GUI startup in the development Windows VM. Native window visibility checks inside
+the process test skip on the noninteractive SSH window station; this checkpoint
+does not replace the separate interactive routed-application smoke. Nor does it
+prove live multi-adapter failover or physical-egress coverage for shared UDP.
+
 ## References
 
 - Tuntom: `docs/PROTOCOL_V5.md`, `src/tun_device.hpp`, `src/udp_endpoint.hpp`.
