@@ -441,7 +441,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 10 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 11 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -518,10 +518,11 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     }
     if (result.detail.size() > 255) result.detail.resize(255);
     const bool extended = request[22] >= 5;
-    const bool membership = request[22] == 8;
+    const bool pause_state = request[22] >= 9;
+    const bool membership = request[22] >= 8;
     if (result.selections.size() > 64) throw std::logic_error("Too many selected applications");
-    std::vector<std::uint8_t> response(membership ? members_wire_size : extended ? roots_wire_size : 296);
-    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(membership ? 8 : extended ? 7 : 6),
+    std::vector<std::uint8_t> response(pause_state ? members_wire_size + 1 : membership ? members_wire_size : extended ? roots_wire_size : 296);
+    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(pause_state ? 9 : membership ? 8 : extended ? 7 : 6),
         static_cast<std::uint8_t>(result.result), static_cast<std::uint8_t>(result.phase),
         static_cast<std::uint8_t>(result.scope)};
     std::copy(header.begin(), header.end(), response.begin());
@@ -552,6 +553,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
             std::copy(member.begin(), member.end(), response.begin() + members_offset + 20 * i);
         }
     }
+    if (pause_state) response[members_wire_size] = (result.pause_available ? 1 : 0) | (result.paused ? 2 : 0);
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
 namespace {
@@ -578,11 +580,12 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
     }
     const bool extended = operation >= 5;
-    const bool membership = operation == 8;
-    std::vector<std::uint8_t> response(membership ? members_wire_size : extended ? roots_wire_size : 296);
+    const bool pause_state = operation >= 9;
+    const bool membership = operation >= 8;
+    std::vector<std::uint8_t> response(pause_state ? members_wire_size + 1 : membership ? members_wire_size : extended ? roots_wire_size : 296);
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != (membership ? 8 : extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
+        response[4] != (pause_state ? 9 : membership ? 8 : extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
         response[38] > static_cast<unsigned>(RoutingTransport::Direct) ||
         (response[39] & ~3U) != 0 ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
@@ -633,8 +636,16 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
                 throw std::runtime_error("Duplicate selection member");
             result.selection_members.push_back(member);
         }
-        if (std::ranges::any_of(std::span(response).subspan(members_offset + 20 * count), [](auto byte) { return byte != 0; }))
+        if (std::ranges::any_of(std::span(response).subspan(members_offset + 20 * count, members_wire_size - members_offset - 20 * count), [](auto byte) { return byte != 0; }))
             throw std::runtime_error("Invalid membership padding");
+    }
+    if (pause_state) {
+        const auto flags = response[members_wire_size];
+        result.pause_available = flags & 1;
+        result.paused = flags & 2;
+        if ((flags & ~3U) || (result.paused && !result.pause_available) ||
+            (result.pause_available && result.scope != RoutingScope::SelectedProcess))
+            throw std::runtime_error("Invalid protected pause state");
     }
     return result;
 }
@@ -644,7 +655,7 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
     if (command > RoutingCommand::Stop) {
         throw std::invalid_argument("Unknown routing command");
     }
-    return exchangeRouting(pipe, service_name, command == RoutingCommand::Status ? 8 : static_cast<std::uint8_t>(command), generation, cancel,
+    return exchangeRouting(pipe, service_name, command == RoutingCommand::Status ? 11 : static_cast<std::uint8_t>(command), generation, cancel,
                            timeout_ms, nullptr, nullptr);
 }
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,

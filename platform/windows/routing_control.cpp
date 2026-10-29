@@ -138,6 +138,8 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
     RoutingReply reply{result, phase, generation_, RoutingScope::None, RoutingTransport::None,
             std::nullopt, detail, false, false, false};
     if (work_.valid()) {
+        reply.pause_available = signals_.pause_supported.load();
+        reply.paused = signals_.paused.load();
         if (const auto snapshot = signals_.selection_snapshot.load()) {
             reply.selections = snapshot->roots;
             reply.selection_members = snapshot->members;

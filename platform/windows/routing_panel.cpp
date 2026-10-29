@@ -103,12 +103,15 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
     pair_ = new QPushButton(tr("Send pairing"), this);
     start_ = new QPushButton(tr("Start whole-host routing"), this);
     stop_ = new QPushButton(tr("Stop routing"), this);
+    pause_ = new QPushButton(tr("Pause applications"), this);
+    pause_->setObjectName("routingPause");
     pair_->setObjectName("routingPair");
     start_->setObjectName("routingStart");
     stop_->setObjectName("routingStop");
     buttons->addWidget(pair_);
     buttons->addWidget(start_);
     buttons->addWidget(stop_);
+    buttons->addWidget(pause_);
     install_ = new QPushButton(tr("Install routing service…"), this);
     install_->setObjectName("routingInstall");
     buttons->addWidget(install_);
@@ -130,6 +133,7 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
         submit(nextStartUsesDirect() ? 5 : 1);
     });
     connect(stop_, &QPushButton::clicked, this, [this] { submit(2); });
+    connect(pause_, &QPushButton::clicked, this, [this] { submit(state_.paused ? 9 : 8); });
     connect(install_, &QPushButton::clicked, this, [this] {
         const auto package = QCoreApplication::applicationDirPath();
         const auto script = QDir(package).filePath(QStringLiteral("install-routing-service.ps1"));
@@ -229,6 +233,7 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
+                if (state_.paused) status_->setText(tr("Paused — selected traffic remains blocked"));
                 if (state_.phase == RoutingPhase::Idle) {
                     if (!state_.tunnel_available) {
                         status_->setText(
@@ -413,6 +418,12 @@ void RoutingPanel::updateControls() {
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
     const bool selected_scope = state_.scope == RoutingScope::SelectedProcess;
+    pause_->setEnabled(known_ && selected_scope && state_.pause_available && !action_busy_ &&
+                       (state_.phase == RoutingPhase::Active || state_.phase == RoutingPhase::Blocked));
+    pause_->setText(state_.paused ? tr("Resume applications") : tr("Pause applications"));
+    pause_->setToolTip(tr("Pause keeps selected applications blocked and leaves other traffic unchanged. "
+                          "Resume requires a healthy tunnel. Release is a separate action."));
+    pause_->setAccessibleDescription(pause_->toolTip());
     stop_->setText(selected_scope ? tr("Release all applications") : tr("Release host"));
     stop_->setToolTip(selected_scope
         ? tr("Stop this routing generation and return every selected application to normal routing. "
@@ -467,7 +478,10 @@ void RoutingPanel::dispatch(Request request) {
                 sendStoredPairing(pipe->get(), name, QUrl(request.endpoint), cancel->get(), 2000);
             }
             auto pipe = connectRoutingService(name, false, cancel->get(), 1000);
-            if (request.selected && (request.action == 6 || request.action == 7)) {
+            if (request.action == 8 || request.action == 9) {
+                result.reply = exchangePauseChange(pipe->get(), name, request.action == 8,
+                                                   request.generation, cancel->get(), 30000);
+            } else if (request.selected && (request.action == 6 || request.action == 7)) {
                 result.reply = exchangeSelectionChange(pipe->get(), name,
                     request.action == 6 ? SelectionOperation::Add : SelectionOperation::Remove,
                     *request.selected, request.generation, cancel->get(), 30000);

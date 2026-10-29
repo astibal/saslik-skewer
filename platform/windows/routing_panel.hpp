@@ -53,6 +53,7 @@ private:
     QPushButton* pair_{};
     QPushButton* start_{};
     QPushButton* stop_{};
+    QPushButton* pause_{};
     QPushButton* install_{};
     QPushButton* remove_{};
     QTimer timer_;

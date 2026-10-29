@@ -42,8 +42,11 @@ unsupported-protocol guards, but do not receive a temporary all-connect denial.
 The native HTTPS descendant fixture starts eight fresh curl processes in one
 generation without sleeps or retries to exercise this admission boundary.
 
-Membership status (operation 8) uses protocol version 8. Operation 7 and mutation
-replies retain version 7; older operations retain version 6. New GUI/CLI clients
+Current status (operation 11) and Pause/Resume (9/10) use version 9: version-8
+membership followed by one flags byte for pause capability and confirmed pause.
+Unknown bits, paused-without-capability and capability outside selected scope are
+rejected. Legacy membership status (8) retains version 8. Operation 7 and other
+extended mutation replies retain version 7; older operations retain version 6. New GUI/CLI clients
 require an upgraded service. Status responses validate member counts, duplicate
 identities and reserved padding before exposing the snapshot.
 Mutation requests are not automatically retried after IPC loss: inspect status
@@ -149,8 +152,9 @@ transport's access-data gate and apply required CONFIG items successfully.
 | Explicit application Release | Deliberately return that application's future traffic to normal routing |
 
 Protected pause is available through `skewer-routing-control pause SERVICE
-GENERATION` and `resume` for selected applications; the GUI action is still
-pending. Authenticated operations 9/10 retain the version-7 mutation reply and
+GENERATION` and `resume` for selected applications, and separate Pause/Resume
+buttons on the Routing tab. They require authoritative service capability and
+state; Release remains a distinct action. Authenticated operations 9/10
 reject stale generations. The service waits for packet-worker acknowledgement;
 an uncertain response must be reconciled through status, never blindly resent.
 Its packet layer keeps capture active, discards queued data in
@@ -160,7 +164,8 @@ do not bypass the tunnel, unsupported IPv6 remains blocked, and Resume cannot
 revive an epoch retired by transport failure. Pause intent survives replacement
 packet sessions. The native paired HTTPS fixture checks successful transfer,
 pause blocking, stale Resume rejection and recovery in the same generation.
-GUI state/capability presentation and end-to-end UI coverage remain required.
+The desktop fixture checks both buttons against service state without changing
+the routing generation. Whole-host pause is not currently supported.
 
 Unselected applications must remain unaffected. Auto mode may initially choose
 a known direct lab route, as Linux does. Once a tunnel has been selected, its
