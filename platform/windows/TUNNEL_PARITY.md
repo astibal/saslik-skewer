@@ -191,6 +191,23 @@ is experimental, not the selected first-release enforcement backend.
 
 ## Acceptance tests
 
+`tests/selected-ipv6-egress.ps1` requires an idle paired service and an HTTP
+listener on another host reachable over IPv6. For example, on the development
+VM (replace the scope ID with its Ethernet interface index):
+
+```powershell
+.\selected-ipv6-egress.ps1 -Url 'http://[fe80::534b:2026%254]:18765/'
+```
+
+The baseline must succeed before selection. A suspended launcher starts the
+probe under routing protection; its curl descendant must fail to connect while
+an unrelated curl still succeeds. Explicit Release must restore connectivity
+for that same application. Results remain in a uniquely named temporary
+directory. The fixture does not change host routes or DNS. Verified on the
+Rhino Windows VM against an isolated network-namespace HTTP listener attached
+to its virtual LAN. This is external link-local TCP coverage, not proof of
+global IPv6, UDP or pre-existing external socket behavior.
+
 The [first-packet experiment](FIRST_PACKET.md) confirms that a WinDivert SOCKET
 filter can deny fresh TCP/UDP attempts for one PID, but new connections become
 allowed after its owner is killed. Preserve this test to document the accepted
