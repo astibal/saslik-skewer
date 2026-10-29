@@ -10,6 +10,20 @@ The package smoke test (`packaging/test-windows-package.ps1`) additionally check
 dependency signatures, per-user installation, update refusal while running,
 uninstall, version resources and GUI startup.
 
+The subsequent `6bb233f` build, including responsive control during tunnel
+authentication, also passed all 44 bundled native tests and the installation
+smoke test on 2026-10-29. Application ZIP SHA-256:
+`752f69969da6aeba4fe1c9e1f2320c85b83c1ab5926cf6e9a5c3c3f67999ae35`.
+Matching test ZIP SHA-256:
+`a2c707b35ede3520e17a26136950a27e76c12e049aae91bcbe756678a9c672d3`.
+These are development verification artifacts, not a published release.
+The same extracted package subsequently passed the interactive routed GUI smoke
+and the paired selected-service suite: pause survives GUI termination, independent
+application Release, root/new/adopted descendant HTTPS, pre-Attach TCP reset,
+unique pre-Attach UDP, root/descendant DNS, and existing IPv6 blocking followed
+by explicit-Release recovery. The suite confirmed unchanged host routes and DNS
+and removed its temporary service. Network fixtures were run serially.
+
 On 2026-10-29 the post-pause Release build (based on `88ec570`, with the
 surviving-child fixture synchronized by readiness/release events) passed all 44
 bundled native tests plus package installation/uninstallation on the Rhino
