@@ -16,6 +16,8 @@ $settings='HKCU:\Software\Saslik\Skewer\windows'
 $savedService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
 $launchedPid=0
 $manualPid=0
+$testGui=$null
+$result=1
 $postCrashMarker='C:\SkewerDev\skewer-gui-crash-routing.pass'
 function FindWindow {
     $condition=[System.Windows.Automation.PropertyCondition]::new(
@@ -47,7 +49,7 @@ try {
         do { Start-Sleep -Milliseconds 100; $window=FindWindow } while ($window -and (Get-Date) -lt $deadline)
         if ($window) { throw 'Previous Skewer GUI did not terminate before the routed test' }
     }
-    Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service"
+    $testGui=Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service" -PassThru
     $deadline=(Get-Date).AddSeconds(15)
     do {
         Start-Sleep -Milliseconds 200
@@ -106,7 +108,8 @@ try {
     if (!(Test-Path -LiteralPath $postCrashMarker)) {
         throw 'Routed descendant HTTPS did not complete after GUI process termination'
     }
-    Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service"
+    $testGui.Dispose()
+    $testGui=Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service" -PassThru
     $deadline=(Get-Date).AddSeconds(12)
     do {
         Start-Sleep -Milliseconds 200
@@ -193,10 +196,9 @@ try {
     }
     "PASS: routing survived GUI crash and HTTPS, activation recovery, Release and manual Attach retained the selected application" |
         Out-File $log -Append
-    'Exit: 0' | Out-File $log -Append
+    $result=0
 } catch {
     "FAIL: $_" | Out-File $log -Append
-    'Exit: 1' | Out-File $log -Append
 } finally {
     if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
@@ -208,5 +210,20 @@ try {
             Set-ItemProperty $settings -Name routingService -Value $savedService
         }
     }
-    if (!(FindWindow)) { Start-Process (Join-Path $directory 'skewer.exe') }
+    try {
+        # Retain the exact process object: cleanup must not kill a reused PID
+        # or leave the next test attached to a deleted disposable service.
+        if ($testGui -and !$testGui.HasExited) {
+            $testGui.Kill()
+            if (!$testGui.WaitForExit(8000)) { throw 'Test GUI cleanup timed out' }
+        }
+        if (!(FindWindow)) { Start-Process (Join-Path $directory 'skewer.exe') }
+    } catch {
+        "FAIL: GUI restoration: $_" | Out-File $log -Append
+        $result=1
+    } finally {
+        if ($testGui) { $testGui.Dispose() }
+    }
+    # The runner must not remove the fixture service before cleanup completes.
+    "Exit: $result" | Out-File $log -Append
 }
