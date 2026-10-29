@@ -7,10 +7,32 @@ using namespace skewer::windows;
 namespace {
 class FailingControl final : public TunnelControl {
 public:
-    explicit FailingControl(HANDLE cancel) : cancel_(cancel) {}
+    FailingControl(HANDLE cancel, RoutingSignals& state, bool pause_recovery)
+        : cancel_(cancel), state_(state), pause_recovery_(pause_recovery) {}
     PairedTunnel open() override {
         ++opens;
-        if (opens >= 3) {
+        if (pause_recovery_) {
+            if (opens == 1) {
+                request_ = std::make_shared<PauseChange>(true);
+                state_.pause_change = request_;
+            } else {
+                const bool expected_paused = opens < 4;
+                if (!request_ || request_->phase != PauseChange::Phase::Complete ||
+                    !request_->error.empty() || state_.paused != expected_paused ||
+                    state_.ready || !state_.blocked) {
+                    failure = "Recovery lost acknowledged pause intent or claimed readiness";
+                    SetEvent(cancel_);
+                    throw std::runtime_error(failure);
+                }
+                ++verified;
+                if (opens == 3) {
+                    // Resume during transport failure must not publish Active.
+                    request_ = std::make_shared<PauseChange>(false);
+                    state_.pause_change = request_;
+                }
+            }
+        }
+        if (opens >= (pause_recovery_ ? 4U : 3U)) {
             SetEvent(cancel_);
             throw std::runtime_error("fixture complete");
         }
@@ -24,10 +46,14 @@ public:
     }
     void renew(const Tuntom::Endpoint&) override { throw std::runtime_error("injected renewal loss"); }
     void close(const Tuntom::Endpoint&) override { ++closes; }
-    unsigned opens{}, closes{};
+    unsigned opens{}, closes{}, verified{};
+    std::string failure;
 
 private:
     HANDLE cancel_;
+    RoutingSignals& state_;
+    bool pause_recovery_;
+    std::shared_ptr<PauseChange> request_;
 };
 } // namespace
 
@@ -58,14 +84,23 @@ int main(int argc, char** argv) {
         }
         Handle token(token_raw);
         const auto owner = ServiceOwner::fromToken(token.get());
-        FailingControl control(cancel.get());
         RoutingSignals state;
+        const bool pause_recovery = app.arguments().size() == 2 && app.arguments()[1] == "--pause-recovery";
+        if (app.arguments().size() != 1 && !pause_recovery)
+            throw std::invalid_argument("Expected no arguments or --pause-recovery");
+        FailingControl control(cancel.get(), state, pause_recovery);
         const auto dll = QDir::toNativeSeparators(app.applicationDirPath() + "/WinDivert.dll").toStdWString();
         runSelectedServiceTunnel(dll, std::make_unique<ProcessTarget>(identity), owner, control,
                                  QStringLiteral("127.0.0.1"), 8766, cancel.get(), state);
+        if (!control.failure.empty()) throw std::runtime_error(control.failure);
         if (control.opens < 3 || control.closes < 2 || state.ready.load() || !state.blocked.load()) {
             throw std::runtime_error("Reconnect did not preserve blocked state and retry ownership");
         }
+        if (pause_recovery && (control.verified != 3 || state.paused)) {
+            throw std::runtime_error("Pause/recovery checkpoints did not complete");
+        }
+        if (pause_recovery)
+            std::cout << "PASS: acknowledged pause survives replacement sessions; Resume during failure remains blocked\n";
         std::cout << "PASS: selected capture survives transport loss and retries until cancellation\n";
         return 0;
     } catch (const std::exception& error) {

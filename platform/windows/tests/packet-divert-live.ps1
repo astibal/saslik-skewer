@@ -26,6 +26,8 @@ try {
 if ($child.ExitCode -ne 0) { throw "Packet diversion fixture failed: $($child.ExitCode)" }
 & (Join-Path $RuntimeDirectory 'selected_reconnect_live.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Selected reconnect fixture failed' }
+& (Join-Path $RuntimeDirectory 'selected_reconnect_live.exe') --pause-recovery
+if ($LASTEXITCODE -ne 0) { throw 'Selected pause/reconnect fixture failed' }
 } finally {
     # Retained child only; closing its handles removes its narrowly scoped filters.
     if ($null -ne $child) {

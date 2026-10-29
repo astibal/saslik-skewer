@@ -449,6 +449,11 @@ DNS/UDP while proving that host routes and DNS settings remain unchanged.
 driver. It verifies that selected capture ownership survives both generations,
 the service remains blocked, retries, and exits only after explicit cancellation.
 The elevated packet-divert suite runs this regression after first-packet tests.
+Its `--pause-recovery` variant checks acknowledged pause across replacement
+sessions, then requests Resume while transport is still unavailable. Capture
+must remain blocked and must never publish readiness. Both variants passed in
+the native development VM. The control endpoint deliberately injects failures;
+this is not evidence of successful reconnection to a live remote peer.
 
 The routing IPC now has a separate selected-start operation. After authenticating
 the actual pipe caller against the configured service owner, it reads a complete
