@@ -1,11 +1,13 @@
 #include "runtime_trust_panel.hpp"
 #include <windows.h>
 #include <wincrypt.h>
-#include <QCoreApplication>
+#include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QHeaderView>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTableWidget>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -47,7 +49,7 @@ std::wstring value(const EnvironmentOverrides& environment, const wchar_t* name)
 } // namespace
 
 int main(int argc, char** argv) try {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("SaslikTests");
     QCoreApplication::setApplicationName("RuntimeTrust");
     QStandardPaths::setTestModeEnabled(true);
@@ -73,10 +75,20 @@ int main(int argc, char** argv) try {
         value(environment, L"NODE_EXTRA_CA_CERTS") != ca)
         throw std::runtime_error("Managed runtime environment is incomplete");
 
+    skewer::windows::RuntimeTrustPanel panel;
+    panel.resize(980, 680);
+    panel.show();
+    app.processEvents();
+    const auto table = panel.findChild<QTableWidget*>(QStringLiteral("runtimeTrustTable"));
+    if (!table || table->columnWidth(0) < 150 || table->columnWidth(1) < 340 ||
+        table->horizontalHeader()->sectionResizeMode(2) != QHeaderView::Stretch) {
+        throw std::runtime_error("Runtime trust table hides its primary content");
+    }
+
     QFile::remove(result.ca_path);
     QFile::remove(result.bundle_path);
     QSettings().clear();
-    std::cout << "PASS: Windows roots bundle and scoped runtime environment\n";
+    std::cout << "PASS: Windows roots bundle, scoped runtime environment and readable native panel\n";
     return 0;
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

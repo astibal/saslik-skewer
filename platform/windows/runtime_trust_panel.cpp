@@ -179,18 +179,28 @@ RuntimeTrustPanel::RuntimeTrustPanel(QWidget* parent) : QWidget(parent) {
     status_->setWordWrap(true);
     layout->addWidget(status_);
     auto* table = new QTableWidget(3, 3, this);
+    table->setObjectName("runtimeTrustTable");
     table->setHorizontalHeaderLabels({tr("Runtime"), tr("Environment"), tr("Managed file")});
     const QStringList runtimes{tr("Python / OpenSSL"), tr("Requests / curl / pip"), tr("Node.js")};
     const QStringList variables{QStringLiteral("SSL_CERT_FILE"),
                                 QStringLiteral("REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE / PIP_CERT"),
                                 QStringLiteral("NODE_EXTRA_CA_CERTS")};
     for (int row = 0; row < 3; ++row) {
-        table->setItem(row, 0, new QTableWidgetItem(runtimes[row]));
-        table->setItem(row, 1, new QTableWidgetItem(variables[row]));
-        table->setItem(row, 2, new QTableWidgetItem(row == 2 ? tr("Selected CA") : tr("Windows roots + selected CA")));
+        const QStringList values{runtimes[row], variables[row],
+                                 row == 2 ? tr("Selected CA") : tr("Windows roots + selected CA")};
+        for (int column = 0; column < values.size(); ++column) {
+            auto* item = new QTableWidgetItem(values[column]);
+            item->setToolTip(values[column]);
+            table->setItem(row, column, item);
+        }
     }
-    table->horizontalHeader()->setStretchLastSection(true);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    table->horizontalHeader()->setStretchLastSection(false);
+    table->setColumnWidth(0, 170);
+    table->setColumnWidth(1, 390);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
     layout->addWidget(table);
     layout->addStretch();
     connect(prepare_, &QPushButton::clicked, this, &RuntimeTrustPanel::prepare);
