@@ -328,6 +328,25 @@ the process test skip on the noninteractive SSH window station; this checkpoint
 does not replace the separate interactive routed-application smoke. Nor does it
 prove live multi-adapter failover or physical-egress coverage for shared UDP.
 
+## External shared UDP delivery (2026-10-29)
+
+`selected-shared-udp.ps1` and `udp-marker-peer.py` add a separate live integration
+gate. Start the peer on an explicitly chosen IPv4 address/port outside the VM,
+then run the PowerShell fixture against an idle paired disposable service with
+the same `-Address` and `-Port`. The fixture owns only its child and selection;
+the caller owns peer/service setup and cleanup. Do not share a peer instance
+between tests because its counters intentionally persist for the whole run.
+
+Two same-process UDP sockets share a wildcard port before Attach. Both must
+deliver baseline markers to the external peer. After Active, a third socket
+binds the same port: the observer now has fresh lifecycle evidence but cannot
+have observed the original binds. All three send protected markers. An unselected
+TCP control connection independently checks that none arrived, then explicit
+Release must restore delivery from all three sockets. The test passed against
+the KVM host's IPv4 bridge endpoint using the updated disposable Windows service.
+It proves this shared-bind delivery case, not arbitrary destination, adapter
+failover or service-crash isolation. The accepted WinDivert lifetime limit remains.
+
 ## References
 
 - Tuntom: `docs/PROTOCOL_V5.md`, `src/tun_device.hpp`, `src/udp_endpoint.hpp`.
