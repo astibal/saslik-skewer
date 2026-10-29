@@ -51,10 +51,11 @@ Transport milestones verified independently of the remaining service/UI gates:
   after Release. External shared UDP now also has peer-side delivery coverage:
   two pre-Attach binds and one fresh same-process bind remain blocked until
   Release. Public/routed IPv6 and orphaned handoffs remain coverage requirements.
-- [ ] Investigate whole-host DNS with a preferred physical NIC at interface
-  metric 1. A two-NIC VM run passed HTTP/HTTPS with a pre-resolved address but
-  timed out resolving a subsequent ordinary HTTPS request. Interface metric 20
-  passed the DNS path; do not treat that as resolving the low-metric case.
+- [x] Fix whole-host DNS preference against a physical NIC at interface metric 1.
+  Wintun's automatic metric 5 lost DNS preference. The owned tunnel now uses
+  explicit metric 0 with native read-back validation; physical NICs are untouched.
+  Three cold-cache HTTPS requests, subsequent two-NIC failover and route/DNS
+  cleanup passed on 2026-10-29 with the competing physical metric still 1.
 - [x] Report service failure accurately. Test and document that owner termination
   removes WinDivert filters and may restore direct connectivity. Automatic restart
   improves availability but cannot guarantee leak-free recovery.

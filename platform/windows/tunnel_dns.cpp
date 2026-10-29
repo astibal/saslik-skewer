@@ -59,5 +59,31 @@ void configureTunnelDns(NET_LUID adapter, const std::wstring& server) {
     if (status != NO_ERROR) {
         throw std::system_error(status, std::system_category(), "Configure tunnel DNS");
     }
+    // Windows prefers DNS on the lowest-metric interface. Automatic Wintun
+    // metrics can lose to a manually configured physical NIC, whose resolver
+    // is intentionally unreachable through the physical-egress guard. Change
+    // only our owned adapter; deleting it also retires this preference.
+    MIB_IPINTERFACE_ROW preference{};
+    InitializeIpInterfaceEntry(&preference);
+    preference.Family = AF_INET;
+    preference.InterfaceLuid = adapter;
+    status = GetIpInterfaceEntry(&preference);
+    if (status != NO_ERROR) {
+        throw std::system_error(status, std::system_category(), "Read tunnel DNS preference");
+    }
+    preference.UseAutomaticMetric = FALSE;
+    preference.Metric = 0;
+    preference.SitePrefixLength = 0;
+    status = SetIpInterfaceEntry(&preference);
+    if (status != NO_ERROR) {
+        throw std::system_error(status, std::system_category(), "Set tunnel DNS preference");
+    }
+    status = GetIpInterfaceEntry(&preference);
+    if (status != NO_ERROR) {
+        throw std::system_error(status, std::system_category(), "Verify tunnel DNS preference");
+    }
+    if (preference.UseAutomaticMetric || preference.Metric != 0) {
+        throw std::runtime_error("Tunnel DNS preference was not retained");
+    }
 }
 } // namespace skewer::windows

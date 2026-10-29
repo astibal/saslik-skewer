@@ -362,7 +362,26 @@ This passed on two e1000e adapters on the development VM's isolated KVM network,
 with the preferred secondary interface metric 20. The temporary NIC was removed
 afterwards. This verifies interface loss, not a different gateway, VPN coexistence
 or peer-address relocation. An earlier metric-1 run timed out in ordinary DNS
-before the failover step; that remains an explicit open issue in `TODO.md`.
+before the failover step; the DNS preference fix below addresses that regression.
+
+## Owned tunnel DNS preference (2026-10-29)
+
+Windows considers interface preference when choosing a DNS server. Wintun's
+automatic metric was 5 in the VM, so a physical NIC manually set to 1 took
+priority despite tunnel DNS being configured. Its physical DNS traffic was
+correctly blocked, but application resolution could time out. Whole-host DNS
+setup now disables automatic metric on the exclusively owned tunnel, sets metric
+0 and verifies the retained native value before activation. Deleting the adapter
+retires both DNS and metric settings; physical DNS, interface metrics and global
+resolver policy are not rewritten. This does not grant a DNS bypass in the guard.
+
+The native regression now clears DNS cache before each of three ordinary HTTPS
+requests. All passed with physical metric 1, followed by actual NIC loss,
+replacement peer pin, HTTPS recovery and route/DNS cleanup. This is evidence for
+the tested configuration, not a claim to override enterprise NRPT rules or every
+possible competing VPN configuration.
+
+Reference: [Microsoft VPN name resolution](https://learn.microsoft.com/en-us/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution).
 
 ## References
 

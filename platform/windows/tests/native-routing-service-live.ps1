@@ -128,11 +128,16 @@ try {
     }
     Write-Output 'PASS: real SCM service -> Wintun/Tuntom -> Smithproxy -> HTTP/HTTPS, without explicit proxy'
     Clear-DnsClientCache
+    Get-NetIPInterface -AddressFamily IPv4 | Format-Table InterfaceIndex,InterfaceAlias,InterfaceMetric,AutomaticMetric
+    Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table InterfaceIndex,ServerAddresses
     $resolved = Resolve-DnsName example.com -Type A -DnsOnly -ErrorAction Stop
     if (!$resolved) { throw 'System DNS resolution failed through the tunnel' }
-    $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
-        --connect-timeout 5 --max-time 15 https://example.com/
-    if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw 'HTTPS with system DNS failed' }
+    foreach ($attempt in 1..3) {
+        Clear-DnsClientCache
+        $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
+            --connect-timeout 5 --max-time 15 https://example.com/
+        if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw "Cold-cache HTTPS with system DNS failed: $attempt" }
+    }
     Write-Output 'PASS: system DNS and HTTPS without --resolve through the tunnel'
     if ($FailoverInterface) {
         if ($pin.InterfaceIndex -ne $FailoverInterface) { throw 'Tunnel did not select the requested failover interface' }

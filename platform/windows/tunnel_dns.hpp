@@ -5,6 +5,7 @@
 
 namespace skewer::windows {
 // Exclusively owned ephemeral Wintun adapter only. Adapter deletion removes
-// its DNS configuration; physical adapters and global resolver policy are untouched.
+// its DNS configuration and explicit interface metric; physical adapters and
+// global resolver policy are untouched.
 void configureTunnelDns(NET_LUID adapter, const std::wstring& server);
 } // namespace skewer::windows
