@@ -2,6 +2,14 @@
 
 ### Existing-instance handoff and normal process completion
 
+The native process-group regression also verifies an explicit
+`CREATE_BREAKAWAY_FROM_JOB` request from a selected child: Windows rejects it
+with `ERROR_ACCESS_DENIED`. Any unexpectedly created child is suspended and
+terminated by the fixture before it can execute. This passed on the development
+VM on 2026-10-29 together with surviving-child and existing-descendant tests.
+This is a process-membership check, not peer-side packet evidence or coverage
+of delegation to unrelated services and existing application brokers.
+
 `tests/selected-handoff-live.ps1` starts an unselected broker before launching a
 selected process. Named-event IPC transfers work to that broker. The native SCM
 test verifies successful HTTP(S), exact launcher membership, absence of the

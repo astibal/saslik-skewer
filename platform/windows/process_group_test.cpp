@@ -28,6 +28,22 @@ std::wstring executable() {
 
 int wmain(int argc, wchar_t** argv) {
     try {
+        if (argc == 2 && std::wstring(argv[1]) == L"--try-breakaway") {
+            // An explicit breakaway request must not escape our routing job.
+            // Keep any unexpectedly created child suspended and owned by RAII
+            // so a failed assertion cannot execute unselected application code.
+            auto command = L"\"" + executable() + L"\" --leaf";
+            STARTUPINFOW startup{};
+            startup.cb = sizeof(startup);
+            Child child;
+            const auto created = CreateProcessW(nullptr, command.data(), nullptr, nullptr,
+                FALSE, CREATE_BREAKAWAY_FROM_JOB | CREATE_SUSPENDED, nullptr, nullptr,
+                &startup, &child.process);
+            const auto error = GetLastError();
+            require(!created, "Selected process escaped its job through explicit breakaway");
+            require(error == ERROR_ACCESS_DENIED, "Breakaway failed for an unexpected reason");
+            return 0;
+        }
         if (argc == 4 && std::wstring(argv[1]) == L"--broker") {
             Handle request(OpenEventW(SYNCHRONIZE, FALSE, argv[2]));
             Handle reply(OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[3]));
@@ -76,6 +92,18 @@ int wmain(int argc, wchar_t** argv) {
         require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token_raw),
                 "Cannot open current process token");
         Handle token(token_raw);
+        {
+            Child probe{launch(executable(), {L"--try-breakaway"}, LaunchMode::Suspended)};
+            ProcessTarget target(processKey(probe.process.hProcess, probe.process.dwProcessId));
+            ProcessGroup group(target, ServiceOwner::fromToken(token.get()));
+            require(ResumeThread(probe.process.hThread) == 1, "Cannot resume breakaway probe");
+            require(WaitForSingleObject(probe.process.hProcess, 5000) == WAIT_OBJECT_0,
+                    "Breakaway probe timed out");
+            DWORD code{};
+            require(GetExitCodeProcess(probe.process.hProcess, &code) && code == 0,
+                    "Routing job did not reject explicit child breakaway");
+            std::cout << "PASS: selected job rejects explicit child breakaway\n";
+        }
         {
             // Existing singleton brokers are not descendants of the new
             // launcher. IPC handoff must never grant them a routing badge.
