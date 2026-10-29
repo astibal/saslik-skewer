@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <future>
+#include <system_error>
 
 namespace {
 using namespace skewer::windows;
@@ -145,6 +146,44 @@ void transportTest() {
                     count == reply.size() && decodeSelectionReply(reply) == expected,
                 "Transport reply lost");
     }
+}
+void disconnectedSetupTest() {
+    HANDLE raw{};
+    require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw), "Setup fixture token");
+    Handle token(raw);
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(bool(cancel), "Setup fixture cancellation event");
+    const auto suffix = L"SetupDisconnect-" + std::to_wstring(GetCurrentProcessId());
+    auto server = createSelectionPipe(suffix, token.get());
+    const auto path = L"\\\\.\\pipe\\SkewerSelection-" + suffix;
+    Handle client(CreateFileW(path.c_str(),
+        FILE_GENERIC_READ | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA,
+        0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT |
+            SECURITY_IDENTIFICATION, nullptr));
+    require(bool(client), "Setup fixture connection");
+    acceptSelection(server->get(), cancel.get(), 1000);
+    configureSelectionClient(client.get());
+    DWORD available{};
+    require(PeekNamedPipe(server->get(), nullptr, 0, nullptr, &available, nullptr) && !available,
+            "Client setup transmitted bytes before authentication");
+    require(DisconnectNamedPipe(server->get()), "Disconnect setup fixture");
+    bool disconnected{};
+    try {
+        configureSelectionClient(client.get());
+    } catch (const std::system_error& error) {
+        const auto code = error.code().value();
+        disconnected = code == ERROR_PIPE_NOT_CONNECTED || code == ERROR_BROKEN_PIPE ||
+                       code == ERROR_NO_DATA;
+        std::cout << "Client setup after disconnect: Win32 " << code << '\n';
+    }
+    require(disconnected, "Disconnected setup lost its Win32 error");
+    bool invalid{};
+    try {
+        configureSelectionClient(INVALID_HANDLE_VALUE);
+    } catch (const std::system_error& error) {
+        invalid = error.code().value() == ERROR_INVALID_HANDLE;
+    }
+    require(invalid, "Invalid handle was mistaken for a transient disconnect");
 }
 void listenerTest() {
     HANDLE raw{};
@@ -381,6 +420,7 @@ int main(int argc, char** argv) {
         transportTest();
         malformedHandoffTest();
         listenerTest();
+        disconnectedSetupTest();
         if (argc == 1) {
             pipeTest();
         } else {

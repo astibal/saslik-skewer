@@ -9,6 +9,9 @@ namespace skewer::windows {
 std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, HANDLE user_token);
 std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, const ServiceOwner& owner);
 void acceptSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms);
+// Configure a newly opened client before authentication or any request bytes.
+// Failures preserve the Win32 code; this function never reconnects or writes.
+void configureSelectionClient(HANDLE pipe);
 
 // Verify a connected client pipe against a trusted, pinned server identity.
 // Returns a query/synchronize-only process handle; retain it for the exchange.

@@ -12,6 +12,15 @@ passed the native VM cases listed below; unchecked items remain release gates.
   the Win32 error in diagnostics and reproduce the disconnect/re-accept boundary;
   a successful repeat alone does not close this reliability finding. Never retry
   a potentially delivered routing mutation as a generic transport workaround.
+  A deterministic native setup test now reproduces Win32 233 when the server
+  disconnects after client open but before message-mode setup. The client retries
+  only broken/disconnected setup handles within its original connection budget,
+  before authentication or any request bytes. Invalid handles and other errors
+  remain fatal. The original observation lacked its Win32 code, so this specific
+  race is covered without claiming every historical IPC failure is explained.
+  The native setup/authentication suite and four concurrent clients performing
+  100 authenticated status reads each passed with the revised client; the full
+  Windows cross-build passed as well. No routing mutation is retried by this fix.
 
 - [x] Repeat descendant admission integration after the startup-guard race fix. The
   2026-10-29 investigation found full connect guards briefly applied even to

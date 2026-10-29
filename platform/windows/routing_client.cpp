@@ -1,5 +1,6 @@
 #include "routing_client.hpp"
 #include <string_view>
+#include <system_error>
 
 namespace skewer::windows {
 std::unique_ptr<Handle> connectRoutingService(const std::wstring& name, bool pairing, HANDLE cancel,
@@ -21,13 +22,20 @@ std::unique_ptr<Handle> connectRoutingService(const std::wstring& name, bool pai
             nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
             nullptr));
         if (*pipe) {
-            DWORD mode = PIPE_READMODE_MESSAGE;
-            if (!SetNamedPipeHandleState(pipe->get(), &mode, nullptr, nullptr)) {
-                // Capture immediately: cleanup or formatting must not replace
-                // the OS error needed to diagnose a disconnect/re-accept race.
-                const auto error = GetLastError();
-                throw std::runtime_error("Cannot configure routing pipe message mode (Win32 " +
-                                         std::to_string(error) + ")");
+            try {
+                configureSelectionClient(pipe->get());
+            } catch (const std::system_error& error) {
+                const auto code = error.code().value();
+                const bool disconnected = code == ERROR_PIPE_NOT_CONNECTED ||
+                                          code == ERROR_BROKEN_PIPE || code == ERROR_NO_DATA;
+                if (!disconnected || GetTickCount64() >= deadline) throw;
+                // A timed-out accept can retire the endpoint after CreateFile
+                // succeeds. No authentication or command bytes were sent yet.
+                pipe.reset();
+                if (WaitForSingleObject(cancel, 20) != WAIT_TIMEOUT) {
+                    throw std::runtime_error("Routing service connection cancelled");
+                }
+                continue;
             }
             // Reject a spoofed pipe before callers can send even a command.
             try {

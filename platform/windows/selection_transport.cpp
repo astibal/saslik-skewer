@@ -127,6 +127,16 @@ std::unique_ptr<Handle> createSelectionPipe(std::wstring_view suffix, const Serv
     return pipe;
 }
 
+void configureSelectionClient(HANDLE pipe) {
+    DWORD mode = PIPE_READMODE_MESSAGE;
+    if (!SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr)) {
+        const auto error = GetLastError();
+        throw std::system_error(error, std::system_category(),
+                                "Cannot configure routing pipe message mode (Win32 " +
+                                    std::to_string(error) + ")");
+    }
+}
+
 void acceptSelection(HANDLE pipe, HANDLE cancel, DWORD timeout_ms) {
     if (!timeout_ms || timeout_ms > 60000 || !cancel || cancel == INVALID_HANDLE_VALUE) {
         throw std::invalid_argument("Invalid selection accept budget or cancellation event");
