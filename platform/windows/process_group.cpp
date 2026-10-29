@@ -189,4 +189,60 @@ std::unique_ptr<ProcessTarget> ProcessGroup::next(DWORD timeout_ms) {
     }
 }
 
+void ProcessSelection::add(ProcessKey root) {
+    // Revalidate ownership and creation time before assigning any process.
+    ProcessTarget authorized(root, owner_);
+    if (!authorized.running()) throw std::runtime_error("Cannot select an exited application");
+    if (std::ranges::any_of(groups_, [&](const auto& group) { return group->root() == root; })) return;
+    if (contains(root.pid)) {
+        throw std::runtime_error("Application is already covered by a selected tree");
+    }
+    auto candidate = std::make_unique<ProcessGroup>(authorized, owner_);
+    // Reject overlapping trees instead of giving Release ambiguous semantics.
+    // Job assignment alone changes no packet policy and never kills on close.
+    for (const auto& group : groups_) {
+        const auto overlapping = candidate->member(group->root().pid);
+        if (overlapping && overlapping->key() == group->root()) {
+            throw std::runtime_error("Application contains an already selected tree");
+        }
+    }
+    groups_.push_back(std::move(candidate));
+}
+
+bool ProcessSelection::remove(ProcessKey root) {
+    return std::erase_if(groups_, [&](const auto& group) { return group->root() == root; }) != 0;
+}
+
+bool ProcessSelection::running() const {
+    return std::ranges::any_of(groups_, [](const auto& group) { return group->running(); });
+}
+
+bool ProcessSelection::contains(DWORD pid) const {
+    return std::ranges::any_of(groups_, [&](const auto& group) { return group->contains(pid); });
+}
+
+std::unique_ptr<ProcessTarget> ProcessSelection::member(DWORD pid) const {
+    for (const auto& group : groups_) {
+        if (auto process = group->member(pid)) return process;
+    }
+    return {};
+}
+
+std::unique_ptr<ProcessTarget> ProcessSelection::next() {
+    // Round-robin avoids starving another application during a fork burst.
+    for (std::size_t checked = 0; checked < groups_.size(); ++checked) {
+        cursor_ %= groups_.size();
+        auto& group = groups_[cursor_++];
+        if (auto process = group->next()) return process;
+    }
+    return {};
+}
+
+std::vector<ProcessKey> ProcessSelection::roots() const {
+    std::vector<ProcessKey> result;
+    result.reserve(groups_.size());
+    for (const auto& group : groups_) result.push_back(group->root());
+    return result;
+}
+
 } // namespace skewer::windows

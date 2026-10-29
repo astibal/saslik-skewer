@@ -13,7 +13,8 @@ const ProcessTarget& checkedRoot(const std::unique_ptr<ProcessTarget>& root) {
 SelectedGroupResolver::SelectedGroupResolver(const std::wstring& dll,
                                              std::unique_ptr<ProcessTarget> root,
                                              const ServiceOwner& owner, TargetAdded added)
-    : dll_(dll), added_(std::move(added)), group_(checkedRoot(root), owner) {
+    : dll_(dll), added_(std::move(added)), root_(checkedRoot(root).key()), group_(owner) {
+    group_.add(root_);
     enroll(std::move(root));
 }
 
@@ -128,7 +129,7 @@ SelectedOwnerResolver::Result SelectedGroupResolver::resolve(skewer::traffic::Pa
     if ((tuple.protocol == IPPROTO_TCP || tuple.protocol == IPPROTO_UDP) && unique_group_socket) {
         const auto found = std::ranges::find_if(members_,
             [&](const auto& member) { return member.process.pid == candidates.front(); });
-        if (found != members_.end() && found->process != group_.root()) {
+        if (found != members_.end() && found->process != root_) {
             const auto flow = groupFlow(found->process, tuple);
             return {skewer::traffic::OwnerEvidence::GroupCorroborated, flow,
                     Disposition::Tunnel};

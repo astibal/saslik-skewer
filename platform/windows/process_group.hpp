@@ -31,4 +31,24 @@ private:
     Handle completion_;
 };
 
+// Independent application trees share routing policy, not a Job Object.
+// Releasing one selection drops its observation without killing its processes
+// or affecting other trees. Access is confined to the packet worker thread.
+class ProcessSelection final {
+public:
+    explicit ProcessSelection(ServiceOwner owner) : owner_(std::move(owner)) {}
+    void add(ProcessKey root);
+    bool remove(ProcessKey root);
+    bool running() const;
+    bool contains(DWORD pid) const;
+    std::unique_ptr<ProcessTarget> member(DWORD pid) const;
+    std::unique_ptr<ProcessTarget> next();
+    std::vector<ProcessKey> roots() const;
+
+private:
+    ServiceOwner owner_;
+    std::vector<std::unique_ptr<ProcessGroup>> groups_;
+    std::size_t cursor_{};
+};
+
 } // namespace skewer::windows

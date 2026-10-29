@@ -49,6 +49,42 @@ int wmain(int argc, wchar_t** argv) {
                 "Cannot open current process token");
         Handle token(token_raw);
         {
+            Child first{launch(executable(), {L"--parent"}, LaunchMode::Suspended)};
+            Child second{launch(executable(), {L"--parent"}, LaunchMode::Suspended)};
+            const auto first_key = processKey(first.process.hProcess, first.process.dwProcessId);
+            const auto second_key = processKey(second.process.hProcess, second.process.dwProcessId);
+            ProcessSelection selection(ServiceOwner::fromToken(token.get()));
+            selection.add(first_key);
+            selection.add(second_key);
+            selection.add(first_key);
+            require(selection.roots().size() == 2, "Duplicate selection created another tree");
+            require(selection.contains(first_key.pid) && selection.contains(second_key.pid),
+                    "Independent applications are not both selected");
+            auto stale = first_key;
+            ++stale.created;
+            require(!selection.remove(stale), "Stale identity released a current selection");
+            require(selection.remove(first_key), "Cannot release first application");
+            require(!selection.contains(first_key.pid) && selection.contains(second_key.pid),
+                    "Release affected the wrong application tree");
+            require(selection.running(), "Release stopped remaining selection");
+            require(WaitForSingleObject(first.process.hProcess, 0) == WAIT_TIMEOUT,
+                    "Release terminated the first application");
+            require(ResumeThread(second.process.hThread) == 1, "Cannot resume second application");
+            bool descendant{};
+            const auto until = GetTickCount64() + 3000;
+            while (GetTickCount64() < until && !descendant) {
+                if (auto member = selection.next()) {
+                    descendant = member->key() != second_key;
+                } else {
+                    Sleep(10);
+                }
+            }
+            require(descendant, "Remaining tree lost descendant tracking after Release");
+            require(selection.remove(second_key) && !selection.running(), "Final Release left selection active");
+            require(WaitForSingleObject(second.process.hProcess, 0) == WAIT_TIMEOUT,
+                    "Final Release terminated application");
+        }
+        {
             ProcessTarget root(identity);
             ProcessGroup group(root, ServiceOwner::fromToken(token.get()));
             require(group.contains(identity.pid), "Root is not in its routing job");

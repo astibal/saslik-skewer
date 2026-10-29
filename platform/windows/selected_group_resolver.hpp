@@ -43,7 +43,8 @@ private:
 
     std::wstring dll_;
     TargetAdded added_;
-    ProcessGroup group_;
+    ProcessKey root_;
+    ProcessSelection group_;
     std::vector<Member> members_;
 };
 
