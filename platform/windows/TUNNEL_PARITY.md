@@ -13,9 +13,14 @@ On 2026-10-29, `native-routing-service-live.ps1 -TestPause` passed on the Window
 VM against the paired lab: HTTP/HTTPS baseline, HTTPS denial during acknowledged
 pause, retained /1 routes, stale-generation rejection, same-generation resume,
 restored HTTPS and system DNS, and explicit Stop with route/adapter cleanup.
-Controller and offscreen routing-panel regressions also passed. Interactive
-whole-host pause UI and pause across an injected whole-host tunnel loss still
-need dedicated verification. Upgrade the client and service together: older
+Controller and offscreen routing-panel regressions also passed. The combined
+`-TestPause -TestTunnelLoss` run then passed against the same live lab: a
+temporary rule blocked only the fixture service's peer UDP transport, ordinary
+HTTP could not fall back directly, Pause was acknowledged while blocked, and
+restoring peer connectivity did not clear pause or pass HTTPS. Explicit Resume
+restored tunneled HTTPS; service, firewall rule, routes and adapter were cleaned
+up. Interactive whole-host pause UI still needs dedicated verification.
+Upgrade the client and service together: older
 clients reject the newly valid whole-host pause capability as unsupported.
 
 ### Existing-instance handoff and normal process completion

@@ -204,8 +204,34 @@ try {
             --connect-timeout 2 --max-time 3 http://example.com/ | Out-Null
         if ($LASTEXITCODE -eq 0) { throw 'Direct fallback succeeded after tunnel loss' }
         Write-Output 'PASS: lost tunnel stays Blocked and public HTTP cannot fall back directly'
+        if ($TestPause) {
+            $paused = & $client pause $name $active.generation | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or !$paused.paused -or $paused.phase -ne 3 -or
+                $paused.generation -ne $active.generation) {
+                throw 'Host pause during transport loss was not acknowledged'
+            }
+        }
         Remove-NetFirewallRule -Name $firewallRule
         $firewallRule = $null
+        if ($TestPause) {
+            # Give the live peer time to answer replacement handshakes. A
+            # recovered transport must never override the user's pause intent.
+            $until = (Get-Date).AddSeconds(10)
+            do {
+                $held = Status
+                if (!$held.paused -or $held.phase -ne 3 -or
+                    $held.generation -ne $active.generation) {
+                    throw 'Transport recovery cleared protected host pause'
+                }
+                Start-Sleep -Milliseconds 200
+            } while ((Get-Date) -lt $until)
+            & curl.exe -4 --silent --insecure --noproxy '*' --output NUL `
+                --resolve "example.com:443:$testIp" --connect-timeout 3 --max-time 4 https://example.com/
+            if ($LASTEXITCODE -eq 0) { throw 'Recovered transport bypassed host pause' }
+            & $client resume $name $active.generation
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot resume recovered host tunnel' }
+            Write-Output 'PASS: host pause survives restored peer connectivity until explicit Resume'
+        }
         $active = Await 2
         $body = & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' `
             --resolve "example.com:443:$testIp" --connect-timeout 5 --max-time 15 https://example.com/
