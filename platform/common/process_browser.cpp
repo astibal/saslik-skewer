@@ -225,7 +225,7 @@ void ProcessBrowser::rebuildModel() {
         }
         // A process-tree snapshot is not authoritative Job membership. An
         // unlisted child may still be selected, even after its parent exits.
-        routing->setToolTip(tr("Selected roots are confirmed by the service. Descendant membership is not inferred. "
+        routing->setToolTip(tr("Selected roots and reported live members are confirmed by the service. Membership is not inferred. "
                                "Host policy includes configured exemptions; routing currently covers IPv4."));
         if (selected && routing_display_ == RoutingDisplay::Selected) {
             auto font = routing->font();

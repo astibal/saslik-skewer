@@ -10,6 +10,10 @@
 
 namespace skewer::windows {
 namespace {
+constexpr std::size_t roots_wire_size = 1577;
+constexpr std::size_t member_limit = 1024;
+constexpr std::size_t members_offset = roots_wire_size + 3;
+constexpr std::size_t members_wire_size = members_offset + member_limit * 20;
 class Operation {
 public:
     explicit Operation(HANDLE pipe) : pipe_(pipe), event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
@@ -436,7 +440,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 7 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 8 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -492,7 +496,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         }
         result = direct(gateway, getGeneration(request.data() + 24));
     } else {
-        result = handler(request[22] == 7 ? RoutingCommand::Status : static_cast<RoutingCommand>(request[22]),
+        result = handler(request[22] >= 7 ? RoutingCommand::Status : static_cast<RoutingCommand>(request[22]),
                          getGeneration(request.data() + 24));
     }
     const bool has_scope = result.scope != RoutingScope::None;
@@ -510,9 +514,10 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     }
     if (result.detail.size() > 255) result.detail.resize(255);
     const bool extended = request[22] >= 5;
+    const bool membership = request[22] == 8;
     if (result.selections.size() > 64) throw std::logic_error("Too many selected applications");
-    std::vector<std::uint8_t> response(extended ? 1577 : 296);
-    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(extended ? 7 : 6),
+    std::vector<std::uint8_t> response(membership ? members_wire_size : extended ? roots_wire_size : 296);
+    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(membership ? 8 : extended ? 7 : 6),
         static_cast<std::uint8_t>(result.result), static_cast<std::uint8_t>(result.phase),
         static_cast<std::uint8_t>(result.scope)};
     std::copy(header.begin(), header.end(), response.begin());
@@ -531,6 +536,16 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         for (std::size_t i = 0; i < result.selections.size(); ++i) {
             const auto selection = encodeSelectionRequest(result.selections[i]);
             std::copy(selection.begin(), selection.end(), response.begin() + 297 + 20 * i);
+        }
+    }
+    if (membership) {
+        const auto count = std::min(result.selection_members.size(), member_limit);
+        response[roots_wire_size] = static_cast<std::uint8_t>(count);
+        response[roots_wire_size + 1] = static_cast<std::uint8_t>(count >> 8);
+        response[roots_wire_size + 2] = result.selection_members.size() > count ? 1 : 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto member = encodeSelectionRequest(result.selection_members[i]);
+            std::copy(member.begin(), member.end(), response.begin() + members_offset + 20 * i);
         }
     }
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
@@ -559,10 +574,11 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
     }
     const bool extended = operation >= 5;
-    std::vector<std::uint8_t> response(extended ? 1577 : 296);
+    const bool membership = operation == 8;
+    std::vector<std::uint8_t> response(membership ? members_wire_size : extended ? roots_wire_size : 296);
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != (extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
+        response[4] != (membership ? 8 : extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
         response[38] > static_cast<unsigned>(RoutingTransport::Direct) ||
         (response[39] & ~3U) != 0 ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
@@ -598,9 +614,23 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
             }
             result.selections.push_back(identity);
         }
-        if (std::ranges::any_of(std::span(response).subspan(297 + 20 * count), [](auto byte) { return byte != 0; })) {
+        if (std::ranges::any_of(std::span(response).subspan(297 + 20 * count, roots_wire_size - 297 - 20 * count), [](auto byte) { return byte != 0; })) {
             throw std::runtime_error("Invalid selection padding");
         }
+    }
+    if (membership) {
+        const unsigned count = response[roots_wire_size] | (unsigned(response[roots_wire_size + 1]) << 8);
+        if (count > member_limit || response[roots_wire_size + 2] > 1)
+            throw std::runtime_error("Invalid membership count or truncation flag");
+        result.members_truncated = response[roots_wire_size + 2] != 0;
+        for (unsigned i = 0; i < count; ++i) {
+            const auto member = decodeSelectionRequest(std::span(response).subspan(members_offset + 20 * i, 20));
+            if (std::ranges::find(result.selection_members, member) != result.selection_members.end())
+                throw std::runtime_error("Duplicate selection member");
+            result.selection_members.push_back(member);
+        }
+        if (std::ranges::any_of(std::span(response).subspan(members_offset + 20 * count), [](auto byte) { return byte != 0; }))
+            throw std::runtime_error("Invalid membership padding");
     }
     return result;
 }
@@ -610,7 +640,7 @@ RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_nam
     if (command > RoutingCommand::Stop) {
         throw std::invalid_argument("Unknown routing command");
     }
-    return exchangeRouting(pipe, service_name, command == RoutingCommand::Status ? 7 : static_cast<std::uint8_t>(command), generation, cancel,
+    return exchangeRouting(pipe, service_name, command == RoutingCommand::Status ? 8 : static_cast<std::uint8_t>(command), generation, cancel,
                            timeout_ms, nullptr, nullptr);
 }
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,

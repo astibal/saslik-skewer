@@ -117,9 +117,11 @@ void ConnectionsPanel::render(const ConnectionSnapshot& snapshot) {
     }
     QHash<quint64, skewer::ui::ProcessRecord> owners;
     const auto selected = [&](quint64 pid, quint64 created) {
-        return std::ranges::any_of(routing_.selections, [&](const auto root) {
+        const auto matches = [&](const auto root) {
             return root.pid == pid && root.created == created;
-        });
+        };
+        return std::ranges::any_of(routing_.selections, matches) ||
+               std::ranges::any_of(routing_.selection_members, matches);
     };
     const auto policy = [&](quint64 pid, quint64 created, bool ipv6, bool udp) {
         if (!routing_known_ || routing_.phase == RoutingPhase::Failed) return tr("Unknown");

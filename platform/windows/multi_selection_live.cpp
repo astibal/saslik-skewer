@@ -1,5 +1,6 @@
 #include "routing_client.hpp"
 #include "routed_launch.hpp"
+#include <algorithm>
 #include <iostream>
 
 using namespace skewer::windows;
@@ -27,7 +28,13 @@ struct Child {
 // descendants only when explicitly signalled after authoritative selection.
 int wmain(int argc, wchar_t** argv) {
     try {
+        if (argc == 3 && std::wstring_view(argv[1]) == L"--member") {
+            Handle parent(OpenProcess(SYNCHRONIZE, FALSE, std::stoul(argv[2])));
+            if (parent) WaitForSingleObject(parent.get(), 60000);
+            return 0;
+        }
         if (argc == 6 && std::wstring_view(argv[1]) == L"--child") {
+            Child member{launch(executable(), {L"--member", std::to_wstring(GetCurrentProcessId())})};
             Handle go(OpenEventW(SYNCHRONIZE, FALSE, argv[2]));
             Handle done(OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[3]));
             require(bool(go) && bool(done), "Cannot open child events");
@@ -93,10 +100,29 @@ int wmain(int argc, wchar_t** argv) {
         require(SetEvent(go1.get()) && SetEvent(go2.get()), "Cannot trigger HTTPS");
         require(WaitForSingleObject(done1.get(), 20000) == WAIT_OBJECT_0 &&
                 WaitForSingleObject(done2.get(), 20000) == WAIT_OBJECT_0, "Both applications did not complete HTTPS");
+        const auto awaitMembers = [&](std::size_t count) {
+            const auto deadline = GetTickCount64() + 5000;
+            for (;;) {
+                auto current = status(RoutingCommand::Status, 0);
+                require(current.generation == generation && current.phase == RoutingPhase::Active &&
+                            !current.members_truncated, "Invalid membership snapshot generation");
+                if (current.selection_members.size() == count) return current;
+                require(GetTickCount64() < deadline, "Live descendant membership did not converge");
+                Sleep(50);
+            }
+        };
+        state = awaitMembers(4);
+        require(std::ranges::find(state.selection_members, first.key()) != state.selection_members.end() &&
+                    std::ranges::find(state.selection_members, second.key()) != state.selection_members.end(),
+                "Root identities missing from live membership");
         state = change(SelectionOperation::Remove, first.key(), generation);
         require(state.result == RoutingResult::Ok && state.selections.size() == 1 && state.selections.front() == second.key(),
                 "Release affected the wrong selection");
         require(WaitForSingleObject(first.process.hProcess, 0) == WAIT_TIMEOUT, "Release killed first application");
+        state = awaitMembers(2);
+        require(std::ranges::find(state.selection_members, first.key()) == state.selection_members.end() &&
+                    std::ranges::find(state.selection_members, second.key()) != state.selection_members.end(),
+                "Release retained the wrong application membership");
         require(SetEvent(go2.get()) && WaitForSingleObject(done2.get(), 20000) == WAIT_OBJECT_0,
                 "Remaining application's fresh HTTPS failed after Release");
         require(change(SelectionOperation::Remove, second.key(), initial.generation).result == RoutingResult::Stale,

@@ -129,6 +129,13 @@ int main(int argc, char** argv) {
                                            {"birth", QString::number(process.created)}});
         }
         output["selections"] = selections;
+        QJsonArray members;
+        for (const auto process : response.selection_members) {
+            members.append(QJsonObject{{"pid", static_cast<qint64>(process.pid)},
+                                       {"birth", QString::number(process.created)}});
+        }
+        output["members"] = members;
+        output["membersTruncated"] = response.members_truncated;
         QTextStream(stdout) << QJsonDocument(output).toJson(QJsonDocument::Compact) << '\n';
         return response.result == RoutingResult::Ok ? 0 : 1;
     } catch (const std::exception& error) {

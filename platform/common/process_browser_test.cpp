@@ -36,6 +36,10 @@ int main(int argc, char** argv) {
         apps = browser.model()->item(0);
         require(apps->child(0, 2)->text() == "Routed", "Exact routed identity was not marked");
         require(apps->child(1, 2)->text() == "Unconfirmed", "Unlisted process was incorrectly declared direct");
+        browser.setRoutingSelections(true, {records[1].identity(), records[2].identity()});
+        apps = browser.model()->item(0);
+        require(apps->child(0)->child(0, 2)->text() == "Routed",
+                "Confirmed descendant did not receive a routed badge");
         browser.setRoutingSelections(true, {records[1].identity(), records[3].identity()});
         apps = browser.model()->item(0);
         require(apps->child(0, 2)->text() == "Routed" && apps->child(1, 2)->text() == "Routed",

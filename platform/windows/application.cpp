@@ -597,6 +597,9 @@ private:
             for (const auto root : state.selections) {
                 identities.append(QString::number(root.pid) + QLatin1Char(':') + QString::number(root.created));
             }
+            for (const auto member : state.selection_members) {
+                identities.append(QString::number(member.pid) + QLatin1Char(':') + QString::number(member.created));
+            }
         }
         using Display = skewer::ui::ProcessBrowser::RoutingDisplay;
         using Phase = skewer::windows::RoutingPhase;
@@ -638,6 +641,10 @@ private:
                     .arg(state.generation));
         } else {
             page_->action_status->setText(tr("No process is individually routed."));
+        }
+        if (known && state.members_truncated) {
+            page_->action_status->setText(page_->action_status->text() +
+                tr(" Membership list truncated; unlisted processes remain unconfirmed."));
         }
     }
 

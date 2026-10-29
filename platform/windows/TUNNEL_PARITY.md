@@ -21,11 +21,14 @@ that sole selection without requiring a row selection.
 The Applications and Connections views distinguish Active, Blocked, transition,
 idle and unavailable states. Whole-host policy is labeled as policy (including
 its configured exemptions), not proof that every displayed socket is tunneled.
-The current IPC status lists roots, not the complete authoritative Job member
-set: unlisted processes are shown as unconfirmed while selected routing is
-active. They must not be called direct merely because a root has exited or a
-window-bearing descendant is displayed as a separate application. Exporting
-live member identities remains a GUI parity improvement.
+IPC status carries an immutable snapshot of roots and live Job member identities
+(PID plus creation time). The packet worker refreshes membership every 250 ms;
+GUI polling adds its normal observation delay. Confirmed descendants receive
+badges even when their windows put them in a different visual application row.
+The bounded response includes up to 1024 members and a visible truncation flag.
+Unlisted processes remain unconfirmed: absence from a sampled or truncated list
+is not proof of direct routing. Release still targets roots, not individual Job
+members.
 
 Add revalidates the configured owner and process creation time. Remove accepts
 an exact previously selected root, including an exited root with live children.
@@ -33,8 +36,10 @@ It retires that tree's packet queues, reverse mappings and guards without killin
 applications or stopping other selections. The final removal retires routing.
 Overlapping trees are rejected rather than giving Release ambiguous semantics.
 
-Extended status and mutation replies use protocol version 7. Legacy operations
-retain their version-6 response format. New clients require an upgraded service.
+Membership status (operation 8) uses protocol version 8. Operation 7 and mutation
+replies retain version 7; older operations retain version 6. New GUI/CLI clients
+require an upgraded service. Status responses validate member counts, duplicate
+identities and reserved padding before exposing the snapshot.
 Mutation requests are not automatically retried after IPC loss: inspect status
 because a request may already have been applied. The disposable-service fixture
 tests concurrent HTTPS, independent Release, fresh HTTPS from the remaining tree,

@@ -26,6 +26,7 @@ struct RoutingReply {
     bool direct_available{};
     std::vector<ProcessKey> selections{};
     std::vector<ProcessKey> selection_members{};
+    bool members_truncated{};
 };
 // Publish roots and live Job members together; UI readers must never combine
 // membership from one selection revision with roots from another revision.
