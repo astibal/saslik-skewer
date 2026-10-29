@@ -31,7 +31,9 @@ struct RoutingReply {
     // Pause intent may outlive the active session while cleanup joins its worker.
     // Presentation must not let that retained flag hide Stopping or Failed.
     bool protectedPause() const {
-        return scope == RoutingScope::SelectedProcess && phase == RoutingPhase::Blocked && paused;
+        const bool supported_scope = scope == RoutingScope::SelectedProcess ||
+            (scope == RoutingScope::WholeHost && transport == RoutingTransport::Tunnel && pause_available);
+        return supported_scope && phase == RoutingPhase::Blocked && paused;
     }
 };
 // Publish roots and live Job members together; UI readers must never combine

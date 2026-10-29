@@ -1,5 +1,23 @@
 # Windows tunnel parity contract
 
+### Whole-host tunnel pause
+
+The service advertises protected pause for whole-host Tuntom routing. The packet
+worker acknowledges Pause after closing both payload directions; routes and the
+external guard remain installed. Resume drains queued host output in bounded
+batches before reopening admission. Pause intent survives transport retries;
+keepalives, control traffic and configured management exceptions remain allowed.
+Direct whole-host routing does not advertise this capability.
+
+On 2026-10-29, `native-routing-service-live.ps1 -TestPause` passed on the Windows
+VM against the paired lab: HTTP/HTTPS baseline, HTTPS denial during acknowledged
+pause, retained /1 routes, stale-generation rejection, same-generation resume,
+restored HTTPS and system DNS, and explicit Stop with route/adapter cleanup.
+Controller and offscreen routing-panel regressions also passed. Interactive
+whole-host pause UI and pause across an injected whole-host tunnel loss still
+need dedicated verification. Upgrade the client and service together: older
+clients reject the newly valid whole-host pause capability as unsupported.
+
 ### Existing-instance handoff and normal process completion
 
 The native process-group regression also verifies an explicit

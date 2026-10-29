@@ -233,7 +233,9 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
                                          tr("Stopping — cleaning up"),
                                          tr("Failed — previous session ended with an error")};
                 status_->setText(phases.value(static_cast<int>(state_.phase), tr("Unknown")));
-                if (state_.protectedPause()) status_->setText(tr("Paused — selected traffic remains blocked"));
+                if (state_.protectedPause()) status_->setText(state_.scope == RoutingScope::WholeHost
+                    ? tr("Paused — host traffic remains blocked")
+                    : tr("Paused — selected traffic remains blocked"));
                 if (state_.phase == RoutingPhase::Idle) {
                     if (!state_.tunnel_available) {
                         status_->setText(
@@ -418,11 +420,16 @@ void RoutingPanel::updateControls() {
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
     const bool selected_scope = state_.scope == RoutingScope::SelectedProcess;
-    pause_->setEnabled(known_ && selected_scope && state_.pause_available && !action_busy_ &&
+    pause_->setEnabled(known_ && state_.pause_available && !action_busy_ &&
                        (state_.phase == RoutingPhase::Active || state_.phase == RoutingPhase::Blocked));
-    pause_->setText(state_.paused ? tr("Resume applications") : tr("Pause applications"));
-    pause_->setToolTip(tr("Pause keeps selected applications blocked and leaves other traffic unchanged. "
-                          "Resume requires a healthy tunnel. Release is a separate action."));
+    pause_->setText(selected_scope
+        ? (state_.paused ? tr("Resume applications") : tr("Pause applications"))
+        : (state_.paused ? tr("Resume host") : tr("Pause host")));
+    pause_->setToolTip(selected_scope
+        ? tr("Pause keeps selected applications blocked and leaves other traffic unchanged. "
+             "Resume requires a healthy tunnel. Release is a separate action.")
+        : tr("Pause blocks host payload through the tunnel while retaining routes and protection. "
+             "Transport and management exceptions remain available. Release restores normal routing."));
     pause_->setAccessibleDescription(pause_->toolTip());
     stop_->setText(selected_scope ? tr("Release all applications") : tr("Release host"));
     stop_->setToolTip(selected_scope

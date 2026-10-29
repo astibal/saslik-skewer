@@ -136,7 +136,7 @@ RoutingReply RoutingController::command(RoutingCommand command, std::uint64_t ge
         }
     }
     if (work_.valid() && !stopping_ && signals_.paused.load())
-        detail = "Routing paused; selected traffic remains blocked";
+        detail = "Routing paused; protected traffic remains blocked";
     RoutingReply reply{result, phase, generation_, RoutingScope::None, RoutingTransport::None,
             std::nullopt, detail, false, false, false};
     if (work_.valid()) {

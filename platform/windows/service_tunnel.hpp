@@ -3,6 +3,7 @@
 #include "tunnel_address.hpp"
 
 namespace skewer::windows {
+struct RoutingSignals;
 // Trusted service policy, not a filter/route expression supplied through IPC.
 // Called after authenticated addressing and transport health are established.
 using ServiceRoutePlan = std::function<std::vector<MIB_IPFORWARD_ROW2>(NET_LUID, const Tuntom::Endpoint&)>;
@@ -16,7 +17,8 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
                                                ServiceRoutePlan plan, HANDLE stop, std::atomic_bool& ready,
                                                std::atomic_bool& blocked, const std::wstring& dns = {},
                                                std::atomic<std::shared_ptr<const std::string>>* retry_error =
-                                                   nullptr);
+                                                   nullptr,
+                                               RoutingSignals* pause_state = nullptr);
 
 // One routing generation owns adapter, address and routes. The caller owns an
 // already armed guard and keeps control/API alive until this function returns.

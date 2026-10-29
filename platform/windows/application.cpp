@@ -726,7 +726,9 @@ private:
             text = tr("Routing unavailable");
             color = QStringLiteral("#ef5b6a");
         } else if (state.protectedPause()) {
-            text = tr("Routing paused — applications blocked");
+            text = state.scope == skewer::windows::RoutingScope::WholeHost
+                ? tr("Routing paused — host traffic blocked")
+                : tr("Routing paused — applications blocked");
             color = QStringLiteral("#d8a93f");
         } else if (state.phase == skewer::windows::RoutingPhase::Blocked) {
             text = tr("Routing blocked");

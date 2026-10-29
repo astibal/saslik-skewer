@@ -1,4 +1,5 @@
 #include "service_tunnel.hpp"
+#include "host_tunnel_pause.hpp"
 #include <algorithm>
 #include <exception>
 
@@ -45,7 +46,8 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
                                          const QString& peer, ServiceRoutePlan plan, HANDLE stop,
                                          std::atomic_bool& ready, std::atomic_bool& blocked,
                                          const std::wstring& dns = {},
-                                         std::atomic<std::shared_ptr<const std::string>>* retry_error = nullptr) {
+                                         std::atomic<std::shared_ptr<const std::string>>* retry_error = nullptr,
+                                         RoutingSignals* pause_state = nullptr) {
     if (!api || !plan || adapter_name.empty()) {
         throw std::invalid_argument("Incomplete service tunnel configuration");
     }
@@ -64,11 +66,13 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
                 device = std::make_unique<WintunDevice>(api, adapter_name);
             }
             unsigned failures{};
+            std::unique_ptr<HostTunnelPause> pause;
+            if (pause_state) pause = std::make_unique<HostTunnelPause>(*device, *pause_state);
             while (!cancelled(cancel)) {
                 try {
                     addressed = std::make_unique<AddressedTunnelControl>(control, *device, cancel, dns);
                     result.counters = runPairedTunnel(*device, *addressed, peer, cancel, ready, &routes,
-                                                       nullptr, &blocked);
+                                                       pause.get(), &blocked);
                     return;
                 } catch (...) {
                     const auto failure = std::current_exception();
@@ -89,11 +93,15 @@ GuardedTunnelResult runOwnedDeviceTunnel(traffic::PacketCapture& guard, std::uni
                     const auto shift = std::min(failures, 4U);
                     if (failures < 4U) ++failures;
                     const auto delay = static_cast<DWORD>(250U << shift);
-                    const auto wait = WaitForSingleObject(cancel, delay);
-                    if (wait == WAIT_OBJECT_0) return;
-                    if (wait != WAIT_TIMEOUT) {
-                        throw std::runtime_error("Cannot wait for service tunnel retry");
-                    }
+                    const auto deadline = GetTickCount64() + delay;
+                    do {
+                        if (pause) pause->pollControl();
+                        const auto wait = WaitForSingleObject(cancel, 25);
+                        if (wait == WAIT_OBJECT_0) return;
+                        if (wait != WAIT_TIMEOUT) {
+                            throw std::runtime_error("Cannot wait for service tunnel retry");
+                        }
+                    } while (GetTickCount64() < deadline);
                 }
             }
         },
@@ -128,7 +136,8 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
                                                ServiceGuardFactory guard_factory, ServiceRoutePlan plan,
                                                HANDLE stop, std::atomic_bool& ready,
                                                std::atomic_bool& blocked, const std::wstring& dns,
-                                               std::atomic<std::shared_ptr<const std::string>>* retry_error) {
+                                               std::atomic<std::shared_ptr<const std::string>>* retry_error,
+                                               RoutingSignals* pause_state) {
     ready.store(false);
     blocked.store(false);
     if (!api || !guard_factory || !plan || name.empty()) {
@@ -143,6 +152,6 @@ GuardedTunnelResult runConfiguredServiceTunnel(std::shared_ptr<const WintunApi> 
         throw std::runtime_error("Service egress guard was not created");
     }
     return runOwnedDeviceTunnel(*guard, device, api, name, control, peer, std::move(plan), stop, ready,
-                                blocked, dns, retry_error);
+                                blocked, dns, retry_error, pause_state);
 }
 } // namespace skewer::windows

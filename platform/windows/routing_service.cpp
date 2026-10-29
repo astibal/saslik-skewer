@@ -99,8 +99,8 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             current.result = RoutingResult::Stale;
             return current;
         }
-        if (current.scope != RoutingScope::SelectedProcess)
-            throw std::runtime_error("Protected pause currently requires selected applications");
+        if (!current.pause_available)
+            throw std::runtime_error("This routing worker does not support protected pause");
         const auto request = controller.changePause(paused, generation);
         const auto deadline = GetTickCount64() + 25000;
         for (;;) {

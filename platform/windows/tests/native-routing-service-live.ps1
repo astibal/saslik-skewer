@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Management,
     [string]$DnsServer = '1.1.1.1',
     [switch]$TestTunnelLoss,
+    [switch]$TestPause,
     [switch]$TestDhcpRenew,
     [uint32]$FailoverInterface = 0,
     [switch]$GuiClient
@@ -127,6 +128,32 @@ try {
         if ($LASTEXITCODE -ne 0 -or ($body -join "`n") -notmatch 'Example Domain') { throw "$scheme routing failed" }
     }
     Write-Output 'PASS: real SCM service -> Wintun/Tuntom -> Smithproxy -> HTTP/HTTPS, without explicit proxy'
+    if ($TestPause) {
+        if (!$active.pauseAvailable) { throw 'Whole-host tunnel did not advertise pause' }
+        $paused = & $client pause $name $active.generation | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or !$paused.paused -or $paused.phase -ne 3 -or
+            $paused.generation -ne $active.generation) { throw 'Host pause was not acknowledged' }
+        & curl.exe -4 --silent --insecure --noproxy '*' --output NUL `
+            --resolve "example.com:443:$testIp" --connect-timeout 3 --max-time 4 https://example.com/
+        if ($LASTEXITCODE -eq 0) { throw 'Host HTTPS escaped protected pause' }
+        foreach ($prefix in $prefixes[0..1]) {
+            if (!(Get-NetRoute -DestinationPrefix $prefix -InterfaceIndex $adapter.ifIndex)) {
+                throw 'Pause removed a host route'
+            }
+        }
+        $stale = & $client resume $name ([uint64]$active.generation - 1) | ConvertFrom-Json
+        if ($stale.result -ne 1 -or !$stale.paused) { throw 'Stale resume changed host pause' }
+        & $client resume $name $active.generation
+        if ($LASTEXITCODE -ne 0) { throw 'Host resume failed' }
+        $resumed = Await 2
+        if ($resumed.paused -or $resumed.generation -ne $active.generation) {
+            throw 'Host resume replaced routing generation'
+        }
+        & curl.exe -4 --silent --show-error --fail --insecure --noproxy '*' --output NUL `
+            --resolve "example.com:443:$testIp" --connect-timeout 5 --max-time 10 https://example.com/
+        if ($LASTEXITCODE -ne 0) { throw 'Host HTTPS did not recover after resume' }
+        Write-Output 'PASS: host tunnel pause blocks HTTPS, retains routes and resumes the same generation'
+    }
     Clear-DnsClientCache
     Get-NetIPInterface -AddressFamily IPv4 | Format-Table InterfaceIndex,InterfaceAlias,InterfaceMetric,AutomaticMetric
     Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table InterfaceIndex,ServerAddresses

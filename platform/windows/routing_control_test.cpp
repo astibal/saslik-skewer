@@ -72,6 +72,11 @@ int main() {
             state.paused = true;
             state.scope = RoutingScope::WholeHost;
             require(!state.protectedPause(), "Unsupported whole-host pause was presented");
+            state.transport = RoutingTransport::Tunnel;
+            state.pause_available = true;
+            require(state.protectedPause(), "Supported host tunnel pause was not presented");
+            state.transport = RoutingTransport::Direct;
+            require(!state.protectedPause(), "Direct routing falsely advertised protected pause");
         }
         std::atomic_uint starts{};
         std::atomic_bool finish_cleanup{};

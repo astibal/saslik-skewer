@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
                         [&](NET_LUID luid, const Tuntom::Endpoint& endpoint) {
                             return policy.routes(luid, endpoint);
                         },
-                        cancel, state.ready, state.blocked, tunnel->dns, &state.retry_error);
+                        cancel, state.ready, state.blocked, tunnel->dns, &state.retry_error, &state);
                     if (result.worker.session_error) {
                         std::rethrow_exception(result.worker.session_error);
                     }

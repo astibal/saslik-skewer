@@ -654,7 +654,8 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         result.pause_available = flags & 1;
         result.paused = flags & 2;
         if ((flags & ~3U) || (result.paused && !result.pause_available) ||
-            (result.pause_available && result.scope != RoutingScope::SelectedProcess))
+            (result.pause_available && result.scope != RoutingScope::SelectedProcess &&
+             !(result.scope == RoutingScope::WholeHost && result.transport == RoutingTransport::Tunnel)))
             throw std::runtime_error("Invalid protected pause state");
     }
     return result;
