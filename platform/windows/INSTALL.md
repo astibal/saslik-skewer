@@ -93,6 +93,16 @@ Use `-WhatIf` to validate without installation. The elevated regression script
 `tests/install-routing-service-live.ps1` checks dry-run behavior, ACLs, Idle IPC,
 overwrite rejection, upgrade and complete removal of its unique test service.
 
+The separate versioned Windows tests ZIP also includes the opt-in
+`service-upgrade-live.ps1`, `native-routing-service-live.ps1` (including
+`-FailoverInterface`), `direct-routing-service-live.ps1`, selected-application
+desktop tests and external IPv6/shared-UDP peer fixtures. `run-tests.ps1` rejects
+an incomplete archive before running its native test programs. Network-changing
+fixtures are not run implicitly by that command: use a disposable elevated VM,
+paired endpoint and explicit fixture parameters, with independent console access.
+Their presence in the archive is not evidence that every integration scenario
+has run on a particular machine.
+
 Current routing supports whole-host IPv4 (direct gateway or tunnel), or up to 64
 independently selected application trees over the tunnel. Corroborated IPv4 TCP
 and UDP are routed; ambiguous ownership remains blocked. Tunnel failure keeps

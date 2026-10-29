@@ -7,6 +7,17 @@ $Root = (Resolve-Path -LiteralPath $Root).Path
 $env:PATH = "$Root;$env:PATH"
 $env:QT_QPA_PLATFORM = 'offscreen'
 
+# Network-changing fixtures are opt-in, but their presence is a release gate.
+# A green unit run must not conceal an incomplete integration-test archive.
+foreach ($fixture in @('selected-service-live.ps1','selected-ipv6-egress.ps1',
+    'selected-existing-ipv6.ps1','ipv6-marker-peer.py','selected-shared-udp.ps1',
+    'udp-marker-peer.py','routed-application-smoke.ps1','run-routed-application-smoke.ps1',
+    'native-routing-service-live.ps1','direct-routing-service-live.ps1','service-upgrade-live.ps1')) {
+    if (!(Test-Path -LiteralPath (Join-Path $Root $fixture) -PathType Leaf)) {
+        throw "Incomplete Windows test bundle: missing $fixture"
+    }
+}
+
 $tests = @(
     @{ Name = 'windows_application_names'; File = 'application_names_test.exe' },
     @{ Name = 'windows_application_icons'; File = 'application_icons_test.exe' },
