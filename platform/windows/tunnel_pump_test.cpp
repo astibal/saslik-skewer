@@ -220,6 +220,18 @@ void testDataGate() {
     }
     require(left.incoming.empty() && right.incoming.empty(), "Denied gate passed data");
     require(client.counters().not_ready >= 2, "Both data directions must be denied");
+    // Protected pause must suppress payload, not authenticated keepalives.
+    // Hold it longer than the liveness timeout so this cannot pass merely on
+    // the handshake's recent timestamp. Resuming must reuse the live transport.
+    const auto paused_until = TunnelPump::Clock::now() + TunnelPump::health_timeout +
+                              std::chrono::seconds(1);
+    while (TunnelPump::Clock::now() < paused_until) {
+        cycle();
+    }
+    const auto resumed_at = TunnelPump::Clock::now();
+    require(client.healthy(resumed_at) && server.healthy(resumed_at),
+            "Protected data pause interrupted authenticated transport liveness");
+    require(left.incoming.empty() && right.incoming.empty(), "Paused transport delivered payload");
     allowed = true;
     for (unsigned i = 0; i < 10; ++i) {
         cycle();
