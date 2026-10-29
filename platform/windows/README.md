@@ -1,5 +1,23 @@
 # Windows backend and shared application UI
 
+## Packaged regression checks
+
+The release build produces separate application and test ZIPs with SHA-256
+sidecars. Extract the matching versions and run `run-tests.ps1 -Root <test-dir>`
+from the test bundle in an elevated development VM. The suite includes temporary
+route creation/rollback checks; do not run it on an unrelated production host.
+The package smoke test (`packaging/test-windows-package.ps1`) additionally checks
+dependency signatures, per-user installation, update refusal while running,
+uninstall, version resources and GUI startup.
+
+On 2026-10-29 the Release build passed all 42 bundled native tests plus package
+installation/uninstallation on the Rhino Windows VM. Noninteractive process
+tests explicitly skip visible-window assertions; this does not replace the
+interactive `routed-application-smoke.ps1` coverage. The test ZIP also includes
+`selected-service-live.ps1` for a paired lab and `selected-ipv6-egress.ps1` for
+an externally reachable IPv6 HTTP peer. Those need explicit environment inputs
+and are not silently treated as passing by the offline test runner.
+
 ## First-release direction and limitation
 
 The selected backend is WinDivert interception with either Wintun/Tuntom or an
