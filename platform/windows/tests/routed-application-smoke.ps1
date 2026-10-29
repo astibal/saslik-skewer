@@ -146,7 +146,7 @@ try {
     $deadline=(Get-Date).AddSeconds(12)
     do {
         Start-Sleep -Milliseconds 200
-        $processCell=FindNamed $window 'skewer.exe'
+        $processCell=FindNamed $window ([string]$window.Current.ProcessId)
     } while (!$processCell -and (Get-Date) -lt $deadline)
     if (!$processCell) {
         "Application tree after Release:`n$(WindowText $window)" | Out-File $log -Append

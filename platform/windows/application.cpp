@@ -1,4 +1,5 @@
 #include "processes.hpp"
+#include "application_names.hpp"
 #include "process_browser.hpp"
 #include "launch_catalog.hpp"
 #include "ui/application_shell.hpp"
@@ -53,7 +54,7 @@ struct ScanResult {
     bool windows{};
     unsigned inaccessible{};
 };
-ScanResult scan() {
+ScanResult scan(skewer::windows::ApplicationNames& names) {
     ScanResult result;
     try {
         const auto snapshot = skewer::windows::scanCurrentUser();
@@ -63,7 +64,7 @@ ScanResult scan() {
             skewer::ui::ProcessRecord record{process.key.pid,
                                              process.key.created,
                                              process.parent,
-                                             QString::fromStdWString(process.name),
+                                             QString::fromStdWString(names.lookup(process.executable, process.name)),
                                              QString::fromStdWString(process.executable),
                                              {}};
             for (const auto& title : process.window_titles) {
@@ -167,7 +168,7 @@ public:
         if (scan_watcher_.isRunning() || !isVisible() || isMinimized()) {
             return;
         }
-        scan_watcher_.setFuture(QtConcurrent::run(scan));
+        scan_watcher_.setFuture(QtConcurrent::run([this] { return scan(application_names_); }));
     }
 
 private:
@@ -825,6 +826,7 @@ private:
     QLabel* launch_status_{};
     QLabel* status_{};
     QFutureWatcher<ScanResult> scan_watcher_;
+    skewer::windows::ApplicationNames application_names_;
     QFutureWatcher<LaunchResult> launch_watcher_;
     std::shared_ptr<skewer::windows::Handle> launch_cancel_;
     QTimer timer_;
