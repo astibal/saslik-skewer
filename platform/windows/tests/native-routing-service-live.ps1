@@ -8,6 +8,7 @@ param(
     [string]$DnsServer = '1.1.1.1',
     [switch]$TestTunnelLoss,
     [switch]$TestPause,
+    [switch]$TestGuiPause,
     [switch]$TestDhcpRenew,
     [uint32]$FailoverInterface = 0,
     [switch]$GuiClient
@@ -104,6 +105,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Start failed' }
     }
     $active = Await 2
+    if ($TestGuiPause) {
+        & (Join-Path $PSScriptRoot 'run-host-pause-gui.ps1') -Directory $Directory -Service $name
+        $active = Await 2
+    }
     $adapter = Get-NetAdapter -Name "Skewer-$name"
     $dns = Get-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4
     if ($dns.ServerAddresses -notcontains $DnsServer) { throw 'Native tunnel DNS was not configured' }

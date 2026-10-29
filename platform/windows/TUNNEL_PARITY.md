@@ -19,7 +19,13 @@ temporary rule blocked only the fixture service's peer UDP transport, ordinary
 HTTP could not fall back directly, Pause was acknowledged while blocked, and
 restoring peer connectivity did not clear pause or pass HTTPS. Explicit Resume
 restored tunneled HTTPS; service, firewall rule, routes and adapter were cleaned
-up. Interactive whole-host pause UI still needs dedicated verification.
+up. The interactive `-TestGuiPause -TestPause` run also passed on 2026-10-29:
+UI Automation invoked the actual Pause host/Resume host buttons, checked Release
+host remained distinct, terminated only the fixture GUI while paused, reopened
+it and resumed the same service generation. The subsequent HTTP/HTTPS, DNS and
+cleanup checks passed. The fixture selects the Routing TabItem explicitly (the
+process table has a column with the same name) and restores the prior development
+GUI after completion. Both interactive scripts ship in the test ZIP.
 Upgrade the client and service together: older
 clients reject the newly valid whole-host pause capability as unsupported.
 
