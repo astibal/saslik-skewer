@@ -412,6 +412,14 @@ void RoutingPanel::updateControls() {
     pair_->setEnabled(idle && state_.tunnel_available && !action_busy_);
     start_->setEnabled(idle && !action_busy_ && transport_ready);
     stop_->setEnabled(known_ && !idle && state_.phase != RoutingPhase::Stopping && !action_busy_);
+    const bool selected_scope = state_.scope == RoutingScope::SelectedProcess;
+    stop_->setText(selected_scope ? tr("Release all applications") : tr("Release host"));
+    stop_->setToolTip(selected_scope
+        ? tr("Stop this routing generation and return every selected application to normal routing. "
+             "To release only one group, use Release in Applications. This is not a protected pause.")
+        : tr("Stop whole-host routing and restore normal host connectivity. "
+             "This is not a protected pause; closing the GUI does neither."));
+    stop_->setAccessibleDescription(stop_->toolTip());
     service_->setEnabled(configuration_editable && !action_busy_ && !service_overridden_);
     endpoint_->setEnabled(configuration_editable && !action_busy_);
     transport_->setEnabled(idle && !action_busy_);

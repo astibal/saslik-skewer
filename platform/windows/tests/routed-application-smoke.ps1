@@ -35,6 +35,17 @@ function FindNamed($window, $name) {
         $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
     } catch { $null }
 }
+function SelectTab($window, [string]$name) {
+    $condition=[System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,$name),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::TabItem))
+    $tab=$window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+    if (!$tab) { throw "Missing tab: $name" }
+    $bounds=$tab.Current.BoundingRectangle
+    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+}
 function WindowText($window) {
     try {
         $all=$window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
@@ -145,6 +156,18 @@ try {
             Out-File $log -Append
         throw 'Reopened GUI did not recover authoritative selected routing state'
     }
+    SelectTab $window 'Routing'
+    $deadline=(Get-Date).AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 100
+        $releaseAll=FindNamed $window 'Release all applications'
+    } while ((!$releaseAll -or !$releaseAll.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$releaseAll -or !$releaseAll.Current.IsEnabled) {
+        WindowText $window | Out-File $log -Append
+        throw 'Selected-scope global Release is not clearly distinguished from a protected pause'
+    }
+    SelectTab $window 'Applications'
+    $release=FindNamed $window 'Release'
     $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
     $deadline=(Get-Date).AddSeconds(12)
     do {

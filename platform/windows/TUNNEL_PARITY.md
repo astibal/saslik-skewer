@@ -59,6 +59,12 @@ children. Choosing another process-tree row returns Release to that row's root.
 
 ## Routed shell
 
+The Routing tab labels its global action by authoritative scope: **Release host**
+or **Release all applications**. Its tooltip and accessible description explicitly
+state that this restores normal connectivity, not a protected pause. Releasing
+one group remains a separate Applications action. The interactive smoke checks
+the selected-scope label after GUI recovery before releasing only that group.
+
 Launcher feedback follows the exact process handle returned by Windows, using
 an event notification rather than PID polling. When the latest launched root
 exits, its success message is replaced by the exit code and a possible

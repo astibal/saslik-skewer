@@ -51,6 +51,9 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("Paired Idle did not enable routing");
             }
             start->click(); wait("Active");
+            if (stop->text() != "Release host" || !stop->toolTip().contains("not a protected pause")) {
+                throw std::runtime_error("Whole-host release is mislabeled as protected pause");
+            }
             if (pair->isEnabled() || start->isEnabled() || !stop->isEnabled() ||
                 service->isEnabled() || endpoint->isEnabled() || install->isEnabled()) {
                 throw std::runtime_error("Incorrect Active controls");
@@ -145,6 +148,9 @@ int main(int argc, char** argv) {
         if (!endpoint || !gateway || !transport || !start || !stop || !status ||
             start->isEnabled() || stop->isEnabled()) {
             throw std::runtime_error("Unknown service enabled routing controls");
+        }
+        if (!stop->toolTip().contains("not a protected pause")) {
+            throw std::runtime_error("Release control omits its routing consequence");
         }
         if (transport->count() != 3 || transport->itemData(2).toInt() != -1 ||
             !transport->itemText(2).startsWith("Auto")) {
