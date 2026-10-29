@@ -9,9 +9,9 @@ UDP are integrated. New
 descendants of a routed launch inherit selection through a Windows Job Object.
 Manual Attach adopts descendants whose complete, live, same-owner parent chain
 still leads to the selected root. UDP descendants additionally require exactly
-one matching owner-table bind row. IPv6, orphaned or handed-off processes,
-ambiguous shared binds and already-open UDP/IPv6 sockets are not covered by
-selected-process mode. Manual Attach installs guards for the complete adopted
+one matching owner-table bind row. IPv6, orphaned or handed-off processes and
+ambiguous/shared UDP binds are not covered by selected-process mode. Manual
+Attach installs guards for the complete adopted
 tree and resets its existing IPv4 TCP endpoints before activation.
 The custom kernel callout prototype is deferred and will not ship in the first
 release. No custom-driver test-signing setup is required for that release.
@@ -1172,8 +1172,8 @@ and persistent routing selections remain pending. No routing policy is installed
 
 The native service and GUI now cover authenticated pairing, whole-host IPv4 and
 selected-process IPv4 TCP/UDP routing. Attach resets already-open IPv4 TCP.
-Unsupported IPv6, already-open UDP/IPv6 sockets, orphaned handoffs and ambiguous
-shared UDP binds remain explicit limitations; they are never presented as
+Unsupported IPv6, orphaned handoffs and ambiguous/shared UDP sockets remain
+explicit limitations; they are never presented as
 successfully routed. The first release uses the
 documented WinDivert owner-lifetime model rather than the deferred custom driver.
 Skewer application executables are not yet code-signed; the packaged Wintun and

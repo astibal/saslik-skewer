@@ -8,8 +8,9 @@ WinDivert with a service independent of the GUI, not a custom kernel driver.
 It supports whole-host IPv4 and a selected process's fresh corroborated IPv4 TCP
 and UDP. New descendants of a routed launch inherit selection through a Windows
 Job Object; manual Attach also adopts an intact, live, owner-validated descendant
-tree. UDP descendants require a unique matching bind. Orphaned/handoff processes,
-selected IPv6, existing UDP sockets and ambiguous shared binds remain release gaps.
+tree. UDP, including a socket opened before Attach, requires one unique matching
+bind. Orphaned/handoff processes, selected IPv6 and ambiguous/shared UDP binds
+remain release gaps.
 Manual Attach resets the selected tree's existing IPv4 TCP connections after
 installing fail-closed guards. Skewer is a lab/testing tool, not a security
 isolation boundary:

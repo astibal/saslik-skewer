@@ -17,6 +17,31 @@ void require(bool ok, const char* message) {
         throw std::runtime_error(message);
     }
 }
+std::vector<std::uint8_t> dnsQuery(const QString& host, std::uint16_t id) {
+    std::vector<std::uint8_t> query{
+        static_cast<std::uint8_t>(id >> 8), static_cast<std::uint8_t>(id),
+        0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    for (const auto& label : host.toLatin1().split('.')) {
+        require(!label.isEmpty() && label.size() <= 63, "DNS fixture host invalid");
+        query.push_back(static_cast<std::uint8_t>(label.size()));
+        query.insert(query.end(), label.begin(), label.end());
+    }
+    query.insert(query.end(), {0x00, 0x00, 0x01, 0x00, 0x01});
+    return query;
+}
+void sendDnsQuery(SOCKET socket, const std::vector<std::uint8_t>& query) {
+    require(send(socket, reinterpret_cast<const char*>(query.data()), static_cast<int>(query.size()), 0) ==
+                static_cast<int>(query.size()),
+            "DNS fixture send failed");
+}
+bool receiveDnsResponse(SOCKET socket, const std::vector<std::uint8_t>& query) {
+    std::array<std::uint8_t, 2048> response{};
+    const auto received = recv(socket, reinterpret_cast<char*>(response.data()),
+                               static_cast<int>(response.size()), 0);
+    return received >= 12 && response[0] == query[0] && response[1] == query[1] &&
+           (response[2] & 0x80) != 0;
+}
 int runUdpChild(const QString& host, const QString& destination) {
     WSADATA data{};
     require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "UDP child Winsock startup failed");
@@ -49,30 +74,14 @@ int runUdpChild(const QString& host, const QString& destination) {
     }
     require(bound, "UDP child bind failed");
 
-    std::vector<std::uint8_t> query{
-        0x53, 0x4b, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00,
-    };
-    for (const auto& label : host.toLatin1().split('.')) {
-        require(!label.isEmpty() && label.size() <= 63, "UDP child host invalid");
-        query.push_back(static_cast<std::uint8_t>(label.size()));
-        query.insert(query.end(), label.begin(), label.end());
-    }
-    query.insert(query.end(), {0x00, 0x00, 0x01, 0x00, 0x01});
+    const auto query = dnsQuery(host, 0x534b);
     require(connect(socket, reinterpret_cast<const sockaddr*>(&server), sizeof(server)) == 0,
             "UDP child connect failed");
     // Let the passive SOCKET lifecycle and owner-table views converge before
     // the one-shot datagram. The production resolver remains fail-closed.
     Sleep(50);
-    require(send(socket, reinterpret_cast<const char*>(query.data()), static_cast<int>(query.size()), 0) ==
-                static_cast<int>(query.size()),
-            "UDP child send failed");
-    std::array<std::uint8_t, 2048> response{};
-    const auto received = recv(socket, reinterpret_cast<char*>(response.data()),
-                               static_cast<int>(response.size()), 0);
-    require(received >= 12 && response[0] == query[0] && response[1] == query[1] &&
-                (response[2] & 0x80) != 0,
-            "UDP child DNS response failed");
+    sendDnsQuery(socket, query);
+    require(receiveDnsResponse(socket, query), "UDP child DNS response failed");
     return 0;
 }
 int runHttpsDescendant(const QString& host, const QString& destination) {
@@ -179,6 +188,51 @@ int runExistingTcpChild(const QString& ready_name, const QString& inspect_name,
     require(received == 0 || (received == SOCKET_ERROR &&
                               (error == WSAECONNRESET || error == WSAENOTCONN)),
             "Pre-Attach TCP connection remained usable after routing activation");
+    return 0;
+}
+int runExistingUdpChild(const QString& ready_name, const QString& inspect_name,
+                        const QString& host, const QString& destination) {
+    WSADATA data{};
+    require(WSAStartup(MAKEWORD(2, 2), &data) == 0, "Existing UDP child Winsock startup failed");
+    struct WinsockCleanup {
+        ~WinsockCleanup() { WSACleanup(); }
+    } winsock_cleanup;
+    Handle ready(OpenEventW(EVENT_MODIFY_STATE, FALSE, ready_name.toStdWString().c_str()));
+    Handle inspect(OpenEventW(SYNCHRONIZE, FALSE, inspect_name.toStdWString().c_str()));
+    require(bool(ready) && bool(inspect), "Open existing UDP fixture events");
+    SOCKET socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(socket != INVALID_SOCKET, "Create existing UDP fixture socket");
+    struct CloseSocket {
+        SOCKET value;
+        ~CloseSocket() { closesocket(value); }
+    } close{socket};
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    local.sin_port = 0;
+    require(bind(socket, reinterpret_cast<const sockaddr*>(&local), sizeof(local)) == 0,
+            "Bind existing UDP fixture socket");
+    sockaddr_in peer{};
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(53);
+    require(InetPtonA(AF_INET, destination.toLatin1().constData(), &peer.sin_addr) == 1 &&
+                connect(socket, reinterpret_cast<const sockaddr*>(&peer), sizeof(peer)) == 0,
+            "Connect existing UDP fixture socket");
+    DWORD timeout = 2500;
+    require(setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == 0,
+            "Set existing UDP fixture timeout");
+    require(SetEvent(ready.get()), "Signal existing UDP fixture readiness");
+    require(WaitForSingleObject(inspect.get(), 30000) == WAIT_OBJECT_0,
+            "Existing UDP fixture was not inspected after Attach");
+
+    // The service publishes Active only after packet capture is armed. Its
+    // selected-group resolver never returns Direct for a selected owner, so a
+    // valid reply here proves this pre-existing unique bind used the tunnel.
+    const auto query = dnsQuery(host, 0x534c);
+    sendDnsQuery(socket, query);
+    require(receiveDnsResponse(socket, query),
+            "Pre-Attach UDP socket did not complete through selected routing");
     return 0;
 }
 class Worker final : public TunnelPacketWorker {
@@ -399,6 +453,78 @@ void resetExistingTcpThroughService(const std::wstring& executable, const std::w
     generation = 0;
     QTextStream(stdout) << "PASS: pre-Attach IPv4 TCP connection reset by SCM service\n";
 }
+void routeExistingUdpThroughService(const std::wstring& executable, const QString& host,
+                                    const QString& destination, const std::wstring& name) {
+    Handle cancel(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+    require(bool(cancel), "Create existing UDP cancellation event");
+    const auto suffix = std::to_wstring(GetCurrentProcessId()) + L"-" +
+                        std::to_wstring(GetTickCount64());
+    const auto ready_name = L"Local\\SkewerExistingUdpReady-" + suffix;
+    const auto inspect_name = L"Local\\SkewerExistingUdpInspect-" + suffix;
+    Handle ready(CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str()));
+    Handle inspect(CreateEventW(nullptr, TRUE, FALSE, inspect_name.c_str()));
+    require(bool(ready) && bool(inspect), "Create existing UDP fixture events");
+    Child child{launch(executable,
+                       {L"--existing-udp-child", ready_name, inspect_name,
+                        host.toStdWString(), destination.toStdWString()})};
+    require(WaitForSingleObject(ready.get(), 5000) == WAIT_OBJECT_0,
+            "Existing UDP child did not bind before Attach");
+
+    const auto command = [&](RoutingCommand operation, std::uint64_t generation) {
+        auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+        return exchangeRoutingCommand(pipe->get(), name, operation, generation, cancel.get(), 3000);
+    };
+    const auto initial = command(RoutingCommand::Status, 0);
+    require(initial.result == RoutingResult::Ok &&
+                (initial.phase == RoutingPhase::Idle || initial.phase == RoutingPhase::Failed),
+            "Routing service is busy before existing UDP fixture");
+    std::uint64_t generation{};
+    struct Cleanup {
+        Child& child;
+        std::function<void()> stop;
+        ~Cleanup() {
+            child.stop();
+            try { stop(); } catch (...) {}
+        }
+    } cleanup{child, [&] { if (generation) command(RoutingCommand::Stop, generation); }};
+    const auto identity = processKey(child.process.hProcess, child.process.dwProcessId);
+    auto pipe = connectRoutingService(name, false, cancel.get(), 3000);
+    const auto started = exchangeSelectedRouting(pipe->get(), name, identity,
+                                                 initial.generation, cancel.get(), 3000);
+    require(started.result == RoutingResult::Ok, "Existing UDP process selection failed");
+    generation = started.generation;
+    const auto active_deadline = GetTickCount64() + 30000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == generation &&
+                    (state.phase == RoutingPhase::Starting || state.phase == RoutingPhase::Blocked ||
+                     state.phase == RoutingPhase::Active),
+                "Existing UDP routing stopped before readiness");
+        if (state.phase == RoutingPhase::Active) break;
+        require(GetTickCount64() < active_deadline, "Existing UDP routing did not become Active");
+        Sleep(50);
+    }
+    require(SetEvent(inspect.get()), "Release existing UDP tunnel probe");
+    require(WaitForSingleObject(child.process.hProcess, 10000) == WAIT_OBJECT_0,
+            "Pre-Attach UDP tunnel probe timed out");
+    DWORD exit{};
+    require(GetExitCodeProcess(child.process.hProcess, &exit) && exit == 0,
+            "Pre-Attach UDP tunnel child failed");
+    const auto stopped = command(RoutingCommand::Stop, generation);
+    require(stopped.result == RoutingResult::Ok, "Stop existing UDP routing");
+    const auto stop_deadline = GetTickCount64() + 5000;
+    for (;;) {
+        const auto state = command(RoutingCommand::Status, 0);
+        require(state.result == RoutingResult::Ok && state.generation == generation,
+                "Existing UDP stop generation changed");
+        if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) break;
+        require(GetTickCount64() < stop_deadline, "Existing UDP routing did not stop");
+        Sleep(25);
+    }
+    generation = 0;
+    QTextStream(stdout)
+        << "PASS: unique pre-Attach UDP socket routed through SCM service\n";
+}
 } // namespace
 
 // Elevated, bounded development fixture: real independent curl process, pinned
@@ -459,13 +585,21 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    if (args.size() == 6 && args[1] == "--existing-udp-child") {
+        try {
+            return runExistingUdpChild(args[2], args[3], args[4], args[5]);
+        } catch (const std::exception& error) {
+            QTextStream(stderr) << error.what() << '\n';
+            return 1;
+        }
+    }
     if (args.size() < 5 || args.size() > 7 ||
         (args.size() == 7 && args[6] != "--udp" && args[6] != "--descendant" &&
          args[6] != "--descendant-udp" && args[6] != "--existing-descendant" &&
-         args[6] != "--existing-tcp")) {
+         args[6] != "--existing-tcp" && args[6] != "--existing-udp")) {
         QTextStream(stderr)
             << "Usage: selected_process_live PAIRED_ENDPOINT PEER_IPV4 DEST_IPV4 HOST "
-               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant|--existing-tcp]|--udp]\n";
+               "[SERVICE [--udp|--descendant|--descendant-udp|--existing-descendant|--existing-tcp|--existing-udp]|--udp]\n";
         return 2;
     }
     try {
@@ -502,6 +636,11 @@ int main(int argc, char** argv) {
             if (args.size() == 7 && args[6] == "--existing-tcp") {
                 resetExistingTcpThroughService(app.applicationFilePath().toStdWString(),
                                                args[5].toStdWString());
+                return 0;
+            }
+            if (args.size() == 7 && args[6] == "--existing-udp") {
+                routeExistingUdpThroughService(app.applicationFilePath().toStdWString(), args[4],
+                                               args[3], args[5].toStdWString());
                 return 0;
             }
             const bool descendant_probe = args.size() == 7 && args[6] == "--descendant";

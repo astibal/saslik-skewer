@@ -424,8 +424,9 @@ private:
                                          "releases it only after routing is ready. "
                                          "Attach guards the live process tree and resets its existing IPv4 "
                                          "TCP connections before activation. Fresh corroborated IPv4 TCP and UDP are routed, "
-                                         "including new descendants and intact live trees. Already-open UDP, "
-                                         "orphaned handoffs and IPv6 are not covered. "
+                                         "including new descendants, intact live trees and uniquely owned "
+                                         "UDP sockets opened before Attach. Shared UDP binds, orphaned "
+                                         "handoffs and IPv6 are not covered. "
                                          "Whole-host routing is controlled on the Routing tab."),
                                       page_);
         disclaimer->setWordWrap(true);
