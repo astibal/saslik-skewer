@@ -3,6 +3,7 @@
 #include "socket_connect_guard.hpp"
 #include "selected_group_resolver.hpp"
 #include "tcp_owners.hpp"
+#include <QScopedValueRollback>
 #include <algorithm>
 #include <exception>
 #include <vector>
@@ -23,8 +24,14 @@ public:
               unsupported_.push_back({member.key(), std::make_unique<traffic::SocketConnectGuard>(
                   dll_, member, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp,
                   peer_, port_)});
-              startup_.push_back({member.key(), std::make_unique<traffic::SocketConnectGuard>(
-                  dll_, member, traffic::SocketConnectGuard::Mode::All)});
+              // Active descendants already traverse persistent packet capture.
+              // Briefly denying connect here races their first socket and turns
+              // healthy traffic into WSAEACCES. Keep the full guard for initial
+              // enrollment, explicit Attach and transport recovery only.
+              if (enrolling_root_ || !published_.load()) {
+                  startup_.push_back({member.key(), std::make_unique<traffic::SocketConnectGuard>(
+                      dll_, member, traffic::SocketConnectGuard::Mode::All)});
+              }
           }) {
         // ProcessGroup has already adopted the live descendant tree. Drain its
         // notifications so every member is guarded before old IPv4 TCP sockets
@@ -33,6 +40,7 @@ public:
         traffic::resetOwnedIpv4Tcp(resolver_.memberKeys());
         signals_.selection_supported = true;
         publishSelection();
+        enrolling_root_ = false;
     }
     bool running() const { return resolver_.running(); }
     void prepare(const Tuntom::Endpoint& endpoint) override {
@@ -148,6 +156,7 @@ private:
         if (!request || !request->claim()) return;
         try {
             if (request->operation == SelectionOperation::Add) {
+                const QScopedValueRollback<bool> enrolling(enrolling_root_, true);
                 const auto before = resolver_.memberKeys();
                 resolver_.add(std::make_unique<ProcessTarget>(request->process, owner_));
                 auto added = resolver_.memberKeys();
@@ -193,6 +202,8 @@ private:
     ULONGLONG next_membership_refresh_{};
     std::vector<Guard> unsupported_;
     std::vector<Guard> startup_;
+    // Initialized before resolver_: its constructor synchronously enrolls root.
+    bool enrolling_root_{true};
     traffic::SelectedGroupResolver resolver_;
     std::unique_ptr<traffic::PacketCapture> capture_;
     std::unique_ptr<SelectedSessionPackets> packets_;

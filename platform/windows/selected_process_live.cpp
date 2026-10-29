@@ -89,17 +89,26 @@ int runHttpsDescendant(const QString& host, const QString& destination) {
     const auto length = GetSystemDirectoryW(system, MAX_PATH);
     require(length && length < MAX_PATH, "Resolve descendant system directory");
     const auto curl = std::wstring(system) + L"\\curl.exe";
-    const auto child = launch(curl,
-                              {L"--noproxy", L"*", L"-4", L"-k", L"--fail", L"--silent",
-                               L"--show-error", L"--max-time", L"20", L"--output", L"NUL",
-                               L"--resolve", (host + ":443:" + destination).toStdWString(),
-                               ("https://" + host + "/").toStdWString()});
-    Handle process(child.hProcess), thread(child.hThread);
-    require(WaitForSingleObject(process.get(), 25000) == WAIT_OBJECT_0,
-            "Descendant curl timed out");
-    DWORD exit{};
-    require(GetExitCodeProcess(process.get(), &exit), "Read descendant curl exit code");
-    return static_cast<int>(exit);
+    // Exercise new Job members throughout one active generation, not only the
+    // initial child. No sleep/retry: an admission-time connect refusal is a bug.
+    for (unsigned attempt = 0; attempt < 8; ++attempt) {
+        const auto child = launch(curl,
+                                  {L"--noproxy", L"*", L"-4", L"-k", L"--fail", L"--silent",
+                                   L"--show-error", L"--max-time", L"20", L"--output", L"NUL",
+                                   L"--resolve", (host + ":443:" + destination).toStdWString(),
+                                   ("https://" + host + "/").toStdWString()});
+        Handle process(child.hProcess), thread(child.hThread);
+        require(WaitForSingleObject(process.get(), 25000) == WAIT_OBJECT_0,
+                "Descendant curl timed out");
+        DWORD exit{};
+        require(GetExitCodeProcess(process.get(), &exit), "Read descendant curl exit code");
+        if (exit != 0) {
+            QTextStream(stderr) << "HTTPS descendant attempt " << attempt + 1
+                                << " failed with exit " << exit << '\n';
+            return static_cast<int>(exit);
+        }
+    }
+    return 0;
 }
 int runUdpDescendant(const QString& host, const QString& destination) {
     const auto child = launch(QCoreApplication::applicationFilePath().toStdWString(),

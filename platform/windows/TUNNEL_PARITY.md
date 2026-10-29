@@ -36,6 +36,12 @@ It retires that tree's packet queues, reverse mappings and guards without killin
 applications or stopping other selections. The final removal retires routing.
 Overlapping trees are rejected rather than giving Release ambiguous semantics.
 
+Full connect guards apply during initial enrollment, explicit Attach and recovery.
+New descendants of an Active group use the already armed packet capture and keep
+unsupported-protocol guards, but do not receive a temporary all-connect denial.
+The native HTTPS descendant fixture starts eight fresh curl processes in one
+generation without sleeps or retries to exercise this admission boundary.
+
 Membership status (operation 8) uses protocol version 8. Operation 7 and mutation
 replies retain version 7; older operations retain version 6. New GUI/CLI clients
 require an upgraded service. Status responses validate member counts, duplicate

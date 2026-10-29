@@ -6,11 +6,12 @@ WinDivert is the selected interception backend. A custom WFP kernel driver is
 not a first-release dependency. Windows IPv4 routing is implemented and has
 passed the native VM cases listed below; unchecked items remain release gates.
 
-- [ ] Investigate intermittent immediate descendant HTTPS refusal in the SCM
-  integration fixture (2026-10-29: curl exit 7 after 0 ms, after root HTTPS passed).
-  The unchanged full rerun passed, including descendant HTTPS and UDP. Preserve
-  per-generation packet/guard diagnostics on failure before attributing this to
-  external connectivity; a passing rerun alone does not explain the failure.
+- [ ] Soak-test descendant admission after the startup-guard race fix. The
+  2026-10-29 investigation found full connect guards briefly applied even to
+  descendants of an already Active group. Active descendants now retain packet
+  capture and unsupported-protocol guards without a transient connect denial.
+  The SCM fixture covers eight consecutive HTTPS children without sleeps/retries;
+  preserve diagnostics if the previously observed immediate curl exit 7 recurs.
 
 Transport milestones verified independently of the remaining service/UI gates:
 
