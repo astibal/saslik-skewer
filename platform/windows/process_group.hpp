@@ -43,6 +43,7 @@ public:
     bool contains(DWORD pid) const;
     std::unique_ptr<ProcessTarget> member(DWORD pid) const;
     std::unique_ptr<ProcessTarget> next();
+    bool isRoot(ProcessKey process) const;
     std::vector<ProcessKey> roots() const;
 
 private:

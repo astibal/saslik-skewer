@@ -13,9 +13,28 @@ const ProcessTarget& checkedRoot(const std::unique_ptr<ProcessTarget>& root) {
 SelectedGroupResolver::SelectedGroupResolver(const std::wstring& dll,
                                              std::unique_ptr<ProcessTarget> root,
                                              const ServiceOwner& owner, TargetAdded added)
-    : dll_(dll), added_(std::move(added)), root_(checkedRoot(root).key()), group_(owner) {
-    group_.add(root_);
+    : dll_(dll), added_(std::move(added)), group_(owner) {
+    add(std::move(root));
+}
+
+void SelectedGroupResolver::add(std::unique_ptr<ProcessTarget> root) {
+    const auto identity = checkedRoot(root).key();
+    group_.add(identity);
+    // If guard/observer installation fails, keep membership selected. The
+    // runtime must report failure and retain blocking, never silently bypass.
     enroll(std::move(root));
+    refresh();
+}
+
+std::vector<ProcessKey> SelectedGroupResolver::remove(ProcessKey root) {
+    std::vector<ProcessKey> removed;
+    if (!group_.remove(root)) return removed;
+    std::erase_if(members_, [&](const auto& member) {
+        if (group_.contains(member.process.pid)) return false;
+        removed.push_back(member.process);
+        return true;
+    });
+    return removed;
 }
 
 bool SelectedGroupResolver::contains(skewer::traffic::ProcessIdentity process) const {
@@ -129,7 +148,7 @@ SelectedOwnerResolver::Result SelectedGroupResolver::resolve(skewer::traffic::Pa
     if ((tuple.protocol == IPPROTO_TCP || tuple.protocol == IPPROTO_UDP) && unique_group_socket) {
         const auto found = std::ranges::find_if(members_,
             [&](const auto& member) { return member.process.pid == candidates.front(); });
-        if (found != members_.end() && found->process != root_) {
+        if (found != members_.end() && !group_.isRoot(found->process)) {
             const auto flow = groupFlow(found->process, tuple);
             return {skewer::traffic::OwnerEvidence::GroupCorroborated, flow,
                     Disposition::Tunnel};

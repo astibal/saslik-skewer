@@ -21,6 +21,12 @@ public:
     // Drains initial Job Object membership before activation. Retained process
     // handles keep every returned PID bound to its creation-time identity.
     std::vector<ProcessKey> memberKeys();
+    // Packet-thread only. The caller installs guards through TargetAdded and
+    // resets existing TCP sockets before acknowledging a newly added tree.
+    void add(std::unique_ptr<ProcessTarget> root);
+    // Returns identities whose guards must be retired by the caller. Existing
+    // tunnel flow callbacks reject these identities immediately after removal.
+    std::vector<ProcessKey> remove(ProcessKey root);
     std::size_t size() const { return members_.size(); }
 
 private:
@@ -43,7 +49,6 @@ private:
 
     std::wstring dll_;
     TargetAdded added_;
-    ProcessKey root_;
     ProcessSelection group_;
     std::vector<Member> members_;
 };

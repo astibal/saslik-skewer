@@ -245,4 +245,8 @@ std::vector<ProcessKey> ProcessSelection::roots() const {
     return result;
 }
 
+bool ProcessSelection::isRoot(ProcessKey process) const {
+    return std::ranges::any_of(groups_, [&](const auto& group) { return group->root() == process; });
+}
+
 } // namespace skewer::windows
