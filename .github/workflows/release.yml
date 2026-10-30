@@ -50,6 +50,8 @@ jobs:
           path: |
             dist/windows/*.zip
             dist/windows/*.zip.sha256
+            dist/windows/*.exe
+            dist/windows/*.exe.sha256
   windows-verify:
     needs: windows-package
     runs-on: windows-2025
@@ -95,6 +97,10 @@ jobs:
           ./platform/windows/tests/install-routing-service-live.ps1 `
             -Directory $package -WinDivertDirectory $package `
             -WintunDll (Join-Path $package 'wintun.dll')
+          $installer = @(Get-ChildItem -LiteralPath dist/windows -Filter 'SkewerSetup-*.exe')
+          if ($installer.Count -ne 1) { throw "Expected one Windows installer, found $($installer.Count)" }
+          ./packaging/test-windows-installer.ps1 -Installer $installer[0].FullName `
+            -ExpectedVersion $version
   install:
     needs: package
     runs-on: ubuntu-24.04
@@ -139,10 +145,16 @@ jobs:
         run: |
           windows=(dist/windows/skewer-windows-amd64-[0-9]*.zip)
           [[ ${#windows[@]} -eq 1 && -f "${windows[0]}" ]]
+          installers=(dist/windows/SkewerSetup-[0-9]*.exe)
+          [[ ${#installers[@]} -eq 1 && -f "${installers[0]}" ]]
           cp "${windows[0]}" dist/windows/skewer-windows-amd64.zip
+          cp "${installers[0]}" dist/windows/SkewerSetup.exe
           (cd dist/windows && sha256sum skewer-windows-amd64.zip > skewer-windows-amd64.zip.sha256)
+          (cd dist/windows && sha256sum SkewerSetup.exe > SkewerSetup.exe.sha256)
           gh release create "$RELEASE_TAG" dist/linux/*.deb dist/linux/SHA256SUMS \
             "${windows[0]}" "${windows[0]}.sha256" \
+            dist/windows/SkewerSetup-*.exe dist/windows/SkewerSetup-*.exe.sha256 \
+            dist/windows/SkewerSetup.exe dist/windows/SkewerSetup.exe.sha256 \
             dist/windows/skewer-windows-amd64.zip dist/windows/skewer-windows-amd64.zip.sha256 \
             --verify-tag \
             --title "Skewer $RELEASE_TAG" --notes-file packaging/RELEASE.md

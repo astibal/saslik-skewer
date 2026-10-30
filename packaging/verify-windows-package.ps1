@@ -6,7 +6,8 @@ $PackageDirectory = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $required = @(
     'skewer.exe', 'skewer-routing-service.exe', 'skewer-routing-control.exe',
     'install-skewer.ps1', 'uninstall-skewer.ps1', 'install-routing-service.ps1',
-    'remove-routing-service.ps1', 'wintun.dll', 'WinDivert.dll', 'WinDivert64.sys',
+    'remove-routing-service.ps1', 'install-wizard.ps1', 'uninstall-wizard.ps1',
+    'wintun.dll', 'WinDivert.dll', 'WinDivert64.sys',
     'Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Network.dll', 'Qt6Widgets.dll',
     'libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll', 'libssp-0.dll',
     'platforms\qwindows.dll', 'styles\qmodernwindowsstyle.dll',

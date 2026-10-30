@@ -1,6 +1,26 @@
 # Windows routing service installation
 
-## Desktop application
+## Release wizard
+
+Run `SkewerSetup-VERSION.exe`. The standard wizard requests UAC once and
+installs the desktop application under `Program Files\Skewer`, together with
+the automatic, initially Idle `SkewerRouting` service and the signed Wintun and
+WinDivert dependencies. A public Start Menu shortcut is always installed; a
+desktop shortcut is optional. The wizard never starts routing by itself.
+
+Running a newer setup performs an in-place upgrade only after Skewer is closed
+and routing is explicitly disabled. It preserves the service's public tunnel
+configuration, the user's DPAPI-protected pairing, CA choices and preferences.
+The setup log is `%ProgramData%\Skewer\setup.log`.
+
+Windows Settings lists one **Skewer** uninstall entry. Normal uninstall removes
+the application and its Idle routing service but preserves user data. The
+uninstaller offers a separate, unchecked component for permanently removing
+pairing and preferences. Active routing must be disabled first.
+
+The versioned ZIP remains available for verification, development and recovery.
+
+## Legacy per-user application install
 
 Extract the release ZIP and run the per-user installer without elevation:
 
@@ -16,7 +36,10 @@ privileged routing service.
 
 ## Routing service
 
-This is a development installer, not yet a signed release package.
+The scripts below are development and recovery interfaces. Normal users should
+use the release wizard above. The Skewer application binaries are not yet code
+signed; the bundled Wintun and WinDivert driver artifacts retain their upstream
+signatures and are verified before installation.
 Use a trusted build directory: driver verification does not authenticate the
 application binaries or their Qt runtime.
 

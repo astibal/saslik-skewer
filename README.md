@@ -163,18 +163,15 @@ Windows 11, x64:
 
 ```powershell
 Invoke-WebRequest `
-  https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-windows-amd64.zip `
-  -OutFile skewer-windows-amd64.zip
-Invoke-WebRequest `
-  https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-windows-amd64.zip.sha256 `
-  -OutFile skewer-windows-amd64.zip.sha256
+  https://github.com/astibal/saslik-skewer/releases/latest/download/SkewerSetup.exe `
+  -OutFile SkewerSetup.exe
+Start-Process .\SkewerSetup.exe
 ```
 
-Compare `Get-FileHash .\skewer-windows-amd64.zip` with the downloaded sidecar,
-expand the archive, then run its `verify-windows-package.ps1` and
-`install-skewer.ps1`. The per-user application installer does not install the
-privileged routing service automatically; use **Routing → Install routing
-service…** when routing is required. Driver installation prompts for elevation.
+The conventional wizard requests UAC once, installs the application and its
+Idle routing service, and adds Start Menu and uninstall entries. It never starts
+routing automatically. Download the adjacent `.sha256` to verify the installer.
+The versioned ZIP remains available for development and recovery.
 
 Release tags use the shared ecosystem version without a prefix, e.g. `0.9.50`.
 An optional fourth number denotes a stable hotfix, e.g. `0.9.50.1` and
@@ -187,12 +184,11 @@ matrix: Debian 12/13 and Ubuntu 24.04/26.04. Every entry must pass dependency
 resolution, installed-file checks, dynamic library resolution and an offscreen
 GUI startup before publication. No forced dependencies or per-distribution
 rebuilds are used. The matrix runs on main, pull requests and release tags.
-It also cross-builds the complete Windows ZIP from checksum-pinned inputs and
-requires a native Windows runner to verify its checksum, signed drivers, PE
-runtime, per-user install/update/uninstall and GUI startup. Releases contain the
-versioned archive plus the stable `skewer-windows-amd64.zip` alias used by the
-`latest` link. Only tags publish releases. Published assets are not
-retroactively replaced.
+It also cross-builds the Windows wizard and recovery ZIP from checksum-pinned
+inputs. A native Windows runner verifies checksums, signed drivers, PE runtime,
+wizard install/upgrade/uninstall, the Idle service, shortcuts, registration and
+GUI startup. Only tags publish releases. Published assets are not retroactively
+replaced.
 
 Container checks do not cover a real desktop polkit prompt, user systemd session
 or privileged packet forwarding. The real cgroup movement test requires a local

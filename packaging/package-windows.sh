@@ -52,6 +52,8 @@ install -m 0644 platform/windows/install-skewer.ps1 "$root/install-skewer.ps1"
 install -m 0644 platform/windows/uninstall-skewer.ps1 "$root/uninstall-skewer.ps1"
 install -m 0644 platform/windows/install-routing-service.ps1 "$root/install-routing-service.ps1"
 install -m 0644 platform/windows/remove-routing-service.ps1 "$root/remove-routing-service.ps1"
+install -m 0644 platform/windows/install-wizard.ps1 "$root/install-wizard.ps1"
+install -m 0644 platform/windows/uninstall-wizard.ps1 "$root/uninstall-wizard.ps1"
 install -m 0644 platform/windows/INSTALL.md "$root/INSTALL.md"
 
 windows_tests='application_names_test application_icons_test process_group_test selection_registry_test routing_control_test selection_auth_test
@@ -97,8 +99,16 @@ done
 archive="$output/skewer-windows-amd64-$version.zip"
 (cd "$stage" && cmake -E tar cf "$archive" --format=zip "$(basename "$root")")
 (cd "$output" && sha256sum "$(basename "$archive")" > "$(basename "$archive").sha256")
+installer="$output/SkewerSetup-$version.exe"
+makensis -V2 \
+    -DVERSION="$version" \
+    -DPAYLOAD="$root" \
+    -DOUTPUT="$installer" \
+    packaging/windows-installer.nsi
+(cd "$output" && sha256sum "$(basename "$installer")" > "$(basename "$installer").sha256")
 test_archive="$output/skewer-windows-tests-amd64-$version.zip"
 (cd "$stage" && cmake -E tar cf "$test_archive" --format=zip "$(basename "$tests")")
 (cd "$output" && sha256sum "$(basename "$test_archive")" > "$(basename "$test_archive").sha256")
 echo "$archive"
+echo "$installer"
 echo "$test_archive"

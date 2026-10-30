@@ -3,6 +3,12 @@ Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
 
 ### 0.9.50.6
 
+- Windows now provides a conventional UAC wizard installer with Start Menu and
+  optional desktop shortcuts, an Idle routing service, in-place upgrade and a
+  standard Windows uninstall entry. Pairing and preferences are preserved by
+  default and can be removed through an explicit uninstall component.
+- Installer regression coverage verifies install, GUI startup, Idle service,
+  upgrade, registration, shortcuts, state preservation and clean uninstall.
 - Windows 11 now ships the native Qt application, per-user pairing and CA trust,
   managed runtime trust, process browser, selected-process routing and explicit
   whole-host routing through either Tuntom or a directly reachable Saslik.
@@ -67,7 +73,8 @@ explicitly to undo them. IPv6 is not routed by this version.
 
 Verify the download with `sha256sum -c SHA256SUMS`.
 
-Windows releases provide a versioned ZIP and `skewer-windows-amd64.zip` for the
-stable `releases/latest/download/` link. Verify the adjacent `.sha256`, expand
-the archive and run `verify-windows-package.ps1` before installation. The
-per-user application and privileged routing service are installed separately.
+Windows releases provide `SkewerSetup-VERSION.exe` as the normal installer and
+a versioned ZIP for verification, development and recovery. Verify the adjacent
+`.sha256` file before use. The wizard installs the application and privileged
+routing service together; it leaves the service Idle until routing is explicitly
+enabled.
