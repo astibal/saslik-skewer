@@ -63,6 +63,20 @@ Var PowerShellPath
   ${EndIf}
 !macroend
 
+Function .onInit
+  ${If} ${RunningX64}
+    ; The installer executable is 32-bit, but Skewer is an x64 application.
+    ; Keep install discovery and Add/Remove Programs in the native x64 view.
+    SetRegView 64
+  ${EndIf}
+FunctionEnd
+
+Function un.onInit
+  ${If} ${RunningX64}
+    SetRegView 64
+  ${EndIf}
+FunctionEnd
+
 Section "Skewer application and routing service" SEC_CORE
   SectionIn RO
   SetShellVarContext all
