@@ -72,17 +72,17 @@ function Get-Sha256([string]$Path) {
     }
 }
 function VerifyDrivers([string]$Directory, [hashtable]$Paths) {
+    # Pin the exact, reviewed upstream artifacts. This is both stricter and
+    # more reliable than loading Authenticode cmdlets from a silent installer,
+    # where the inherited PowerShell module path is not under our control.
     $hashes = @{
+        'wintun.dll' = 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce'
         'WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'
         'WinDivert64.sys' = '8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2'
     }
     foreach ($file in $hashes.Keys) {
         $path = if ($Directory) { Join-Path $Directory $file } else { $Paths[$file] }
         if ((Get-Sha256 $path) -ne $hashes[$file]) { throw "Unverified driver artifact: $file" }
-    }
-    foreach ($file in @('wintun.dll','WinDivert64.sys')) {
-        $path = if ($Directory) { Join-Path $Directory $file } else { $Paths[$file] }
-        if ((Get-AuthenticodeSignature -LiteralPath $path).Status -ne 'Valid') { throw "Invalid driver signature: $file" }
     }
 }
 function CopyRuntimeFile([string]$Source, [string]$Destination) {
