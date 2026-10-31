@@ -26,6 +26,10 @@ function Get-SetupPhase {
     )
     $last = 'setup log contains no recognized phase'
     foreach ($line in Get-Content -LiteralPath $setupLog) {
+        if ($line -match 'Routing service detail: (.+)$') {
+            $last = "Routing service detail: $($Matches[1])"
+            continue
+        }
         if ($line -match 'Routing service installation failed: ([a-z ]+)$') {
             $last = "Routing service installation failed: $($Matches[1])"
             continue

@@ -138,6 +138,12 @@ try {
         default { 'uncategorized service installation failure' }
     }
     Write-SetupLog "Routing service installation failed: $category"
+    $detail = $message -replace "(?i)'[A-Z]:\\[^']*'", '[path]'
+    $detail = $detail -replace '(?i)\b[A-Z]:\\\S+', '[path]'
+    $detail = $detail -replace '\bS-1-(?:\d+-){1,14}\d+\b', '[sid]'
+    $detail = $detail -replace '(?i)(?:skewer|https?)://\S+', '[endpoint]'
+    $detail = ($detail -replace '[\r\n]+', ' ').Trim()
+    Write-SetupLog "Routing service detail: $($detail.Substring(0, [Math]::Min(300, $detail.Length)))"
     throw
 }
 Write-SetupLog 'Routing service is installed and Idle.'
