@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(saslik-skewer VERSION 0.9.50.9 LANGUAGES CXX)
+project(saslik-skewer VERSION 0.9.50.10 LANGUAGES CXX)
 
 # Select platform dependencies before discovering Linux-only services/libraries.
 if(WIN32)

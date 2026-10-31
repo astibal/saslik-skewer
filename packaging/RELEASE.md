@@ -1,6 +1,15 @@
 Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
 (amd64).
 
+### 0.9.50.10
+
+- Adds configurable IPv4 destination exemptions to Windows Selected Apps,
+  Whole Host and Direct routing.
+- Persists exemptions in the Windows GUI, exposes them through the CLI and
+  keeps the active set visible in authoritative routing-service status.
+- Preserves fail-closed routing for non-exempt traffic while exempt
+  destinations continue directly outside the lab path.
+
 ### 0.9.50.9
 
 - Fixes the Windows wizard installation of the privileged routing service.
