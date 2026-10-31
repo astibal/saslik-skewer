@@ -4,6 +4,14 @@ param(
     [Parameter(Mandatory=$true)][string]$Destination
 )
 $ErrorActionPreference = 'Stop'
+$nativeModuleRoot = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
+$moduleRoots = @($env:PSModulePath -split ';' | Where-Object { $_ })
+if ((Test-Path -LiteralPath $nativeModuleRoot -PathType Container) -and
+    $nativeModuleRoot -notin $moduleRoots) {
+    # A caller such as GitHub's pwsh runner can pass a PowerShell Core-only
+    # module path to Windows PowerShell. Restore its native system modules.
+    $env:PSModulePath = (@($nativeModuleRoot) + $moduleRoots) -join ';'
+}
 $logDirectory = Join-Path $env:ProgramData 'Skewer'
 $logFile = Join-Path $logDirectory 'setup.log'
 $null = New-Item -ItemType Directory -Path $logDirectory -Force

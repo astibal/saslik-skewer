@@ -4,6 +4,14 @@ param(
     [switch]$RemoveSettings
 )
 $ErrorActionPreference = 'Stop'
+$nativeModuleRoot = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
+$moduleRoots = @($env:PSModulePath -split ';' | Where-Object { $_ })
+if ((Test-Path -LiteralPath $nativeModuleRoot -PathType Container) -and
+    $nativeModuleRoot -notin $moduleRoots) {
+    # Keep the elevated uninstaller independent of its parent shell's module
+    # search path, just like the installation path.
+    $env:PSModulePath = (@($nativeModuleRoot) + $moduleRoots) -join ';'
+}
 $logDirectory = Join-Path $env:ProgramData 'Skewer'
 $logFile = Join-Path $logDirectory 'setup.log'
 $null = New-Item -ItemType Directory -Path $logDirectory -Force
