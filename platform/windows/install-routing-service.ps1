@@ -58,6 +58,19 @@ foreach ($source in $sources.Values) {
         throw "Expected a regular installation file: $source"
     }
 }
+function Get-Sha256([string]$Path) {
+    $stream = [IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
 function VerifyDrivers([string]$Directory, [hashtable]$Paths) {
     $hashes = @{
         'WinDivert.dll' = 'c1e060ee19444a259b2162f8af0f3fe8c4428a1c6f694dce20de194ac8d7d9a2'
@@ -65,7 +78,7 @@ function VerifyDrivers([string]$Directory, [hashtable]$Paths) {
     }
     foreach ($file in $hashes.Keys) {
         $path = if ($Directory) { Join-Path $Directory $file } else { $Paths[$file] }
-        if ((Get-FileHash -LiteralPath $path).Hash -ne $hashes[$file]) { throw "Unverified driver artifact: $file" }
+        if ((Get-Sha256 $path) -ne $hashes[$file]) { throw "Unverified driver artifact: $file" }
     }
     foreach ($file in @('wintun.dll','WinDivert64.sys')) {
         $path = if ($Directory) { Join-Path $Directory $file } else { $Paths[$file] }
