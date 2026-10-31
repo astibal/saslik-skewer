@@ -1,4 +1,5 @@
 #include "routing_plan.hpp"
+#include "ipv4_prefix.hpp"
 
 #include <QHostAddress>
 #include <QRegularExpression>
@@ -134,22 +135,19 @@ QString RoutingPlanner::guardRules(uid_t uid, int level, const QString& gateway,
 
 bool RoutingPlanner::normalizeExemptions(const QStringList& input, QStringList& output, QString& error)
 {
-    output.clear();
-    if (input.size() > 256) { error = "At most 256 destination exemptions are supported"; return false; }
-    static const QRegularExpression syntax("^[0-9.]+(?:/[0-9]{1,2})?$");
-    for (const auto& raw : input) {
-        const QString value = raw.trimmed();
-        QHostAddress address;
-        const auto parts = value.split('/');
-        const int bits = parts.size() == 2 ? parts[1].toInt() : 32;
-        if (!syntax.match(value).hasMatch() || bits > 32
-            || !address.setAddress(parts[0]) || address.protocol() != QAbstractSocket::IPv4Protocol) {
-            error = QString("Invalid IPv4 address or CIDR: %1").arg(value); return false;
-        }
-        const quint32 mask = bits == 0 ? 0 : (0xffffffffU << (32 - bits));
-        output << QHostAddress(address.toIPv4Address() & mask).toString() + '/' + QString::number(bits);
+    std::vector<std::string> values;
+    values.reserve(input.size());
+    for (const auto& value : input) values.push_back(value.toStdString());
+    std::vector<std::string> normalized;
+    std::string failure;
+    if (!skewer::traffic::normalizeIpv4Prefixes(values, normalized, failure)) {
+        output.clear();
+        error = QString::fromStdString(failure);
+        return false;
     }
-    output.removeDuplicates();
+    output.clear();
+    for (const auto& value : normalized) output.push_back(QString::fromStdString(value));
+    error.clear();
     return true;
 }
 

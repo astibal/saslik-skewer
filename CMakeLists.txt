@@ -40,6 +40,7 @@ install(TARGETS skewer-nss-helper RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR
 add_executable(skewer-session src/session_main.cpp src/session_guard.hpp src/session_status.cpp src/routing_plan.cpp src/pairing.cpp)
 target_link_libraries(skewer-session PRIVATE Qt6::Network PkgConfig::SYSTEMD)
 target_link_libraries(skewer-session PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(skewer-session PRIVATE skewer-ipv4-prefix)
 target_compile_options(skewer-session PRIVATE -Wall -Wextra -Wpedantic)
 install(TARGETS skewer-session RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR})
 configure_file(data/skewer.bashrc skewer.bashrc COPYONLY)
@@ -91,11 +92,13 @@ add_dependencies(skewer skewer-session)
 
 target_link_libraries(skewer PRIVATE Qt6::Network Qt6::Widgets Qt6::Concurrent PkgConfig::SYSTEMD PkgConfig::NCURSESW)
 target_link_libraries(skewer PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+target_link_libraries(skewer PRIVATE skewer-ipv4-prefix)
 target_compile_options(skewer PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer PRIVATE
     SKEWER_VERSION="${PROJECT_VERSION}"
     SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 target_link_libraries(skewer-net-helper PRIVATE Qt6::Core Qt6::Network)
+target_link_libraries(skewer-net-helper PRIVATE skewer-ipv4-prefix)
 target_compile_options(skewer-net-helper PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(skewer-net-helper PRIVATE SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
 
@@ -174,7 +177,7 @@ if(BUILD_TESTING)
         src/routing_plan.hpp
     )
     target_include_directories(routing_plan_test PRIVATE src)
-    target_link_libraries(routing_plan_test PRIVATE Qt6::Core Qt6::Network)
+    target_link_libraries(routing_plan_test PRIVATE Qt6::Core Qt6::Network skewer-ipv4-prefix)
     target_compile_options(routing_plan_test PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME routing_plan COMMAND routing_plan_test)
     add_executable(helper_protocol_test tests/helper_protocol_test.cpp)
