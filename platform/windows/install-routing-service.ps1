@@ -72,9 +72,15 @@ function Get-Sha256([string]$Path) {
     }
 }
 function Set-DirectoryAcl([string]$Path, [Security.AccessControl.DirectorySecurity]$Acl) {
-    # Invoke the .NET Framework API directly. Silent setup can inherit a
-    # PowerShell module path from its parent that cannot load Set-Acl.
-    [IO.DirectoryInfo]::new($Path).SetAccessControl($Acl)
+    # Invoke the runtime ACL API directly. Silent setup can inherit a module
+    # path that cannot load Set-Acl, while PowerShell 7 exposes the same API
+    # only through FileSystemAclExtensions.
+    $directory = [IO.DirectoryInfo]::new($Path)
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        [IO.FileSystemAclExtensions]::SetAccessControl($directory, $Acl)
+        return
+    }
+    $directory.SetAccessControl($Acl)
 }
 function VerifyDrivers([string]$Directory, [hashtable]$Paths) {
     # Pin the exact, reviewed upstream artifacts. This is both stricter and
