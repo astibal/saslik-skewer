@@ -71,6 +71,11 @@ function Get-Sha256([string]$Path) {
         $stream.Dispose()
     }
 }
+function Set-DirectoryAcl([string]$Path, [Security.AccessControl.DirectorySecurity]$Acl) {
+    # Invoke the .NET Framework API directly. Silent setup can inherit a
+    # PowerShell module path from its parent that cannot load Set-Acl.
+    [IO.DirectoryInfo]::new($Path).SetAccessControl($Acl)
+}
 function VerifyDrivers([string]$Directory, [hashtable]$Paths) {
     # Pin the exact, reviewed upstream artifacts. This is both stricter and
     # more reliable than loading Authenticode cmdlets from a silent installer,
@@ -127,7 +132,7 @@ if ($Upgrade) {
     $null = New-Item -ItemType Directory -Path $backup
     $backupAcl = [Security.AccessControl.DirectorySecurity]::new()
     $backupAcl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)')
-    Set-Acl -LiteralPath $backup -AclObject $backupAcl
+    Set-DirectoryAcl $backup $backupAcl
     $retainBackup = $false
     try {
         [pscustomobject]@{ Service=$Name; PathName=$oldService.PathName; StartMode=$oldStartMode } |
@@ -176,7 +181,7 @@ $null = New-Item -ItemType Directory -Path $root
 # Protected ACL: user may execute/read but never replace SYSTEM-loaded DLLs.
 $acl = [Security.AccessControl.DirectorySecurity]::new()
 $acl.SetSecurityDescriptorSddlForm('O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)')
-Set-Acl -LiteralPath $root -AclObject $acl
+Set-DirectoryAcl $root $acl
 foreach ($file in $sources.Keys) { Copy-Item -LiteralPath $sources[$file] -Destination (Join-Path $root $file) }
 VerifyDrivers $root $sources
 $result = Invoke-CimMethod -ClassName Win32_Service -MethodName Create -Arguments @{
