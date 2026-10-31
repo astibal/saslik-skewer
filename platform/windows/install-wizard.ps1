@@ -119,7 +119,27 @@ if ($configuration) {
 # Updating it first prevents a newly installed GUI from speaking an older IPC
 # protocol. Pairing secrets remain in the user's DPAPI-protected store.
 Write-SetupLog $(if ($configuration) { 'Updating the routing service.' } else { 'Installing the routing service.' })
-& (Join-Path $PackageDirectory 'install-routing-service.ps1') @serviceArguments
+try {
+    & (Join-Path $PackageDirectory 'install-routing-service.ps1') @serviceArguments
+} catch {
+    $message = $_.Exception.Message
+    $category = switch -Regex ($message) {
+        'Run this installer elevated' { 'not elevated'; break }
+        'OwnerSid must be canonical' { 'invalid owner SID'; break }
+        'Inconsistent installation' { 'inconsistent existing installation'; break }
+        'Expected a regular installation file' { 'invalid payload file'; break }
+        'Unverified driver artifact' { 'driver hash verification'; break }
+        'Invalid driver signature' { 'driver signature verification'; break }
+        'Service creation failed' { 'service creation'; break }
+        'Cannot configure routing service restart actions' { 'service recovery policy'; break }
+        'Cannot enable routing service non-crash recovery' { 'service recovery flag'; break }
+        'Cannot start service' { 'service startup'; break }
+        'service cannot be started' { 'service startup'; break }
+        default { 'uncategorized service installation failure' }
+    }
+    Write-SetupLog "Routing service installation failed: $category"
+    throw
+}
 Write-SetupLog 'Routing service is installed and Idle.'
 
 $parent = Split-Path -Parent $Destination
