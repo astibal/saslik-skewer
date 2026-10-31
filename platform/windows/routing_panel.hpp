@@ -3,6 +3,7 @@
 #include "service_installer.hpp"
 #include <QWidget>
 #include <QFutureWatcher>
+#include <QStringList>
 #include <QTimer>
 #include <functional>
 #include <optional>
@@ -32,6 +33,7 @@ private:
         QString service, endpoint, gateway;
         std::uint64_t generation{};
         std::optional<ProcessKey> selected;
+        QStringList exemptions;
         unsigned epoch{};
     };
     struct Result {
@@ -54,6 +56,7 @@ private:
     QPushButton* start_{};
     QPushButton* stop_{};
     QPushButton* pause_{};
+    QPushButton* exemptions_{};
     QPushButton* install_{};
     QPushButton* remove_{};
     QTimer timer_;

@@ -10,16 +10,27 @@
 
 namespace skewer::windows {
 namespace {
+bool exempted(const skewer::traffic::PacketTuple& tuple,
+              std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
+    if (tuple.ipv6) return false;
+    const std::uint32_t destination = (std::uint32_t(tuple.destination[0]) << 24) |
+        (std::uint32_t(tuple.destination[1]) << 16) |
+        (std::uint32_t(tuple.destination[2]) << 8) | tuple.destination[3];
+    return std::ranges::any_of(exemptions,
+        [destination](const auto prefix) { return prefix.contains(destination); });
+}
+
 class Runtime final : public PacketDevice, public TunnelPacketWorker {
 public:
     Runtime(const std::wstring& dll, std::unique_ptr<ProcessTarget> target, const ServiceOwner& owner,
             std::string peer, std::uint16_t port, HANDLE cancel, std::atomic_bool& ready,
             std::atomic_bool& published,
             std::atomic_bool& blocked, std::atomic<RoutingStage>& stage,
-            std::atomic<std::shared_ptr<const std::string>>& retry_error, RoutingSignals& control_state)
+            std::atomic<std::shared_ptr<const std::string>>& retry_error, RoutingSignals& control_state,
+            std::vector<skewer::traffic::Ipv4Prefix> exemptions)
         : dll_(dll), peer_(std::move(peer)), port_(port), cancel_(cancel), ready_(ready),
           published_(published), blocked_(blocked), stage_(stage), retry_error_(retry_error),
-          owner_(owner), signals_(control_state),
+          owner_(owner), signals_(control_state), exemptions_(std::move(exemptions)),
           resolver_(dll, std::move(target), owner, [this](const ProcessTarget& member) {
               unsupported_.push_back({member.key(), std::make_unique<traffic::SocketConnectGuard>(
                   dll_, member, traffic::SocketConnectGuard::Mode::UnsupportedForIpv4TcpUdp,
@@ -62,6 +73,10 @@ public:
         packets_ = std::make_unique<SelectedSessionPackets>(
             *capture_,
             [&](auto tuple) {
+                if (exempted(tuple, exemptions_)) {
+                    return SelectedCaptureBridge::Resolution{SelectedCaptureBridge::Disposition::Direct,
+                                                             std::nullopt};
+                }
                 const auto result = resolver_.resolve(tuple, cancel_);
                 using From = traffic::SelectedOwnerResolver::Disposition;
                 using To = SelectedCaptureBridge::Disposition;
@@ -118,9 +133,9 @@ public:
             auto packet = capture_->next(cancel_, 0);
             if (packet.packet) {
                 const auto tuple = skewer::traffic::parsePacketTuple(packet.packet->bytes);
-                if (tuple.tuple &&
+                if (tuple.tuple && (exempted(*tuple.tuple, exemptions_) ||
                     resolver_.resolve(*tuple.tuple, cancel_).disposition ==
-                        traffic::SelectedOwnerResolver::Disposition::Direct) {
+                        traffic::SelectedOwnerResolver::Disposition::Direct)) {
                     capture_->reinject(std::move(*packet.packet));
                 }
             }
@@ -228,6 +243,7 @@ private:
     std::atomic<std::shared_ptr<const std::string>>& retry_error_;
     ServiceOwner owner_;
     RoutingSignals& signals_;
+    std::vector<skewer::traffic::Ipv4Prefix> exemptions_;
     ULONGLONG next_membership_refresh_{};
     std::vector<Guard> unsupported_;
     std::vector<Guard> startup_;
@@ -241,6 +257,7 @@ private:
 void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTarget> target,
                               const ServiceOwner& owner, TunnelControl& control, const QString& peer,
                               std::uint16_t control_port,
+                              std::vector<skewer::traffic::Ipv4Prefix> exemptions,
                               HANDLE cancel, RoutingSignals& state) {
     if (!target || !target->running() || !control_port) {
         throw std::invalid_argument("Selected runtime requires a live authorized target and control port");
@@ -248,7 +265,8 @@ void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTa
     state.stage = RoutingStage::Preparing;
     std::atomic_bool transport_ready{};
     Runtime runtime(dll, std::move(target), owner, peer.toStdString(), control_port, cancel, transport_ready,
-                    state.ready, state.blocked, state.stage, state.retry_error, state);
+                    state.ready, state.blocked, state.stage, state.retry_error, state,
+                    std::move(exemptions));
     state.stage = RoutingStage::Connecting;
     unsigned failures{};
     for (;;) {

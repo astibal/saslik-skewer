@@ -1,4 +1,5 @@
 #pragma once
+#include "../traffic/ipv4_prefix.hpp"
 #include "selection_transport.hpp"
 #include <atomic>
 #include <functional>
@@ -28,6 +29,7 @@ struct RoutingReply {
     std::vector<ProcessKey> selection_members{};
     bool members_truncated{};
     bool pause_available{}, paused{};
+    std::vector<skewer::traffic::Ipv4Prefix> exemptions{};
     // Pause intent may outlive the active session while cleanup joins its worker.
     // Presentation must not let that retained flag hide Stopping or Failed.
     bool protectedPause() const {
@@ -128,11 +130,14 @@ private:
     std::string detail_;
 };
 
-using RoutingHandler = std::function<RoutingReply(RoutingCommand, std::uint64_t)>;
+using RoutingHandler = std::function<RoutingReply(RoutingCommand, std::uint64_t,
+                                                  std::vector<skewer::traffic::Ipv4Prefix>)>;
 using SelectedRoutingHandler =
-    std::function<RoutingReply(std::unique_ptr<ProcessTarget>, std::uint64_t)>;
+    std::function<RoutingReply(std::unique_ptr<ProcessTarget>,
+                               std::vector<skewer::traffic::Ipv4Prefix>, std::uint64_t)>;
 using DirectRoutingHandler =
-    std::function<RoutingReply(std::array<std::uint8_t, 4>, std::uint64_t)>;
+    std::function<RoutingReply(std::array<std::uint8_t, 4>,
+                               std::vector<skewer::traffic::Ipv4Prefix>, std::uint64_t)>;
 using SelectionChangeHandler = std::function<RoutingReply(SelectionOperation, ProcessKey, std::uint64_t)>;
 using PauseChangeHandler = std::function<RoutingReply(bool, std::uint64_t)>;
 // Dedicated connection; actual caller PID/birth and trusted owner token are
@@ -146,13 +151,16 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
 RoutingReply exchangePauseChange(HANDLE pipe, const std::wstring& service_name, bool paused,
                                  std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
-                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
+                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
+                                    std::span<const skewer::traffic::Ipv4Prefix> exemptions = {});
 // Separate operation: never reinterpret a selected start as whole-host Start.
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
-                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
+                                     std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
+                                     std::span<const skewer::traffic::Ipv4Prefix> exemptions = {});
 RoutingReply exchangeDirectRouting(HANDLE pipe, const std::wstring& service_name,
                                    std::array<std::uint8_t, 4> gateway, std::uint64_t generation,
-                                   HANDLE cancel, DWORD timeout_ms);
+                                   HANDLE cancel, DWORD timeout_ms,
+                                   std::span<const skewer::traffic::Ipv4Prefix> exemptions = {});
 RoutingReply exchangeSelectionChange(HANDLE pipe, const std::wstring& service_name, SelectionOperation operation,
                                      ProcessKey process, std::uint64_t generation, HANDLE cancel, DWORD timeout_ms);
 } // namespace skewer::windows

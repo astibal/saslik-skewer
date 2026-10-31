@@ -18,5 +18,6 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
                           const std::vector<std::wstring>& arguments, HANDLE cancel,
                           const EnvironmentOverrides& environment = {},
                           DWORD timeout_ms = 30000,
-                          LaunchConsole console = LaunchConsole::Inherit);
+                          LaunchConsole console = LaunchConsole::Inherit,
+                          std::span<const skewer::traffic::Ipv4Prefix> exemptions = {});
 } // namespace skewer::windows

@@ -12,5 +12,6 @@ namespace skewer::windows {
 void runSelectedServiceTunnel(const std::wstring& dll, std::unique_ptr<ProcessTarget> target,
                               const ServiceOwner& owner, TunnelControl& control, const QString& peer,
                               std::uint16_t control_port,
+                              std::vector<skewer::traffic::Ipv4Prefix> exemptions,
                               HANDLE cancel, RoutingSignals& state);
 } // namespace skewer::windows

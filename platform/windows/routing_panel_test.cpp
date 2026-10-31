@@ -77,6 +77,7 @@ int main(int argc, char** argv) {
             settings.setValue("windows/routingService", QString::fromLocal8Bit(argv[2]));
             settings.setValue("windows/routingTransport", 1);
             settings.setValue("windows/directGateway", QString::fromLocal8Bit(argv[3]));
+            settings.setValue("routing/exemptions", QStringList{"198.51.100.0/24"});
             // A stale tunnel endpoint must not interfere with a Direct
             // activation, which intentionally needs no pairing.
             settings.setValue("windows/routingEndpoint", "skewer://192.0.2.1:8766/pair");
@@ -91,6 +92,7 @@ int main(int argc, char** argv) {
             auto* start = panel->findChild<QPushButton*>("routingStart");
             auto* stop = panel->findChild<QPushButton*>("routingStop");
             auto* install = panel->findChild<QPushButton*>("routingInstall");
+            auto* exemptions = panel->findChild<QPushButton*>("routingExemptions");
             auto wait = [&](const QString& text) {
                 QElapsedTimer timer; timer.start();
                 while (!status->text().startsWith(text) && timer.elapsed() < 30000) {
@@ -102,15 +104,22 @@ int main(int argc, char** argv) {
             };
             wait("Idle");
             if (transport->currentIndex() != 1 || gateway->text() != QString::fromLocal8Bit(argv[3]) ||
-                !status->text().contains("Direct-only") || pair->isEnabled() ||
                 !start->isEnabled() || stop->isEnabled() || !service->isEnabled() ||
-                !endpoint->isEnabled()) {
-                throw std::runtime_error("Explicit Direct did not admit the valid unpaired gateway");
+                !endpoint->isEnabled() || !exemptions || exemptions->text() != "1 configured…") {
+                throw std::runtime_error(
+                    QString("Explicit Direct initial state mismatch: transport=%1 gateway=%2 status=%3 "
+                            "pair=%4 start=%5 stop=%6 service=%7 endpoint=%8 exemptions=%9")
+                        .arg(transport->currentIndex()).arg(gateway->text(), status->text())
+                        .arg(pair->isEnabled()).arg(start->isEnabled()).arg(stop->isEnabled())
+                        .arg(service->isEnabled()).arg(endpoint->isEnabled())
+                        .arg(exemptions ? exemptions->text() : QStringLiteral("<missing>"))
+                        .toStdString());
             }
             start->click();
             wait("Active");
             if (!status->text().contains("direct gateway") || start->isEnabled() || !stop->isEnabled() ||
-                service->isEnabled() || endpoint->isEnabled() || install->isEnabled()) {
+                service->isEnabled() || endpoint->isEnabled() || install->isEnabled() ||
+                exemptions->isEnabled()) {
                 throw std::runtime_error("Explicit Direct did not publish authoritative state");
             }
             const auto active_endpoint = endpoint->text();

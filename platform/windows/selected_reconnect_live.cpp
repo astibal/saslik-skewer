@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
         FailingControl control(cancel.get(), state, pause_recovery);
         const auto dll = QDir::toNativeSeparators(app.applicationDirPath() + "/WinDivert.dll").toStdWString();
         runSelectedServiceTunnel(dll, std::make_unique<ProcessTarget>(identity), owner, control,
-                                 QStringLiteral("127.0.0.1"), 8766, cancel.get(), state);
+                                 QStringLiteral("127.0.0.1"), 8766, {}, cancel.get(), state);
         if (!control.failure.empty()) throw std::runtime_error(control.failure);
         if (control.opens < 3 || control.closes < 2 || state.ready.load() || !state.blocked.load()) {
             throw std::runtime_error("Reconnect did not preserve blocked state and retry ownership");

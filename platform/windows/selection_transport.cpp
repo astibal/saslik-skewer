@@ -14,6 +14,9 @@ constexpr std::size_t roots_wire_size = 1577;
 constexpr std::size_t member_limit = 1024;
 constexpr std::size_t members_offset = roots_wire_size + 3;
 constexpr std::size_t members_wire_size = members_offset + member_limit * 20;
+constexpr std::size_t exemptions_offset = members_wire_size + 3;
+constexpr std::size_t exemptions_wire_size =
+    exemptions_offset + skewer::traffic::max_ipv4_exemptions * 5;
 class Operation {
 public:
     explicit Operation(HANDLE pipe) : pipe_(pipe), event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
@@ -435,6 +438,53 @@ std::uint64_t getGeneration(const std::uint8_t* bytes) {
     }
     return result;
 }
+using ExemptionWire = std::array<std::uint8_t, 2 + skewer::traffic::max_ipv4_exemptions * 5>;
+ExemptionWire encodeExemptions(std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
+    if (exemptions.size() > skewer::traffic::max_ipv4_exemptions) {
+        throw std::invalid_argument("Too many destination exemptions");
+    }
+    ExemptionWire result{};
+    result[0] = static_cast<std::uint8_t>(exemptions.size());
+    result[1] = static_cast<std::uint8_t>(exemptions.size() >> 8);
+    for (std::size_t index = 0; index < exemptions.size(); ++index) {
+        const auto prefix = exemptions[index];
+        const auto offset = 2 + index * 5;
+        result[offset] = static_cast<std::uint8_t>(prefix.network >> 24);
+        result[offset + 1] = static_cast<std::uint8_t>(prefix.network >> 16);
+        result[offset + 2] = static_cast<std::uint8_t>(prefix.network >> 8);
+        result[offset + 3] = static_cast<std::uint8_t>(prefix.network);
+        result[offset + 4] = prefix.length;
+    }
+    return result;
+}
+std::vector<skewer::traffic::Ipv4Prefix> decodeExemptions(std::span<const std::uint8_t> bytes) {
+    if (bytes.size() != ExemptionWire{}.size()) {
+        throw std::runtime_error("Invalid destination exemption envelope size");
+    }
+    const std::size_t count = bytes[0] | (std::size_t(bytes[1]) << 8);
+    if (count > skewer::traffic::max_ipv4_exemptions) {
+        throw std::runtime_error("Invalid destination exemption count");
+    }
+    std::vector<skewer::traffic::Ipv4Prefix> result;
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto offset = 2 + index * 5;
+        const std::uint32_t network = (std::uint32_t(bytes[offset]) << 24) |
+            (std::uint32_t(bytes[offset + 1]) << 16) |
+            (std::uint32_t(bytes[offset + 2]) << 8) | bytes[offset + 3];
+        const auto length = bytes[offset + 4];
+        const auto mask = length == 0 ? 0 : length <= 32 ? 0xffffffffU << (32 - length) : 0;
+        if (length > 32 || (network & ~mask) ||
+            std::ranges::find(result, skewer::traffic::Ipv4Prefix{network, length}) != result.end()) {
+            throw std::runtime_error("Invalid or duplicate destination exemption");
+        }
+        result.push_back({network, length});
+    }
+    if (std::ranges::any_of(bytes.subspan(2 + count * 5), [](auto byte) { return byte != 0; })) {
+        throw std::runtime_error("Invalid destination exemption padding");
+    }
+    return result;
+}
 } // namespace
 void serveRoutingCommand(HANDLE pipe, HANDLE owner_token, HANDLE cancel, DWORD timeout_ms,
                          const RoutingHandler& handler) {
@@ -451,7 +501,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     std::array<std::uint8_t, 32> request{};
     handoffTransfer(pipe, request.data(), request.size(), false, cancel, deadline);
     const auto key = decodeSelectionRequest(std::span(request).first(20));
-    if (request[20] != 'R' || request[21] != 1 || request[22] > 11 || request[23]) {
+    if (request[20] != 'R' || request[21] != 1 || request[22] > 15 || request[23]) {
         throw std::invalid_argument("Invalid routing command");
     }
     ULONG actual_pid{};
@@ -464,10 +514,16 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         throw std::runtime_error("Routing caller exited");
     }
     RoutingReply result;
+    std::vector<skewer::traffic::Ipv4Prefix> exemptions;
+    const auto read_exemptions = [&] {
+        ExemptionWire wire{};
+        handoffTransfer(pipe, wire.data(), wire.size(), false, cancel, deadline);
+        return decodeExemptions(wire);
+    };
     if (request[22] == 9 || request[22] == 10) {
         if (!pause) throw std::runtime_error("Protected pause is not supported by this service");
         result = pause(request[22] == 9, getGeneration(request.data() + 24));
-    } else if (request[22] == 3) {
+    } else if (request[22] == 3 || request[22] == 13) {
         if (!selected) {
             throw std::runtime_error("Selected routing is not supported by this service");
         }
@@ -481,7 +537,9 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         if (!client->running() || !owner_bound.running() || !target->running() || !target_owner.running()) {
             throw std::runtime_error("Selected routing identity exited during authorization");
         }
-        result = selected(std::move(target), getGeneration(request.data() + 24));
+        if (request[22] == 13) exemptions = read_exemptions();
+        result = selected(std::move(target), std::move(exemptions),
+                          getGeneration(request.data() + 24));
     } else if (request[22] == 5 || request[22] == 6) {
         if (!change) throw std::runtime_error("Live selection changes are not supported by this service");
         SelectionRequest selection{};
@@ -498,7 +556,7 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         // releases an exact identity already owned by this authenticated service.
         result = change(request[22] == 5 ? SelectionOperation::Add : SelectionOperation::Remove,
                         target_key, getGeneration(request.data() + 24));
-    } else if (request[22] == 4) {
+    } else if (request[22] == 4 || request[22] == 14) {
         if (!direct) {
             throw std::runtime_error("Direct routing is not supported by this service");
         }
@@ -508,10 +566,14 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
             gateway[0] == 127 || gateway[0] >= 224) {
             throw std::invalid_argument("Invalid direct-routing gateway");
         }
-        result = direct(gateway, getGeneration(request.data() + 24));
+        if (request[22] == 14) exemptions = read_exemptions();
+        result = direct(gateway, std::move(exemptions), getGeneration(request.data() + 24));
     } else {
-        result = handler(request[22] >= 7 ? RoutingCommand::Status : static_cast<RoutingCommand>(request[22]),
-                         getGeneration(request.data() + 24));
+        if (request[22] == 12) exemptions = read_exemptions();
+        const auto command = request[22] == 12 ? RoutingCommand::Start
+                           : request[22] >= 7  ? RoutingCommand::Status
+                                               : static_cast<RoutingCommand>(request[22]);
+        result = handler(command, getGeneration(request.data() + 24), std::move(exemptions));
     }
     const bool has_scope = result.scope != RoutingScope::None;
     const bool has_transport = result.transport != RoutingTransport::None;
@@ -530,9 +592,10 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
     const bool extended = request[22] >= 5;
     const bool pause_state = request[22] >= 9;
     const bool membership = request[22] >= 8;
+    const bool exemption_state = request[22] >= 12;
     if (result.selections.size() > 64) throw std::logic_error("Too many selected applications");
-    std::vector<std::uint8_t> response(pause_state ? members_wire_size + 1 : membership ? members_wire_size : extended ? roots_wire_size : 296);
-    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(pause_state ? 9 : membership ? 8 : extended ? 7 : 6),
+    std::vector<std::uint8_t> response(exemption_state ? exemptions_wire_size : pause_state ? members_wire_size + 1 : membership ? members_wire_size : extended ? roots_wire_size : 296);
+    const std::array<std::uint8_t, 8> header{'S', 'K', 'R', 'C', std::uint8_t(exemption_state ? 10 : pause_state ? 9 : membership ? 8 : extended ? 7 : 6),
         static_cast<std::uint8_t>(result.result), static_cast<std::uint8_t>(result.phase),
         static_cast<std::uint8_t>(result.scope)};
     std::copy(header.begin(), header.end(), response.begin());
@@ -564,13 +627,18 @@ void serveRoutingCommand(HANDLE pipe, const ServiceOwner& owner, HANDLE cancel, 
         }
     }
     if (pause_state) response[members_wire_size] = (result.pause_available ? 1 : 0) | (result.paused ? 2 : 0);
+    if (exemption_state) {
+        const auto wire = encodeExemptions(result.exemptions);
+        std::copy(wire.begin(), wire.end(), response.begin() + members_wire_size + 1);
+    }
     handoffTransfer(pipe, response.data(), response.size(), true, cancel, deadline);
 }
 namespace {
 RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std::uint8_t operation,
                              std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
                              const SelectionRequest* selection,
-                             const std::array<std::uint8_t, 4>* gateway) {
+                             const std::array<std::uint8_t, 4>* gateway,
+                             std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
     const auto deadline = handoffDeadline(cancel, timeout_ms);
     auto server = verifySelectionService(pipe, service_name);
     std::array<std::uint8_t, 32> request{};
@@ -589,13 +657,20 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
         auto bytes = *gateway;
         handoffTransfer(pipe, bytes.data(), bytes.size(), true, cancel, deadline);
     }
+    if (operation >= 12 && operation <= 14) {
+        auto wire = encodeExemptions(exemptions);
+        handoffTransfer(pipe, wire.data(), wire.size(), true, cancel, deadline);
+    } else if (!exemptions.empty()) {
+        throw std::invalid_argument("Destination exemptions require the current routing protocol");
+    }
     const bool extended = operation >= 5;
     const bool pause_state = operation >= 9;
     const bool membership = operation >= 8;
-    std::vector<std::uint8_t> response(pause_state ? members_wire_size + 1 : membership ? members_wire_size : extended ? roots_wire_size : 296);
+    const bool exemption_state = operation >= 12;
+    std::vector<std::uint8_t> response(exemption_state ? exemptions_wire_size : pause_state ? members_wire_size + 1 : membership ? members_wire_size : extended ? roots_wire_size : 296);
     handoffTransfer(pipe, response.data(), response.size(), false, cancel, deadline);
     if (response[0] != 'S' || response[1] != 'K' || response[2] != 'R' || response[3] != 'C' ||
-        response[4] != (pause_state ? 9 : membership ? 8 : extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
+        response[4] != (exemption_state ? 10 : pause_state ? 9 : membership ? 8 : extended ? 7 : 6) || response[5] > 2 || response[6] > 5 || response[7] > 2 || response[37] > 1 ||
         response[38] > static_cast<unsigned>(RoutingTransport::Direct) ||
         (response[39] & ~3U) != 0 ||
         WaitForSingleObject(server->get(), 0) != WAIT_TIMEOUT) {
@@ -658,26 +733,38 @@ RoutingReply exchangeRouting(HANDLE pipe, const std::wstring& service_name, std:
              !(result.scope == RoutingScope::WholeHost && result.transport == RoutingTransport::Tunnel)))
             throw std::runtime_error("Invalid protected pause state");
     }
+    if (exemption_state) {
+        result.exemptions = decodeExemptions(
+            std::span(response).subspan(members_wire_size + 1, ExemptionWire{}.size()));
+    }
     return result;
 }
 } // namespace
 RoutingReply exchangeRoutingCommand(HANDLE pipe, const std::wstring& service_name, RoutingCommand command,
-                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+                                    std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
+                                    std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
     if (command > RoutingCommand::Stop) {
         throw std::invalid_argument("Unknown routing command");
     }
-    return exchangeRouting(pipe, service_name, command == RoutingCommand::Status ? 11 : static_cast<std::uint8_t>(command), generation, cancel,
-                           timeout_ms, nullptr, nullptr);
+    const auto operation = command == RoutingCommand::Status ? 15
+                         : command == RoutingCommand::Start  ? 12
+                                                             : static_cast<std::uint8_t>(command);
+    return exchangeRouting(pipe, service_name, operation, generation, cancel,
+                           timeout_ms, nullptr, nullptr, exemptions);
 }
 RoutingReply exchangeSelectedRouting(HANDLE pipe, const std::wstring& service_name, ProcessKey target,
-                                     std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
+                                     std::uint64_t generation, HANDLE cancel, DWORD timeout_ms,
+                                     std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
     const auto selection = encodeSelectionRequest(target);
-    return exchangeRouting(pipe, service_name, 3, generation, cancel, timeout_ms, &selection, nullptr);
+    return exchangeRouting(pipe, service_name, 13, generation, cancel, timeout_ms, &selection, nullptr,
+                           exemptions);
 }
 RoutingReply exchangeDirectRouting(HANDLE pipe, const std::wstring& service_name,
                                    std::array<std::uint8_t, 4> gateway, std::uint64_t generation,
-                                   HANDLE cancel, DWORD timeout_ms) {
-    return exchangeRouting(pipe, service_name, 4, generation, cancel, timeout_ms, nullptr, &gateway);
+                                   HANDLE cancel, DWORD timeout_ms,
+                                   std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
+    return exchangeRouting(pipe, service_name, 14, generation, cancel, timeout_ms, nullptr, &gateway,
+                           exemptions);
 }
 RoutingReply exchangeSelectionChange(HANDLE pipe, const std::wstring& service_name, SelectionOperation operation,
                                      ProcessKey process, std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
@@ -686,11 +773,11 @@ RoutingReply exchangeSelectionChange(HANDLE pipe, const std::wstring& service_na
     }
     const auto selection = encodeSelectionRequest(process);
     return exchangeRouting(pipe, service_name, operation == SelectionOperation::Add ? 5 : 6,
-                           generation, cancel, timeout_ms, &selection, nullptr);
+                           generation, cancel, timeout_ms, &selection, nullptr, {});
 }
 RoutingReply exchangePauseChange(HANDLE pipe, const std::wstring& service_name, bool paused,
                                  std::uint64_t generation, HANDLE cancel, DWORD timeout_ms) {
     return exchangeRouting(pipe, service_name, paused ? 9 : 10, generation, cancel,
-                           timeout_ms, nullptr, nullptr);
+                           timeout_ms, nullptr, nullptr, {});
 }
 } // namespace skewer::windows

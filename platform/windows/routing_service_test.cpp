@@ -21,7 +21,7 @@ std::uint64_t number(const wchar_t* text) {
 // deliberately failed session: never installs routes or claims active traffic.
 int wmain(int argc, wchar_t** argv) {
     try {
-        if (argc < 3 || argc > 6) {
+        if (argc < 3 || argc > 7) {
             return 2;
         }
         const std::wstring mode(argv[1]), name(argv[2]);
@@ -34,7 +34,8 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (mode == L"--client" || mode == L"--pair" || mode == L"--select" || mode == L"--direct") {
             if ((mode == L"--pair" && argc != 3) || (mode == L"--client" && argc != 5) ||
-                (mode == L"--select" && argc != 6) || (mode == L"--direct" && argc != 5)) {
+                (mode == L"--select" && argc != 6 && argc != 7) ||
+                (mode == L"--direct" && argc != 5 && argc != 6)) {
                 return 2;
             }
             const auto path = L"\\\\.\\pipe\\SkewerSelection-" + name + (mode == L"--pair" ? L"-pair" : L"");
@@ -76,17 +77,27 @@ int wmain(int argc, wchar_t** argv) {
                 return 2;
             }
             RoutingReply response;
+            std::vector<skewer::traffic::Ipv4Prefix> exemptions;
+            if ((mode == L"--select" && argc == 7) || (mode == L"--direct" && argc == 6)) {
+                const std::wstring wide(argv[argc - 1]);
+                const std::string text(wide.begin(), wide.end());
+                skewer::traffic::Ipv4Prefix prefix;
+                if (!skewer::traffic::parseIpv4Prefix(text, prefix)) {
+                    throw std::invalid_argument("Invalid fixture destination exemption");
+                }
+                exemptions.push_back(prefix);
+            }
             if (mode == L"--select") {
                 response = exchangeSelectedRouting(
                     pipe.get(), name,
                     {static_cast<DWORD>(number(argv[4])), number(argv[5])},
-                    number(argv[3]), cancel.get(), 3000);
+                    number(argv[3]), cancel.get(), 3000, exemptions);
             } else if (mode == L"--direct") {
                 if (std::wstring_view(argv[4]) != L"192.0.2.1") {
                     throw std::invalid_argument("Invalid fixture gateway");
                 }
                 response = exchangeDirectRouting(
-                    pipe.get(), name, {192, 0, 2, 1}, number(argv[3]), cancel.get(), 3000);
+                    pipe.get(), name, {192, 0, 2, 1}, number(argv[3]), cancel.get(), 3000, exemptions);
             } else {
                 response = exchangeRoutingCommand(pipe.get(), name, static_cast<RoutingCommand>(operation),
                                                   number(argv[4]), cancel.get(), 3000);
@@ -103,6 +114,12 @@ int wmain(int argc, wchar_t** argv) {
                 std::cout << ",\"selected\":{\"pid\":" << response.selected->pid
                           << ",\"birth\":\"" << response.selected->created << "\"}";
             }
+            std::cout << ",\"exemptions\":[";
+            for (std::size_t index = 0; index < response.exemptions.size(); ++index) {
+                if (index) std::cout << ',';
+                std::cout << '\"' << response.exemptions[index].text() << '\"';
+            }
+            std::cout << ']';
             std::cout << "}\n";
             return 0;
         }
@@ -118,7 +135,9 @@ int wmain(int argc, wchar_t** argv) {
         const auto dll = std::filesystem::path(module).parent_path() / L"WinDivert.dll";
         return runService(name, [=](HANDLE stop) -> DWORD {
             serveRoutingService(name, configured_owner, stop,
-                                [&](const PairingHandoff& pairing, HANDLE cancel, RoutingSignals& signals) {
+                                [&](const PairingHandoff& pairing,
+                                    const std::vector<skewer::traffic::Ipv4Prefix>&,
+                                    HANDLE cancel, RoutingSignals& signals) {
                                     if (pairing.identity != "public-fixture" || pairing.key[0] != 0x5a) {
                                         throw std::runtime_error("Missing fixture pairing");
                                     }
@@ -129,6 +148,7 @@ int wmain(int argc, wchar_t** argv) {
                                         [] { return true; }, &signals.blocked);
                                 },
                                 [](const PairingHandoff&, std::unique_ptr<ProcessTarget> target,
+                                   const std::vector<skewer::traffic::Ipv4Prefix>&,
                                    HANDLE cancel, RoutingSignals& signals) {
                                     if (!target || !target->running()) {
                                         throw std::runtime_error("Selected fixture target unavailable");
@@ -137,7 +157,9 @@ int wmain(int argc, wchar_t** argv) {
                                     signals.blocked = true;
                                     WaitForSingleObject(cancel, INFINITE);
                                 },
-                                [](std::array<std::uint8_t, 4> gateway, HANDLE cancel,
+                                [](std::array<std::uint8_t, 4> gateway,
+                                   const std::vector<skewer::traffic::Ipv4Prefix>&,
+                                   HANDLE cancel,
                                    RoutingSignals& signals) {
                                     if (gateway != std::array<std::uint8_t, 4>{192, 0, 2, 1}) {
                                         throw std::runtime_error("Unexpected direct fixture gateway");

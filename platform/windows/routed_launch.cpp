@@ -35,7 +35,8 @@ private:
 
 RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& executable,
                           const std::vector<std::wstring>& arguments, HANDLE cancel,
-                          const EnvironmentOverrides& environment, DWORD timeout_ms, LaunchConsole console) {
+                          const EnvironmentOverrides& environment, DWORD timeout_ms, LaunchConsole console,
+                          std::span<const skewer::traffic::Ipv4Prefix> exemptions) {
     if (!timeout_ms || timeout_ms > 120000) {
         throw std::invalid_argument("Routed launch timeout must be 1..120000 ms");
     }
@@ -72,7 +73,8 @@ RoutedLaunch launchRouted(const std::wstring& service, const std::wstring& execu
     const auto started = joining
         ? exchangeSelectionChange(pipe->get(), service, SelectionOperation::Add, identity,
                                    initial.generation, cancel, mutation_timeout)
-        : exchangeSelectedRouting(pipe->get(), service, identity, initial.generation, cancel, remaining());
+        : exchangeSelectedRouting(pipe->get(), service, identity, initial.generation, cancel, remaining(),
+                                  exemptions);
     pipe.reset();
     if (started.result != RoutingResult::Ok) {
         throw std::runtime_error("Selected routing start rejected; process was not resumed");

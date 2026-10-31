@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ipv4_prefix.hpp"
+#include "../traffic/ipv4_prefix.hpp"
 #include "owned_route.hpp"
 #include <span>
 

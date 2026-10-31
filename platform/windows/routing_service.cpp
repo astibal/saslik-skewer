@@ -19,6 +19,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
     std::optional<std::array<std::uint8_t, 4>> direct_gateway;
     RoutingScope scope{RoutingScope::None};
     RoutingTransport transport{RoutingTransport::None};
+    std::vector<skewer::traffic::Ipv4Prefix> active_exemptions;
     std::optional<ProcessKey> selected_identity;
     const auto describe = [&](RoutingReply state) {
         if (state.phase == RoutingPhase::Idle || state.phase == RoutingPhase::Failed) {
@@ -26,6 +27,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             transport = RoutingTransport::None;
             selected_identity.reset();
             direct_gateway.reset();
+            active_exemptions.clear();
         }
         state.scope = scope;
         state.transport = transport;
@@ -38,6 +40,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             state.selections.clear();
         }
         state.selected = selected_identity;
+        state.exemptions = active_exemptions;
         state.paired = bool(pairing);
         state.tunnel_available = bool(runner);
         state.direct_available = bool(direct);
@@ -49,19 +52,21 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             if (!selected || !pairing) {
                 throw std::logic_error("Selected routing has no configured tunnel runner");
             }
-            selected(*pairing, std::move(target), cancel, state);
+            selected(*pairing, std::move(target), active_exemptions, cancel, state);
         } else if (direct_gateway) {
-            direct(*direct_gateway, cancel, state);
+            direct(*direct_gateway, active_exemptions, cancel, state);
         } else {
             if (!runner || !pairing) {
                 throw std::logic_error("Tunnel routing is not configured");
             }
-            runner(*pairing, cancel, state);
+            runner(*pairing, active_exemptions, cancel, state);
         }
     });
     SelectedRoutingHandler startSelected;
     if (selected) {
-        startSelected = [&](std::unique_ptr<ProcessTarget> next, std::uint64_t generation) {
+        startSelected = [&](std::unique_ptr<ProcessTarget> next,
+                            std::vector<skewer::traffic::Ipv4Prefix> exemptions,
+                            std::uint64_t generation) {
             // Status joins a finished generation before replacing its pinned
             // target. Only this command thread may start or replace a session.
             auto state = controller.command(RoutingCommand::Status, 0);
@@ -78,6 +83,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             }
             const auto identity = next->key();
             direct_gateway.reset();
+            active_exemptions = std::move(exemptions);
             target = std::move(next);
             try {
                 auto started = controller.command(RoutingCommand::Start, generation);
@@ -89,6 +95,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                 return describe(started);
             } catch (...) {
                 target.reset();
+                active_exemptions.clear();
                 throw;
             }
         };
@@ -159,7 +166,9 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         return describe(controller.command(RoutingCommand::Status, 0));
     };
     if (direct) {
-        startDirect = [&](std::array<std::uint8_t, 4> gateway, std::uint64_t generation) {
+        startDirect = [&](std::array<std::uint8_t, 4> gateway,
+                          std::vector<skewer::traffic::Ipv4Prefix> exemptions,
+                          std::uint64_t generation) {
             auto state = controller.command(RoutingCommand::Status, 0);
             if (generation != state.generation) {
                 state.result = RoutingResult::Stale;
@@ -171,13 +180,20 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
             }
             target.reset();
             direct_gateway = gateway;
-            auto started = controller.command(RoutingCommand::Start, generation);
-            if (started.result == RoutingResult::Ok) {
-                scope = RoutingScope::WholeHost;
-                transport = RoutingTransport::Direct;
-                selected_identity.reset();
+            active_exemptions = std::move(exemptions);
+            try {
+                auto started = controller.command(RoutingCommand::Start, generation);
+                if (started.result == RoutingResult::Ok) {
+                    scope = RoutingScope::WholeHost;
+                    transport = RoutingTransport::Direct;
+                    selected_identity.reset();
+                }
+                return describe(started);
+            } catch (...) {
+                direct_gateway.reset();
+                active_exemptions.clear();
+                throw;
             }
-            return describe(started);
         };
     }
     for (;;) {
@@ -191,7 +207,8 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
         try {
             acceptSelection(commands->get(), stop, 100);
             serveRoutingCommand(commands->get(), owner, stop, 30000,
-                                [&](RoutingCommand command, std::uint64_t generation) {
+                                [&](RoutingCommand command, std::uint64_t generation,
+                                    std::vector<skewer::traffic::Ipv4Prefix> exemptions) {
                                     if (command == RoutingCommand::Start && !runner) {
                                         throw std::runtime_error(
                                             "Upgrade the service with a pairing endpoint before tunnel routing");
@@ -207,6 +224,7 @@ void serveRoutingService(const std::wstring& name, const ServiceOwner& owner, HA
                                             generation == current.generation) {
                                             target.reset();
                                             direct_gateway.reset();
+                                            active_exemptions = std::move(exemptions);
                                         }
                                     }
                                     auto state = controller.command(command, generation);

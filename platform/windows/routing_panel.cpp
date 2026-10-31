@@ -1,4 +1,5 @@
 #include "routing_panel.hpp"
+#include "destination_exemption_settings.hpp"
 #include "routing_client.hpp"
 #include "stored_pairing_handoff.hpp"
 #include <QLineEdit>
@@ -14,6 +15,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QMessageBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
 #include <QtConcurrent>
 #include <utility>
 
@@ -26,6 +30,7 @@ bool canonicalIpv4(const QString& text) {
     return address.setAddress(text) && address.protocol() == QAbstractSocket::IPv4Protocol &&
            address.toString() == text;
 }
+
 } // namespace
 
 RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
@@ -100,6 +105,9 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
     form->addRow(tr("Paired endpoint"), endpoint_);
     form->addRow(tr("Whole-host transport"), transport_);
     form->addRow(tr("Direct gateway"), gateway_);
+    exemptions_ = new QPushButton(this);
+    exemptions_->setObjectName("routingExemptions");
+    form->addRow(tr("Destination exemptions"), exemptions_);
     layout->addLayout(form);
     auto* buttons = new QHBoxLayout;
     pair_ = new QPushButton(tr("Send pairing"), this);
@@ -199,6 +207,41 @@ RoutingPanel::RoutingPanel(QWidget* parent, QString service_override)
         updateControls();
     });
     connect(gateway_, &QLineEdit::textChanged, this, [this] { updateControls(); });
+    connect(exemptions_, &QPushButton::clicked, this, [this] {
+        QDialog dialog(this);
+        dialog.setWindowTitle(tr("Destination exemptions"));
+        dialog.resize(560, 360);
+        auto* content = new QVBoxLayout(&dialog);
+        auto* explanation = new QLabel(
+            tr("These IPv4 destinations bypass Skewer and use the host's normal route. "
+               "Enter one address or CIDR network per line. Existing sockets keep their old route; "
+               "reconnect them after changing this list. 0.0.0.0/0 bypasses everything."),
+            &dialog);
+        explanation->setWordWrap(true);
+        content->addWidget(explanation);
+        auto* editor = new QPlainTextEdit(&dialog);
+        editor->setPlaceholderText("203.0.113.7\n192.168.0.0/16");
+        editor->setPlainText(storedDestinationExemptions().join('\n'));
+        content->addWidget(editor);
+        auto* error = new QLabel(&dialog);
+        error->setWordWrap(true);
+        error->setTextFormat(Qt::PlainText);
+        content->addWidget(error);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+        content->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, [&, this] {
+            try {
+                const auto normalized = normalizeDestinationExemptions(editor->toPlainText());
+                QSettings().setValue("routing/exemptions", normalized);
+                updateControls();
+                dialog.accept();
+            } catch (const std::exception& failure) {
+                error->setText(QString::fromUtf8(failure.what()));
+            }
+        });
+        dialog.exec();
+    });
     connect(&timer_, &QTimer::timeout, this, [this] {
         if (!watcher_.isRunning() && !action_busy_) {
             submit(0);
@@ -353,7 +396,8 @@ void RoutingPanel::startSelected(ProcessKey process) {
     if (action_busy_) return;
     const bool joining = state_.scope == RoutingScope::SelectedProcess && state_.phase == RoutingPhase::Active;
     Request request{joining ? 6 : 4, service_->text().trimmed(), endpoint_->text().trimmed(), {},
-                    state_.generation, process, epoch_};
+                    state_.generation, process,
+                    joining ? QStringList{} : storedDestinationExemptions(), epoch_};
     action_busy_ = true;
     updateControls();
     status_->setText(tr("Starting selected-process routing…"));
@@ -366,7 +410,7 @@ void RoutingPanel::startSelected(ProcessKey process) {
 void RoutingPanel::releaseSelected(ProcessKey process) {
     if (!known_ || action_busy_ || state_.scope != RoutingScope::SelectedProcess) return;
     Request request{7, service_->text().trimmed(), endpoint_->text().trimmed(), {},
-                    state_.generation, process, epoch_};
+                    state_.generation, process, {}, epoch_};
     action_busy_ = true;
     updateControls();
     status_->setText(tr("Releasing application…"));
@@ -437,6 +481,13 @@ void RoutingPanel::updateControls() {
     endpoint_->setEnabled(configuration_editable && !action_busy_);
     transport_->setEnabled(idle && !action_busy_);
     gateway_->setEnabled(idle && !action_busy_ && direct);
+    const auto exemption_count = (known_ && !idle)
+        ? state_.exemptions.size()
+        : static_cast<std::size_t>(storedDestinationExemptions().size());
+    exemptions_->setText(exemption_count
+        ? tr("%1 configured…").arg(exemption_count)
+        : tr("Configure…"));
+    exemptions_->setEnabled(configuration_editable && !action_busy_);
     const auto package = QCoreApplication::applicationDirPath();
     const bool install_packaged = QFileInfo::exists(QDir(package).filePath("install-routing-service.ps1")) &&
                                   QFileInfo::exists(QDir(package).filePath("wintun.dll")) &&
@@ -455,7 +506,10 @@ void RoutingPanel::updateControls() {
 void RoutingPanel::submit(int action) {
     Request request{action, service_->text().trimmed(), endpoint_->text().trimmed(),
                     gateway_->text().trimmed(), state_.generation,
-                    std::nullopt, epoch_};
+                    std::nullopt,
+                    (action == 1 || action == 5)
+                        ? storedDestinationExemptions() : QStringList{},
+                    epoch_};
     if (action) {
         action_busy_ = true;
         updateControls();
@@ -475,6 +529,7 @@ void RoutingPanel::dispatch(Request request) {
         result.request = request;
         try {
             const auto name = request.service.toStdWString();
+            const auto exemptions = parseDestinationExemptions(request.exemptions);
             if (request.action == 3) {
                 auto pipe = connectRoutingService(name, true, cancel->get(), 1000);
                 sendStoredPairing(pipe->get(), name, QUrl(request.endpoint), cancel->get(), 2000);
@@ -489,7 +544,7 @@ void RoutingPanel::dispatch(Request request) {
                     *request.selected, request.generation, cancel->get(), 30000);
             } else if (request.selected) {
                 result.reply = exchangeSelectedRouting(pipe->get(), name, *request.selected,
-                                                       request.generation, cancel->get(), 2000);
+                                                       request.generation, cancel->get(), 2000, exemptions);
             } else if (request.action == 5) {
                 if (!canonicalIpv4(request.gateway)) {
                     throw std::invalid_argument("Direct routing requires a canonical IPv4 gateway");
@@ -500,13 +555,13 @@ void RoutingPanel::dispatch(Request request) {
                     pipe->get(), name,
                     {static_cast<std::uint8_t>(value >> 24), static_cast<std::uint8_t>(value >> 16),
                      static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value)},
-                    request.generation, cancel->get(), 2000);
+                    request.generation, cancel->get(), 2000, exemptions);
             } else {
                 const auto command = request.action == 3
                                          ? RoutingCommand::Status
                                          : static_cast<RoutingCommand>(request.action);
                 result.reply = exchangeRoutingCommand(pipe->get(), name, command, request.generation,
-                                                      cancel->get(), 2000);
+                                                      cancel->get(), 2000, exemptions);
             }
         } catch (const std::exception& error) {
             result.error = QString::fromUtf8(error.what());

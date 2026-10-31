@@ -39,6 +39,7 @@
 #include "connections_panel.hpp"
 #include "pairing.hpp"
 #include "routing_panel.hpp"
+#include "destination_exemption_settings.hpp"
 #include "routed_launch.hpp"
 #include "runtime_trust_panel.hpp"
 #include <QSettings>
@@ -101,7 +102,7 @@ struct PairedStatusResult {
 LaunchResult launch(const QString& executable, const QStringList& arguments, const QString& service, bool routed,
                     const std::shared_ptr<skewer::windows::Handle>& cancel,
                     const skewer::windows::EnvironmentOverrides& environment,
-                    skewer::windows::LaunchConsole console) {
+                    skewer::windows::LaunchConsole console, QStringList exemption_text) {
     try {
         std::vector<std::wstring> native_arguments;
         native_arguments.reserve(arguments.size());
@@ -109,9 +110,11 @@ LaunchResult launch(const QString& executable, const QStringList& arguments, con
             native_arguments.push_back(argument.toStdWString());
         }
         if (routed) {
+            const auto exemptions = skewer::windows::parseDestinationExemptions(exemption_text);
             const auto result = skewer::windows::launchRouted(service.toStdWString(),
                                                               executable.toStdWString(), native_arguments,
-                                                              cancel->get(), environment, 30000, console);
+                                                              cancel->get(), environment, 30000, console,
+                                                              exemptions);
             skewer::windows::Handle thread(result.process.hThread);
             auto handle = std::make_shared<skewer::windows::Handle>(result.process.hProcess);
             return {result.identity.pid, result.generation, true, {}, std::move(handle)};
@@ -914,10 +917,12 @@ private:
                                      : QProcess::splitCommand(arguments_->text());
         const auto console = shell ? skewer::windows::LaunchConsole::New : skewer::windows::LaunchConsole::Inherit;
         const auto environment = skewer::windows::managedRuntimeEnvironment();
+        const auto exemptions = skewer::windows::storedDestinationExemptions();
         launch_status_->setText(routed ? tr("Preparing routing before starting %1…").arg(executable)
                                        : tr("Starting %1 without routing…").arg(executable));
         launch_watcher_.setFuture(
-            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_, environment, console));
+            QtConcurrent::run(launch, executable, arguments, service, routed, launch_cancel_, environment,
+                              console, exemptions));
     }
 
     skewer::ui::ApplicationPage* page_{};

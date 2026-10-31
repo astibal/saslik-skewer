@@ -42,9 +42,9 @@ function AwaitPhase([int]$phase) {
 function StartDirect([uint64]$generation) {
     if ($ClientDirectory) {
         $text = & (Join-Path $ClientDirectory 'skewer-routing-control.exe') `
-            start-direct $name $generation '192.0.2.1'
+            start-direct $name $generation '192.0.2.1' --exempt '198.51.100.0/24'
     } else {
-        $text = & $exe --direct $name $generation '192.0.2.1'
+        $text = & $exe --direct $name $generation '192.0.2.1' '198.51.100.0/24'
     }
     if ($LASTEXITCODE -ne 0 -or !$text) { throw 'Direct routing client failed' }
     return ($text | ConvertFrom-Json)
@@ -62,11 +62,13 @@ try {
     Start-Service $name
     $initial = AwaitPhase 0
     $direct = StartDirect $initial.generation
-    if ($direct.result -ne 0 -or $direct.scope -ne 1 -or $direct.transport -ne 2 -or $direct.paired) {
+    if ($direct.result -ne 0 -or $direct.scope -ne 1 -or $direct.transport -ne 2 -or $direct.paired -or
+        @($direct.exemptions).Count -ne 1 -or $direct.exemptions[0] -ne '198.51.100.0/24') {
         throw 'Unpaired direct whole-host start was not represented accurately'
     }
     $activeDirect = AwaitPhase 2
-    if ($activeDirect.scope -ne 1 -or $activeDirect.transport -ne 2) {
+    if ($activeDirect.scope -ne 1 -or $activeDirect.transport -ne 2 -or
+        @($activeDirect.exemptions).Count -ne 1 -or $activeDirect.exemptions[0] -ne '198.51.100.0/24') {
         throw 'Direct whole-host generation did not become Active'
     }
     $null = Command 2 $activeDirect.generation
@@ -75,7 +77,8 @@ try {
         $previousPlatform = $env:QT_QPA_PLATFORM
         $previousPath = $env:PATH
         try {
-            $env:QT_QPA_PLATFORM = 'offscreen'
+            $offscreen = Join-Path $GuiTestDirectory 'platforms\qoffscreen.dll'
+            $env:QT_QPA_PLATFORM = if (Test-Path $offscreen) { 'offscreen' } else { 'windows' }
             $env:PATH = "$GuiTestDirectory;$previousPath"
             & (Join-Path $GuiTestDirectory 'routing_panel_test.exe') `
                 --live-direct $name '192.0.2.1'
@@ -85,7 +88,8 @@ try {
             $env:PATH = $previousPath
         }
         $activeDirect = AwaitPhase 2
-        if ($activeDirect.scope -ne 1 -or $activeDirect.transport -ne 2 -or $activeDirect.paired) {
+        if ($activeDirect.scope -ne 1 -or $activeDirect.transport -ne 2 -or $activeDirect.paired -or
+            @($activeDirect.exemptions).Count -ne 1 -or $activeDirect.exemptions[0] -ne '198.51.100.0/24') {
             throw 'GUI Auto direct state was not retained after panel close'
         }
         $null = Command 2 $activeDirect.generation
@@ -149,11 +153,16 @@ try {
     $text = & $exe --select $name $restarted.generation $PID ($birth + 1)
     if ($LASTEXITCODE -eq 0) { throw 'Stale process birth accepted' }
     if ((Command 0 0).phase -ne 0) { throw 'Rejected target changed service state' }
-    $text = & $exe --select $name $restarted.generation $PID $birth
+    $text = & $exe --select $name $restarted.generation $PID $birth '203.0.113.0/24'
     if ($LASTEXITCODE -ne 0) { throw 'Authorized selected start rejected' }
     $selected = $text | ConvertFrom-Json
-    if ($selected.result -ne 0) { throw 'Selected start not accepted' }
-    $null = AwaitPhase 3
+    if ($selected.result -ne 0 -or @($selected.exemptions).Count -ne 1 -or
+        $selected.exemptions[0] -ne '203.0.113.0/24') { throw 'Selected start not accepted' }
+    $selectedBlocked = AwaitPhase 3
+    if (@($selectedBlocked.exemptions).Count -ne 1 -or
+        $selectedBlocked.exemptions[0] -ne '203.0.113.0/24') {
+        throw 'Selected generation lost its destination exemption'
+    }
     $text = & $exe --select $name $selected.generation $PID $birth
     if ($LASTEXITCODE -ne 0 -or ($text | ConvertFrom-Json).result -ne 2) {
         throw 'Duplicate selected start not rejected as busy'

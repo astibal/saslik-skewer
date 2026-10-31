@@ -51,7 +51,9 @@ int main(int argc, char** argv) {
             PairedRoutingRunner whole_host;
             SelectedRoutingRunner selected;
             if (tunnel) {
-                whole_host = [&](const PairingHandoff& pairing, HANDLE cancel, RoutingSignals& state) {
+                whole_host = [&](const PairingHandoff& pairing,
+                                  const std::vector<skewer::traffic::Ipv4Prefix>& exemptions,
+                                  HANDLE cancel, RoutingSignals& state) {
                     if (QUrl(QString::fromStdString(pairing.endpoint)) != tunnel->endpoint) {
                         throw std::invalid_argument("Pairing does not match the configured service endpoint");
                     }
@@ -59,7 +61,7 @@ int main(int argc, char** argv) {
                         tunnel->endpoint, tunnel->peer, QByteArray::fromStdString(pairing.identity),
                         QByteArray(reinterpret_cast<const char*>(pairing.key.data()), pairing.key.size()));
                     WholeHostPolicy policy(tunnel->peer.toStdString(), tunnel->endpoint.port(),
-                                           tunnel->management);
+                                           tunnel->management, exemptions);
                     const auto result = runConfiguredServiceTunnel(
                         loadWintun(wintun), L"Skewer-" + name, control, tunnel->peer,
                         [&](NET_LUID luid) {
@@ -77,6 +79,7 @@ int main(int argc, char** argv) {
                     }
                 };
                 selected = [&](const PairingHandoff& pairing, std::unique_ptr<ProcessTarget> target,
+                               const std::vector<skewer::traffic::Ipv4Prefix>& exemptions,
                                HANDLE cancel, RoutingSignals& state) {
                     if (QUrl(QString::fromStdString(pairing.endpoint)) != tunnel->endpoint) {
                         throw std::invalid_argument("Pairing does not match the configured service endpoint");
@@ -85,12 +88,14 @@ int main(int argc, char** argv) {
                         tunnel->endpoint, tunnel->peer, QByteArray::fromStdString(pairing.identity),
                         QByteArray(reinterpret_cast<const char*>(pairing.key.data()), pairing.key.size()));
                     runSelectedServiceTunnel(divert, std::move(target), owner, control, tunnel->peer,
-                                             tunnel->endpoint.port(), cancel, state);
+                                             tunnel->endpoint.port(), exemptions, cancel, state);
                 };
             }
             serveRoutingService(name, owner, stop, std::move(whole_host), std::move(selected),
-                [&](std::array<std::uint8_t, 4> gateway, HANDLE cancel, RoutingSignals& state) {
-                    runDirectHostRouting(divert, gateway, {}, cancel, state);
+                [&](std::array<std::uint8_t, 4> gateway,
+                    const std::vector<skewer::traffic::Ipv4Prefix>& exemptions,
+                    HANDLE cancel, RoutingSignals& state) {
+                    runDirectHostRouting(divert, gateway, exemptions, cancel, state);
                 });
             return 0;
         });
