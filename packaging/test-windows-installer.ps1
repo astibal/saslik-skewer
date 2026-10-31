@@ -94,7 +94,15 @@ try {
 
     Run-Bounded $uninstaller @('/S')
     foreach ($path in @($installDirectory, $serviceDirectory, $startMenu, $uninstallKey)) {
-        if (Test-Path -LiteralPath $path) { throw "Uninstall retained: $path" }
+        if (Test-Path -LiteralPath $path) {
+            $remaining = if (Test-Path -LiteralPath $path -PathType Container) {
+                @((Get-ChildItem -LiteralPath $path -Force -Recurse |
+                    Select-Object -ExpandProperty FullName)) -join ', '
+            } else {
+                'registry key or file'
+            }
+            throw "Uninstall retained: $path; contents: $remaining"
+        }
     }
     if (!(Test-Path -LiteralPath $settingsSentinel)) {
         throw 'Default uninstall removed preserved user state'

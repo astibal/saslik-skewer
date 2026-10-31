@@ -150,6 +150,8 @@ uninstall_silent_error:
   DeleteRegKey HKLM "Software\Smithproxy\Skewer"
   ; NSIS runs the uninstaller from a temporary copy, but its installed image
   ; must be explicitly deleted before the now-empty directory can disappear.
+  ; Leave the install directory first: Windows cannot remove a process CWD.
+  SetOutPath "$TEMP"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir /r "$INSTDIR"
 SectionEnd
