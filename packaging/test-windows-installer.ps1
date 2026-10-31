@@ -30,7 +30,10 @@ function Get-SetupPhase {
             if ($line.EndsWith($phase, [StringComparison]::Ordinal)) { $last = $phase }
         }
     }
-    return $last
+    $runtime = if (Test-Path -LiteralPath $serviceDirectory) { 'present' } else { 'absent' }
+    $service = Get-Service SkewerRouting -ErrorAction SilentlyContinue
+    $serviceState = if ($service) { $service.Status.ToString() } else { 'absent' }
+    return "$last; runtime=$runtime; service=$serviceState"
 }
 
 function Run-Bounded([string]$File, [string[]]$Arguments, [int]$Seconds = 180) {
