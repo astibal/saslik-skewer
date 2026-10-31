@@ -55,6 +55,15 @@ function Run-Bounded([string]$File, [string[]]$Arguments, [int]$Seconds = 180) {
     }
 }
 
+function Wait-PathsAbsent([string[]]$Paths, [int]$Seconds = 30) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        $remaining = @($Paths | Where-Object { Test-Path -LiteralPath $_ })
+        if (!$remaining) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+}
+
 try {
     Run-Bounded $Installer @('/S')
     $exe = Join-Path $installDirectory 'skewer.exe'
@@ -93,7 +102,11 @@ try {
     }
 
     Run-Bounded $uninstaller @('/S')
-    foreach ($path in @($installDirectory, $serviceDirectory, $startMenu, $uninstallKey)) {
+    $removedPaths = @($installDirectory, $serviceDirectory, $startMenu, $uninstallKey)
+    # NSIS relaunches its uninstaller from a temporary copy. The original
+    # process can exit before that child finishes removing the installation.
+    Wait-PathsAbsent $removedPaths
+    foreach ($path in $removedPaths) {
         if (Test-Path -LiteralPath $path) {
             $remaining = if (Test-Path -LiteralPath $path -PathType Container) {
                 @((Get-ChildItem -LiteralPath $path -Force -Recurse |
