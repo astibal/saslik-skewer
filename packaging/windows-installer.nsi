@@ -5,6 +5,7 @@ SetCompressor /SOLID lzma
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "x64.nsh"
 
 !ifndef VERSION
   !error "VERSION is required"
@@ -51,6 +52,16 @@ VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
 !insertmacro MUI_LANGUAGE "English"
 
 Var InstallResult
+Var PowerShellPath
+
+!macro SelectNativePowerShell
+  StrCpy $PowerShellPath "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${RunningX64}
+    ; NSIS is a 32-bit process. Sysnative bypasses WOW64 filesystem
+    ; redirection so setup uses the complete native PowerShell environment.
+    StrCpy $PowerShellPath "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+!macroend
 
 Section "Skewer application and routing service" SEC_CORE
   SectionIn RO
@@ -59,7 +70,8 @@ Section "Skewer application and routing service" SEC_CORE
   SetOutPath "$TEMP\SkewerSetupPayload-${VERSION}"
   File /r "${PAYLOAD}\*"
 
-  nsExec::ExecToStack 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$TEMP\SkewerSetupPayload-${VERSION}\install-wizard.ps1" -PackageDirectory "$TEMP\SkewerSetupPayload-${VERSION}" -Destination "$INSTDIR"'
+  !insertmacro SelectNativePowerShell
+  nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$TEMP\SkewerSetupPayload-${VERSION}\install-wizard.ps1" -PackageDirectory "$TEMP\SkewerSetupPayload-${VERSION}" -Destination "$INSTDIR"'
   Pop $InstallResult
   Pop $0
   ${If} $InstallResult != 0
@@ -104,7 +116,8 @@ LangString DESC_SEC_DESKTOP ${LANG_ENGLISH} "Create a shortcut on the public des
 Section "un.Skewer application" UNSEC_CORE
   SectionIn RO
   SetShellVarContext all
-  nsExec::ExecToStack 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\uninstall-wizard.ps1" -InstallDirectory "$INSTDIR"'
+  !insertmacro SelectNativePowerShell
+  nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\uninstall-wizard.ps1" -InstallDirectory "$INSTDIR"'
   Pop $InstallResult
   Pop $0
   ${If} $InstallResult != 0
@@ -124,7 +137,8 @@ uninstall_silent_error:
 SectionEnd
 
 Section /o "un.Pairing and user settings" UNSEC_SETTINGS
-  nsExec::ExecToStack 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\uninstall-wizard.ps1" -InstallDirectory "$INSTDIR" -RemoveSettings'
+  !insertmacro SelectNativePowerShell
+  nsExec::ExecToStack '"$PowerShellPath" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\uninstall-wizard.ps1" -InstallDirectory "$INSTDIR" -RemoveSettings'
   Pop $InstallResult
   Pop $0
   ${If} $InstallResult != 0
