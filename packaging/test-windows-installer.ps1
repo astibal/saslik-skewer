@@ -8,6 +8,30 @@ $serviceDirectory = Join-Path $env:ProgramFiles 'SkewerRouting'
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Skewer'
 $startMenu = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Skewer\Skewer.lnk'
 $settingsSentinel = Join-Path $env:LOCALAPPDATA 'skewer\installer-preserve-test.txt'
+$setupLog = Join-Path $env:ProgramData 'Skewer\setup.log'
+
+function Get-SetupPhase {
+    if (!(Test-Path -LiteralPath $setupLog -PathType Leaf)) { return 'setup did not start' }
+    $phases = @(
+        'Setup orchestration started.',
+        'Checking the existing routing service.',
+        'Installing the routing service.',
+        'Updating the routing service.',
+        'Routing service is installed and Idle.',
+        'Staging the desktop application.',
+        'Desktop application files are installed.',
+        'Setup orchestration completed.',
+        'Uninstall orchestration started.',
+        'Uninstall orchestration completed.'
+    )
+    $last = 'setup log contains no recognized phase'
+    foreach ($line in Get-Content -LiteralPath $setupLog) {
+        foreach ($phase in $phases) {
+            if ($line.EndsWith($phase, [StringComparison]::Ordinal)) { $last = $phase }
+        }
+    }
+    return $last
+}
 
 function Run-Bounded([string]$File, [string[]]$Arguments, [int]$Seconds = 180) {
     $process = Start-Process -FilePath $File -ArgumentList $Arguments -PassThru
@@ -16,7 +40,7 @@ function Run-Bounded([string]$File, [string[]]$Arguments, [int]$Seconds = 180) {
         throw "Timed out: $File $Arguments"
     }
     if ($process.ExitCode -ne 0) {
-        throw "Command failed ($($process.ExitCode)): $File $Arguments"
+        throw "Command failed ($($process.ExitCode)): $File $Arguments; last setup phase: $(Get-SetupPhase)"
     }
 }
 
