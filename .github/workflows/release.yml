@@ -116,8 +116,14 @@ jobs:
       - name: Verify Windows wizard installer
         shell: pwsh
         run: |
-          ./packaging/test-windows-installer.ps1 -Installer $env:SKEWER_WINDOWS_INSTALLER `
-            -ExpectedVersion $env:SKEWER_WINDOWS_VERSION
+          try {
+            ./packaging/test-windows-installer.ps1 -Installer $env:SKEWER_WINDOWS_INSTALLER `
+              -ExpectedVersion $env:SKEWER_WINDOWS_VERSION
+          } catch {
+            $details = $_.Exception.Message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error file=packaging/test-windows-installer.ps1,title=Windows wizard verification failed::$details"
+            throw
+          }
   install:
     needs: package
     runs-on: ubuntu-24.04
