@@ -51,9 +51,11 @@ void requireNoConflicts(const std::string& peer) {
 }
 } // namespace
 
-WholeHostPolicy::WholeHostPolicy(std::string peer, unsigned port, std::string management)
+WholeHostPolicy::WholeHostPolicy(std::string peer, unsigned port, std::string management,
+                                 std::vector<skewer::traffic::Ipv4Prefix> exemptions)
     : peer_(text(numeric(peer).Ipv4.sin_addr)), control_port_(port),
-      management_(management.empty() ? "" : text(numeric(management).Ipv4.sin_addr)) {
+      management_(management.empty() ? "" : text(numeric(management).Ipv4.sin_addr)),
+      exemptions_(std::move(exemptions)) {
     if (!port || port > 65535) {
         throw std::invalid_argument("Invalid tunnel control port");
     }
@@ -82,6 +84,8 @@ std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
     if (!management_.empty()) {
         allowed += " or (ip.DstAddr == " + management_ + " and tcp.SrcPort == 22)";
     }
+    const auto exemptions = destinationExemptionFilter(exemptions_);
+    if (!exemptions.empty()) allowed += " or (" + exemptions + ')';
     return "outbound and !loopback and ifIdx != " + std::to_string(index) + " and (ip and (" + allowed +
            ") ? false : true)";
 }
@@ -90,12 +94,18 @@ std::vector<MIB_IPFORWARD_ROW2> WholeHostPolicy::routes(NET_LUID tunnel,
                                                         const Tuntom::Endpoint& endpoint) const {
     const auto current = bestRoute(peer_);
     requireNoConflicts(peer_);
-    return wholeHostRoutePlan(peer_, current, tunnel, endpoint);
+    std::vector<MIB_IPFORWARD_ROW2> exemption_underlays;
+    exemption_underlays.reserve(exemptions_.size());
+    for (const auto prefix : exemptions_) {
+        exemption_underlays.push_back(bestRoute(prefix.addressText()));
+    }
+    return wholeHostRoutePlan(peer_, current, tunnel, endpoint, exemptions_, exemption_underlays);
 }
 
 std::vector<MIB_IPFORWARD_ROW2> wholeHostRoutePlan(
     const std::string& peer, const MIB_IPFORWARD_ROW2& underlay, NET_LUID tunnel,
-    const Tuntom::Endpoint& endpoint) {
+    const Tuntom::Endpoint& endpoint, std::span<const skewer::traffic::Ipv4Prefix> exemptions,
+    std::span<const MIB_IPFORWARD_ROW2> exemption_underlays) {
     if (!underlay.InterfaceLuid.Value || !tunnel.Value ||
         underlay.InterfaceLuid.Value == tunnel.Value || underlay.NextHop.si_family != AF_INET) {
         throw std::invalid_argument("Invalid whole-host underlay route");
@@ -108,7 +118,12 @@ std::vector<MIB_IPFORWARD_ROW2> wholeHostRoutePlan(
     // DHCP, Wi-Fi/Ethernet failover or an administrator may replace both the
     // gateway and interface. Pin the peer through the currently selected
     // underlay on every protected retry; the guard remains armed throughout.
-    return {ipv4Route(underlay.InterfaceLuid, peer, 32, text(underlay.NextHop.Ipv4.sin_addr), 1),
-            ipv4Route(tunnel, "0.0.0.0", 1, gateway, 1), ipv4Route(tunnel, "128.0.0.0", 1, gateway, 1)};
+    std::vector<MIB_IPFORWARD_ROW2> result{
+        ipv4Route(underlay.InterfaceLuid, peer, 32, text(underlay.NextHop.Ipv4.sin_addr), 1)};
+    auto bypass = destinationExemptionRoutes(exemptions, exemption_underlays);
+    result.insert(result.end(), bypass.begin(), bypass.end());
+    if (!exemptionCoversHalf(exemptions, 0)) result.push_back(ipv4Route(tunnel, "0.0.0.0", 1, gateway, 1));
+    if (!exemptionCoversHalf(exemptions, 1)) result.push_back(ipv4Route(tunnel, "128.0.0.0", 1, gateway, 1));
+    return result;
 }
 } // namespace skewer::windows

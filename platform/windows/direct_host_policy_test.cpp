@@ -43,7 +43,12 @@ int main() {
                 "Direct policy produced an unexpected prefix");
         require(policy.guardFilter().find("ipv6") != std::string::npos,
                 "Direct policy did not retain explicit IPv6 blocking");
-        std::cout << "PASS: on-link direct gateway plan, covering IPv4 routes and IPv6 guard\n";
+        skewer::traffic::Ipv4Prefix all;
+        require(skewer::traffic::parseIpv4Prefix("0.0.0.0/0", all),
+                "Cannot parse direct test exemption");
+        DirectHostPolicy bypass(defaultGateway(), {all});
+        require(bypass.routes().empty(), "A /0 direct exemption retained covering gateway routes");
+        std::cout << "PASS: direct gateway plan, destination exemptions and IPv6 guard\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

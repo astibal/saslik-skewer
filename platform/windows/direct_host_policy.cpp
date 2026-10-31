@@ -57,8 +57,9 @@ bool removed(OwnedRoute::Removal result) {
 }
 } // namespace
 
-DirectHostPolicy::DirectHostPolicy(std::array<std::uint8_t, 4> gateway)
-    : gateway_(text(gateway)) {
+DirectHostPolicy::DirectHostPolicy(std::array<std::uint8_t, 4> gateway,
+                                   std::vector<skewer::traffic::Ipv4Prefix> exemptions)
+    : gateway_(text(gateway)), exemptions_(std::move(exemptions)) {
     const auto route = routeTo(gateway_);
     if (!route.InterfaceLuid.Value || !unspecified(route.NextHop.Ipv4.sin_addr)) {
         throw std::invalid_argument("Direct gateway must be reachable on-link");
@@ -78,16 +79,26 @@ std::vector<MIB_IPFORWARD_ROW2> DirectHostPolicy::routes() const {
         !unspecified(current.NextHop.Ipv4.sin_addr)) {
         throw std::runtime_error("Direct gateway path changed during activation");
     }
-    return {ipv4Route(interface_, "0.0.0.0", 1, gateway_, 1),
-            ipv4Route(interface_, "128.0.0.0", 1, gateway_, 1)};
+    std::vector<MIB_IPFORWARD_ROW2> underlays;
+    underlays.reserve(exemptions_.size());
+    for (const auto prefix : exemptions_) {
+        underlays.push_back(routeTo(prefix.addressText()));
+    }
+    auto result = destinationExemptionRoutes(exemptions_, underlays);
+    if (!exemptionCoversHalf(exemptions_, 0))
+        result.push_back(ipv4Route(interface_, "0.0.0.0", 1, gateway_, 1));
+    if (!exemptionCoversHalf(exemptions_, 1))
+        result.push_back(ipv4Route(interface_, "128.0.0.0", 1, gateway_, 1));
+    return result;
 }
 
 void runDirectHostRouting(const std::wstring& divert_dll,
-                          std::array<std::uint8_t, 4> gateway, HANDLE cancel,
+                          std::array<std::uint8_t, 4> gateway,
+                          std::vector<skewer::traffic::Ipv4Prefix> exemptions, HANDLE cancel,
                           RoutingSignals& state) {
     state.stage = RoutingStage::Intercepting;
     state.blocked = true;
-    DirectHostPolicy policy(gateway);
+    DirectHostPolicy policy(gateway, std::move(exemptions));
     traffic::PacketCapture ipv6_guard(divert_dll, policy.guardFilter());
     std::vector<std::unique_ptr<OwnedRoute>> routes;
     for (auto& route : policy.routes()) {

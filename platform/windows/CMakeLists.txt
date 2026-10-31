@@ -443,8 +443,9 @@ if(SKEWER_WINDOWS_PAIRING)
             target_link_libraries(paired_tunnel_live PRIVATE skewer-tunnel-address skewer-windows-processes)
             if(TARGET skewer-guarded-tunnel)
                 add_library(skewer-service-tunnel STATIC service_tunnel.cpp whole_host_policy.cpp
-                            direct_host_policy.cpp)
-                target_link_libraries(skewer-service-tunnel PUBLIC skewer-tunnel-address skewer-guarded-tunnel)
+                            direct_host_policy.cpp destination_exemptions.cpp)
+                target_link_libraries(skewer-service-tunnel PUBLIC skewer-tunnel-address skewer-guarded-tunnel
+                                      skewer-ipv4-prefix)
                 add_executable(skewer-routing-service-app routing_service_main.cpp)
                 set_target_properties(skewer-routing-service-app PROPERTIES OUTPUT_NAME skewer-routing-service)
                 target_link_libraries(skewer-routing-service-app PRIVATE skewer-service-tunnel skewer-routing-service skewer-service-host)

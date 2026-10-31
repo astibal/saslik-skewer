@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
             }
             serveRoutingService(name, owner, stop, std::move(whole_host), std::move(selected),
                 [&](std::array<std::uint8_t, 4> gateway, HANDLE cancel, RoutingSignals& state) {
-                    runDirectHostRouting(divert, gateway, cancel, state);
+                    runDirectHostRouting(divert, gateway, {}, cancel, state);
                 });
             return 0;
         });

@@ -16,6 +16,7 @@ struct Ipv4Prefix final {
     std::uint8_t length{};
 
     [[nodiscard]] bool contains(std::uint32_t address) const;
+    [[nodiscard]] std::string addressText() const;
     [[nodiscard]] std::string text() const;
     bool operator==(const Ipv4Prefix&) const = default;
 };

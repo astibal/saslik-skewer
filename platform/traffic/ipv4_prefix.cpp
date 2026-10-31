@@ -49,10 +49,13 @@ bool Ipv4Prefix::contains(std::uint32_t address) const {
     return (address & mask(length)) == network;
 }
 
-std::string Ipv4Prefix::text() const {
+std::string Ipv4Prefix::addressText() const {
     return std::to_string(network >> 24) + '.' + std::to_string((network >> 16) & 0xffU) + '.' +
-           std::to_string((network >> 8) & 0xffU) + '.' + std::to_string(network & 0xffU) + '/' +
-           std::to_string(length);
+           std::to_string((network >> 8) & 0xffU) + '.' + std::to_string(network & 0xffU);
+}
+
+std::string Ipv4Prefix::text() const {
+    return addressText() + '/' + std::to_string(length);
 }
 
 bool parseIpv4Prefix(std::string_view raw, Ipv4Prefix& prefix) {
