@@ -1,0 +1,114 @@
+#include "whole_host_policy.hpp"
+#include <system_error>
+
+namespace skewer::windows {
+namespace {
+SOCKADDR_INET numeric(const std::string& text) {
+    SOCKADDR_INET address{};
+    address.si_family = AF_INET;
+    if (text.find('\0') != std::string::npos ||
+        InetPtonA(AF_INET, text.c_str(), &address.Ipv4.sin_addr) != 1) {
+        throw std::invalid_argument("Expected a numeric IPv4 endpoint");
+    }
+    const auto ip = ntohl(address.Ipv4.sin_addr.S_un.S_addr);
+    if (!ip || (ip >> 24) == 127 || (ip >> 24) >= 224) {
+        throw std::invalid_argument("Expected a unicast non-loopback endpoint");
+    }
+    return address;
+}
+std::string text(IN_ADDR address) {
+    char buffer[INET_ADDRSTRLEN]{};
+    if (!InetNtopA(AF_INET, &address, buffer, sizeof(buffer))) {
+        throw std::runtime_error("Cannot encode IPv4 route address");
+    }
+    return buffer;
+}
+MIB_IPFORWARD_ROW2 bestRoute(const std::string& peer) {
+    const auto destination = numeric(peer);
+    MIB_IPFORWARD_ROW2 route{};
+    SOCKADDR_INET source{};
+    const auto status = GetBestRoute2(nullptr, 0, nullptr, &destination, 0, &route, &source);
+    if (status != NO_ERROR) {
+        throw std::system_error(status, std::system_category(), "Find tunnel underlay route");
+    }
+    return route;
+}
+void requireNoConflicts(const std::string& peer) {
+    PMIB_IPFORWARD_TABLE2 raw{};
+    const auto status = GetIpForwardTable2(AF_INET, &raw);
+    if (status != NO_ERROR) {
+        throw std::system_error(status, std::system_category(), "Inspect existing IPv4 routes");
+    }
+    std::unique_ptr<MIB_IPFORWARD_TABLE2, decltype(&FreeMibTable)> table(raw, FreeMibTable);
+    const auto peer_ip = numeric(peer).Ipv4.sin_addr.S_un.S_addr;
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const auto& prefix = table->Table[i].DestinationPrefix;
+        if (prefix.PrefixLength == 1 ||
+            (prefix.PrefixLength == 32 && prefix.Prefix.Ipv4.sin_addr.S_un.S_addr == peer_ip)) {
+            throw std::runtime_error("Whole-host route plan conflicts with an existing route");
+        }
+    }
+}
+} // namespace
+
+WholeHostPolicy::WholeHostPolicy(std::string peer, unsigned port, std::string management)
+    : peer_(text(numeric(peer).Ipv4.sin_addr)), control_port_(port),
+      management_(management.empty() ? "" : text(numeric(management).Ipv4.sin_addr)) {
+    if (!port || port > 65535) {
+        throw std::invalid_argument("Invalid tunnel control port");
+    }
+    requireNoConflicts(peer_);
+    initial_underlay_ = bestRoute(peer_).InterfaceLuid;
+}
+
+std::string WholeHostPolicy::filter(NET_LUID tunnel) const {
+    NET_IFINDEX index{}, underlay_index{};
+    if (!tunnel.Value || tunnel.Value == initial_underlay_.Value ||
+        ConvertInterfaceLuidToIndex(&tunnel, &index) != NO_ERROR ||
+        ConvertInterfaceLuidToIndex(&initial_underlay_, &underlay_index) != NO_ERROR) {
+        throw std::invalid_argument("Invalid tunnel guard interface");
+    }
+    // UDP ports are bounded by the authenticated protocol's endpoint ID range.
+    // These are tuple exemptions, not process isolation. IPv6 physical egress
+    // is blocked until a separate IPv6 tunnel policy is implemented.
+    auto allowed = "(ip.DstAddr == " + peer_ +
+                   " and ((udp.DstPort >= 40001 and udp.DstPort <= 40255)"
+                   " or tcp.DstPort == " +
+                   std::to_string(control_port_) + "))";
+    // Preserve DHCPv4 on a replacement physical interface too. The outer
+    // filter excludes the tunnel adapter; this protocol tuple is a visible
+    // infrastructure exemption, not a general LAN or private-range bypass.
+    allowed += " or (udp.SrcPort == 68 and udp.DstPort == 67)";
+    if (!management_.empty()) {
+        allowed += " or (ip.DstAddr == " + management_ + " and tcp.SrcPort == 22)";
+    }
+    return "outbound and !loopback and ifIdx != " + std::to_string(index) + " and (ip and (" + allowed +
+           ") ? false : true)";
+}
+
+std::vector<MIB_IPFORWARD_ROW2> WholeHostPolicy::routes(NET_LUID tunnel,
+                                                        const Tuntom::Endpoint& endpoint) const {
+    const auto current = bestRoute(peer_);
+    requireNoConflicts(peer_);
+    return wholeHostRoutePlan(peer_, current, tunnel, endpoint);
+}
+
+std::vector<MIB_IPFORWARD_ROW2> wholeHostRoutePlan(
+    const std::string& peer, const MIB_IPFORWARD_ROW2& underlay, NET_LUID tunnel,
+    const Tuntom::Endpoint& endpoint) {
+    if (!underlay.InterfaceLuid.Value || !tunnel.Value ||
+        underlay.InterfaceLuid.Value == tunnel.Value || underlay.NextHop.si_family != AF_INET) {
+        throw std::invalid_argument("Invalid whole-host underlay route");
+    }
+    if (!endpoint.serverAddress.endsWith("/30")) {
+        throw std::invalid_argument("Invalid authenticated tunnel gateway");
+    }
+    const auto gateway = endpoint.serverAddress.chopped(3).toStdString();
+    (void)numeric(gateway);
+    // DHCP, Wi-Fi/Ethernet failover or an administrator may replace both the
+    // gateway and interface. Pin the peer through the currently selected
+    // underlay on every protected retry; the guard remains armed throughout.
+    return {ipv4Route(underlay.InterfaceLuid, peer, 32, text(underlay.NextHop.Ipv4.sin_addr), 1),
+            ipv4Route(tunnel, "0.0.0.0", 1, gateway, 1), ipv4Route(tunnel, "128.0.0.0", 1, gateway, 1)};
+}
+} // namespace skewer::windows

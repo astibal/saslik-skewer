@@ -1,4 +1,19 @@
-Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
+Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
+(amd64).
+
+### 0.9.50.8
+
+- Adds the native Windows 11 client with selected-application and whole-host
+  IPv4 routing through paired Tuntom, plus explicit whole-host Direct mode.
+- Adds the independent authenticated routing service, WinDivert interception,
+  Wintun transport, process browser, pairing, CA trust and managed runtime trust.
+- Adds a conventional UAC wizard with Start Menu integration, optional desktop
+  shortcut, in-place upgrade, state-preserving uninstall and Idle-by-default
+  service installation.
+- Integrates the Windows package with the Linux diagnostics, support export and
+  Tuntom discovery changes introduced in 0.9.50.7.
+- Selected IPv6, ambiguous/shared UDP ownership and orphaned process handoffs
+  remain explicit lab-tool limitations; no custom kernel driver is installed.
 
 ### 0.9.50.7
 
@@ -21,6 +36,21 @@ Skewer for Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS (amd64).
 
 ### 0.9.50.6
 
+- Windows now provides a conventional UAC wizard installer with Start Menu and
+  optional desktop shortcuts, an Idle routing service, in-place upgrade and a
+  standard Windows uninstall entry. Pairing and preferences are preserved by
+  default and can be removed through an explicit uninstall component.
+- Installer regression coverage verifies install, GUI startup, Idle service,
+  upgrade, registration, shortcuts, state preservation and clean uninstall.
+- Windows 11 now ships the native Qt application, per-user pairing and CA trust,
+  managed runtime trust, process browser, selected-process routing and explicit
+  whole-host routing through either Tuntom or a directly reachable Saslik.
+- The privileged Windows routing service is independent of the GUI, starts in
+  Idle, retains fail-closed routing during tunnel loss, and uses bounded SCM
+  crash recovery without automatically reactivating routing.
+- Windows release verification covers the signed Wintun/WinDivert dependencies,
+  42 native tests, route ownership, package install/uninstall, GUI startup and a
+  real service crash/restart/upgrade/removal lifecycle.
 - Shell status recognizes active Tuntom routes instead of comparing their
   gateway with Saslik's direct gateway. Missing routes and inactive tunnel
   interfaces still fail the status check.
@@ -75,3 +105,9 @@ routing. Use Disable and Release
 explicitly to undo them. IPv6 is not routed by this version.
 
 Verify the download with `sha256sum -c SHA256SUMS`.
+
+Windows releases provide `SkewerSetup-VERSION.exe` as the normal installer and
+a versioned ZIP for verification, development and recovery. Verify the adjacent
+`.sha256` file before use. The wizard installs the application and privileged
+routing service together; it leaves the service Idle until routing is explicitly
+enabled.

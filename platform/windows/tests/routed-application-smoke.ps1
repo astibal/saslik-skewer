@@ -1,0 +1,460 @@
+param([string]$Directory='C:\SkewerDev\skewer-windows-app')
+$ErrorActionPreference='Stop'
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type @'
+using System.Runtime.InteropServices;
+public static class SkewerMouse {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr window);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, System.UIntPtr extra);
+}
+'@
+$directory=(Resolve-Path -LiteralPath $Directory).Path
+$service=(Get-Content 'C:\SkewerDev\routed-service-name.txt' -Raw).Trim()
+$log=Join-Path $env:USERPROFILE 'skewer-routed-application-smoke.log'
+$settings='HKCU:\Software\Saslik\Skewer\windows'
+$savedService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
+$launchedPid=0
+$manualPid=0
+$shellProcess=$null
+$secondShell=$null
+$testGui=$null
+$result=1
+$postCrashMarker='C:\SkewerDev\skewer-gui-crash-routing.pass'
+function FindWindow {
+    $condition=[System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::NameProperty, 'Skewer')
+    [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+        [System.Windows.Automation.TreeScope]::Children, $condition)
+}
+function FindNamed($window, $name) {
+    try {
+        $condition=[System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+        $window.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    } catch { $null }
+}
+function SelectTab($window, [string]$name) {
+    $condition=[System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,$name),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::TabItem))
+    $tab=$window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
+    if (!$tab) { throw "Missing tab: $name" }
+    [SkewerMouse]::SetForegroundWindow([IntPtr]$window.Current.NativeWindowHandle) | Out-Null
+    $window.SetFocus()
+    $selection=$null
+    if ($tab.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$selection)) {
+        $selection.Select()
+        if (!$selection.Current.IsSelected) { throw "Tab selection failed: $name" }
+        return
+    }
+    $bounds=$tab.Current.BoundingRectangle
+    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+}
+function WindowText($window) {
+    try {
+        $all=$window.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                             [System.Windows.Automation.Condition]::TrueCondition)
+        ($all | ForEach-Object { $_.Current.Name }) -join "`n"
+    } catch { '' }
+}
+try {
+    "Starting routed GUI smoke against $service" | Out-File $log
+    Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
+    $window=FindWindow
+    if ($window) {
+        Stop-Process -Id $window.Current.ProcessId -Force
+        $deadline=(Get-Date).AddSeconds(8)
+        do { Start-Sleep -Milliseconds 100; $window=FindWindow } while ($window -and (Get-Date) -lt $deadline)
+        if ($window) { throw 'Previous Skewer GUI did not terminate before the routed test' }
+    }
+    $testGui=Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service" -PassThru
+    $deadline=(Get-Date).AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 200
+        $window=FindWindow
+        if ($window) {
+            $button=FindNamed $window 'Launch through Skewer'
+            $status=FindNamed $window 'Windows routing status'
+        }
+    } while ((!$window -or !$button -or !$button.Current.IsEnabled -or
+              !$status) -and (Get-Date) -lt $deadline)
+    if (!$window) { throw 'Skewer window missing' }
+    $details=FindNamed $window 'Application routing details and limits'
+    if (!$details) { throw 'Application routing details missing' }
+    $toggle=$details.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+    if ($toggle.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::Off) {
+        throw 'Application routing details should start collapsed'
+    }
+    $toggle.Toggle()
+    if ((WindowText $window) -notmatch 'blocked, not forwarded') { throw 'Expanded routing limitations missing' }
+    $toggle.Toggle()
+    $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
+    if ($currentService -ne $savedService) {
+        throw 'Process-local routing service override changed persistent user preferences'
+    }
+    $edit=FindNamed $window 'Application executable'
+    $arguments=FindNamed $window 'Application arguments'
+    if (!$edit -or !$arguments -or !$button -or !$button.Current.IsEnabled) {
+        $statusText=if ($status) { $status.Current.Name } else { '<missing>' }
+        throw "Routed launcher controls unavailable (status: $statusText)"
+    }
+    # A fast launcher exit must replace stale success feedback without following
+    # a recycled PID or implicitly adopting a single-instance handoff target.
+    $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
+    $arguments.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        '-NoProfile -NonInteractive -Command "exit 7"')
+    (FindNamed $window 'Launch normally').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $text=WindowText $window
+    } while ($text -notmatch 'Launched PID \d+ exited \(exit code 7\)' -and (Get-Date) -lt $deadline)
+    if ($text -notmatch 'Launched PID \d+ exited \(exit code 7\)') { throw "Missing launch exit feedback: $text" }
+    'PASS: fast process exit replaces launch feedback with exact exit code' | Out-File $log -Append
+    $edit.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe')
+    $arguments.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue(
+        '-NoProfile -Command "Start-Sleep -Seconds 6; & curl.exe --noproxy * -4 -k --fail --silent --show-error --max-time 15 https://example.com/ --output NUL; if ($LASTEXITCODE -eq 0) { Set-Content -LiteralPath C:\SkewerDev\skewer-gui-crash-routing.pass -Value PASS }; while ($true) { Start-Sleep -Seconds 60 }"')
+    $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(35)
+    do {
+        Start-Sleep -Milliseconds 100
+        $text=WindowText $window
+        $match=[regex]::Match($text, 'PID (\d+) is routed through Skewer \(generation (\d+)\)')
+    } while (!$match.Success -and $text -notmatch 'Routed launch failed' -and (Get-Date) -lt $deadline)
+    if (!$match.Success) { throw "Routed GUI launch did not become ready: $text" }
+    $launchedPid=[int]$match.Groups[1].Value
+    $generation=[UInt64]$match.Groups[2].Value
+    if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) { throw 'Routed child already exited' }
+    $guiPid=$window.Current.ProcessId
+    Stop-Process -Id $guiPid -Force
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $window=FindWindow
+    } while ($window -and (Get-Date) -lt $deadline)
+    if ($window) { throw 'Skewer window survived forced process termination' }
+    if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) {
+        throw 'Crashing Skewer terminated the routed child'
+    }
+    $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or $reply.phase -ne 2 -or $reply.scope -ne 2 -or
+        [UInt64]$reply.generation -ne $generation -or [int]$reply.selected.pid -ne $launchedPid) {
+        throw 'Crashing Skewer stopped or replaced the selected routing generation'
+    }
+    $deadline=(Get-Date).AddSeconds(25)
+    do { Start-Sleep -Milliseconds 100 } while (!(Test-Path -LiteralPath $postCrashMarker) -and
+                                                 (Get-Date) -lt $deadline)
+    if (!(Test-Path -LiteralPath $postCrashMarker)) {
+        throw 'Routed descendant HTTPS did not complete after GUI process termination'
+    }
+    $testGui.Dispose()
+    $testGui=Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service" -PassThru
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 200
+        $window=FindWindow
+        if ($window) {
+            $text=WindowText $window
+            $release=FindNamed $window 'Release'
+        }
+    } while ((!$window -or $text -notmatch "PID $launchedPid is selected for routing" -or
+              $text -notmatch 'Routed' -or !$release -or !$release.Current.IsEnabled) -and
+             (Get-Date) -lt $deadline)
+    if (!$window -or $text -notmatch "PID $launchedPid is selected for routing" -or
+        $text -notmatch 'Routed' -or !$release.Current.IsEnabled) {
+        $releaseEnabled=if ($release) { $release.Current.IsEnabled } else { $false }
+        "Recovered window text:`n$text`nRelease present: $([bool]$release); enabled: $releaseEnabled" |
+            Out-File $log -Append
+        throw 'Reopened GUI did not recover authoritative selected routing state'
+    }
+    SelectTab $window 'Routing'
+    $deadline=(Get-Date).AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 100
+        $releaseAll=FindNamed $window 'Release all applications'
+    } while ((!$releaseAll -or !$releaseAll.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$releaseAll -or !$releaseAll.Current.IsEnabled) {
+        WindowText $window | Out-File $log -Append
+        throw 'Selected-scope global Release is not clearly distinguished from a protected pause'
+    }
+    foreach ($action in @('Pause applications','Resume applications')) {
+        $deadline=(Get-Date).AddSeconds(5)
+        do {
+            Start-Sleep -Milliseconds 100
+            $pauseAction=FindNamed $window $action
+        } while ((!$pauseAction -or !$pauseAction.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+        if (!$pauseAction -or !$pauseAction.Current.IsEnabled) { throw "Missing enabled $action" }
+        $pauseAction.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $expectedPaused=$action -eq 'Pause applications'
+        $deadline=(Get-Date).AddSeconds(5)
+        do {
+            Start-Sleep -Milliseconds 100
+            $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+        } while (($reply.paused -ne $expectedPaused) -and (Get-Date) -lt $deadline)
+        if (!$reply.pauseAvailable -or $reply.paused -ne $expectedPaused -or
+            [UInt64]$reply.generation -ne $generation) { throw 'GUI pause did not match service state' }
+        if ($expectedPaused) {
+            # Pause belongs to the service, not to the window that requested it.
+            $testGui.Kill()
+            if (!$testGui.WaitForExit(5000)) { throw 'Paused GUI did not terminate' }
+            $testGui.Dispose()
+            $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or !$reply.paused -or $reply.phase -ne 3 -or
+                [UInt64]$reply.generation -ne $generation) { throw 'GUI exit released protected pause' }
+            $testGui=Start-Process (Join-Path $directory 'skewer.exe') -ArgumentList "--routing-service=$service" -PassThru
+            $deadline=(Get-Date).AddSeconds(12)
+            do {
+                Start-Sleep -Milliseconds 100
+                $window=FindWindow
+            } while ((!$window -or $window.Current.ProcessId -ne $testGui.Id) -and (Get-Date) -lt $deadline)
+            if (!$window -or $window.Current.ProcessId -ne $testGui.Id) { throw 'Paused GUI did not reopen' }
+            SelectTab $window 'Routing'
+            $deadline=(Get-Date).AddSeconds(12)
+            do {
+                Start-Sleep -Milliseconds 100
+                $restoredResume=FindNamed $window 'Resume applications'
+            } while ((!$restoredResume -or !$restoredResume.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+            if (!$restoredResume -or !$restoredResume.Current.IsEnabled) {
+                WindowText $window | Out-File $log -Append
+                throw 'Reopened GUI lost paused state'
+            }
+            $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or !$reply.paused -or $reply.phase -ne 3 -or
+                [UInt64]$reply.generation -ne $generation) { throw 'Reopening GUI changed protected pause' }
+            if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) {
+                throw 'Paused GUI restart terminated the selected application'
+            }
+            'PASS: protected pause survives GUI termination and is restored on reopen' | Out-File $log -Append
+        }
+    }
+    'PASS: GUI protected pause and resume preserve the routing generation' | Out-File $log -Append
+    SelectTab $window 'Applications'
+    $release=FindNamed $window 'Release'
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while ($reply.phase -notin @(0,5) -and (Get-Date) -lt $deadline)
+    if ($reply.phase -notin @(0,5) -or $reply.scope -ne 0) {
+        throw 'Release did not retire selected routing'
+    }
+    if (!(Get-Process -Id $launchedPid -ErrorAction SilentlyContinue)) {
+        throw 'Release terminated the selected application'
+    }
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 200
+        $processCell=FindNamed $window ([string]$window.Current.ProcessId)
+    } while (!$processCell -and (Get-Date) -lt $deadline)
+    if (!$processCell) {
+        "Application tree after Release:`n$(WindowText $window)" | Out-File $log -Append
+        throw 'Skewer process is missing from its own application tree'
+    }
+    $candidate=$processCell
+    $selected=$false
+    for ($i=0; $i -lt 4 -and $candidate; ++$i) {
+        try {
+            $candidate.GetCurrentPattern(
+                [System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+            $selected=$true
+            break
+        } catch {
+            $candidate=[System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($candidate)
+        }
+    }
+    if (!$selected) { throw 'Application tree row does not expose selection automation' }
+    $bounds=$processCell.Current.BoundingRectangle
+    if ($bounds.Width -le 0 -or $bounds.Height -le 0) { throw 'Selected application row is not visible' }
+    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $attach=FindNamed $window 'Attach to Skewer'
+    } while ((!$attach -or !$attach.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$attach -or !$attach.Current.IsEnabled) { throw 'Attach did not enable for selected process' }
+    $attach.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (($reply.phase -ne 2 -or $reply.scope -ne 2) -and (Get-Date) -lt $deadline)
+    if ($reply.phase -ne 2 -or $reply.scope -ne 2 -or !$reply.selected.pid) {
+        throw 'Manual Attach did not activate routing for the selected process'
+    }
+    $manualPid=[int]$reply.selected.pid
+    $deadline=(Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 100
+        $release=FindNamed $window 'Release'
+    } while ((!$release -or !$release.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$release -or !$release.Current.IsEnabled) { throw 'Manual Attach did not enable Release' }
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while ($reply.phase -notin @(0,5) -and (Get-Date) -lt $deadline)
+    if ($reply.scope -ne 0 -or !(Get-Process -Id $manualPid -ErrorAction SilentlyContinue)) {
+        throw 'Release after manual Attach did not preserve the application'
+    }
+    "PASS: routing survived GUI crash and HTTPS, activation recovery, Release and manual Attach retained the selected application" |
+        Out-File $log -Append
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $shellButton=FindNamed $window 'Shell'
+    } while ((!$shellButton -or !$shellButton.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$shellButton -or !$shellButton.Current.IsEnabled) { throw 'Routed Shell action unavailable' }
+    $shellButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(35)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (($reply.phase -ne 2 -or !$reply.selected.pid) -and (Get-Date) -lt $deadline)
+    if ($reply.phase -ne 2 -or !$reply.selected.pid) { throw 'Shell did not acquire selected routing' }
+    $shellProcess=Get-Process -Id $reply.selected.pid -ErrorAction Stop
+    # Pin the process handle before checking exit status or cleaning up.
+    $null=$shellProcess.Handle
+    if ($shellProcess.ProcessName -ne 'cmd') { throw 'Shell action selected an unexpected process' }
+    Start-Sleep -Seconds 2
+    if ($shellProcess.HasExited) { throw "Shell exited before Release (exit $($shellProcess.ExitCode))" }
+    $shellGeneration=$reply.generation
+    $deadline=(Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 100
+        $shellButton=FindNamed $window 'Shell'
+    } while ((!$shellButton -or !$shellButton.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$shellButton.Current.IsEnabled) { throw 'Launcher disabled while another application is routed' }
+    $shellButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(35)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (@($reply.selections).Count -ne 2 -and (Get-Date) -lt $deadline)
+    if (@($reply.selections).Count -ne 2 -or $reply.generation -ne $shellGeneration) {
+        throw 'Second GUI launch failed to join the same routing generation'
+    }
+    $secondIdentity=$reply.selections | Where-Object pid -NE $shellProcess.Id
+    $secondShell=Get-Process -Id $secondIdentity.pid -ErrorAction Stop
+    $null=$secondShell.Handle
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $window=FindWindow
+        if (!$window) { continue }
+        try {
+            [SkewerMouse]::SetForegroundWindow([IntPtr]$window.Current.NativeWindowHandle) | Out-Null
+            $search=FindNamed $window 'Find application'
+            $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('no-visible-root-for-release-fixture')
+        } catch { continue } # A process refresh invalidates transient UIA elements.
+        $picker=FindNamed $window 'Routed application group'
+    } while ((!$picker -or !$picker.Current.IsEnabled) -and (Get-Date) -lt $deadline)
+    if (!$picker -or !$picker.Current.IsEnabled) { throw 'Routing group picker unavailable' }
+    $deadline=(Get-Date).AddSeconds(8)
+    $chosen=$false
+    do {
+        try {
+            $picker=FindNamed $window 'Routed application group'
+            $picker.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+            $items=[System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.PropertyCondition]::new(
+                    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                    [System.Windows.Automation.ControlType]::ListItem))
+            foreach ($item in $items) {
+                if ($item.Current.Name -match ('PID '+$shellProcess.Id+'$')) {
+                    # Qt exposes popup selection separately from combobox
+                    # activation. Click the visible item to commit the choice;
+                    # SelectionItem.Select followed by Collapse cancels it.
+                    $bounds=$item.Current.BoundingRectangle
+                    if ($bounds.IsEmpty -or $bounds.Width -le 0) { continue }
+                    [SkewerMouse]::SetCursorPos([int]($bounds.X+$bounds.Width/2),[int]($bounds.Y+$bounds.Height/2)) | Out-Null
+                    [SkewerMouse]::mouse_event(0x0002,0,0,0,[UIntPtr]::Zero)
+                    [SkewerMouse]::mouse_event(0x0004,0,0,0,[UIntPtr]::Zero)
+                    $chosen=$true
+                    break
+                }
+            }
+        } catch {} # Retry if a status refresh replaces popup elements.
+        if (!$chosen) { Start-Sleep -Milliseconds 100 }
+    } while (!$chosen -and (Get-Date) -lt $deadline)
+    if (!$chosen) { throw 'Cannot choose the first routed group by identity' }
+    # The first root is the first shell. Keep its explicit selection across
+    # several inventory/status refreshes, with every process-tree row hidden.
+    Start-Sleep -Seconds 3
+    $release=FindNamed $window 'Release'
+    if (!$release.Current.IsEnabled) {
+        "Group picker state:`n$(WindowText $window)" | Out-File $log -Append
+        throw 'Release unavailable for chosen routing group'
+    }
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while (@($reply.selections).Count -ne 1 -and (Get-Date) -lt $deadline)
+    if (@($reply.selections).Count -ne 1 -or $reply.selections[0].pid -ne $secondShell.Id -or
+        $shellProcess.HasExited -or $secondShell.HasExited) { throw 'GUI Release affected another application' }
+    $search=FindNamed $window 'Find application'
+    $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('')
+    Start-Sleep -Seconds 2
+    $release=FindNamed $window 'Release'
+    $release.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $deadline=(Get-Date).AddSeconds(12)
+    do {
+        Start-Sleep -Milliseconds 100
+        $reply=& (Join-Path $directory 'skewer-routing-control.exe') status $service | ConvertFrom-Json
+    } while ($reply.scope -ne 0 -and (Get-Date) -lt $deadline)
+    if ($reply.scope -ne 0) { throw "Shell Release failed: $($reply | ConvertTo-Json -Compress)" }
+    if ($shellProcess.HasExited) { throw "Shell exited during Release (exit $($shellProcess.ExitCode))" }
+    'PASS: Shell action starts a selected command prompt; Release preserves it' | Out-File $log -Append
+    'PASS: GUI launches two shells and releases them independently without changing generation' | Out-File $log -Append
+    'PASS: explicit group Release survives refresh with no visible root row' | Out-File $log -Append
+    $result=0
+} catch {
+    "FAIL: $_" | Out-File $log -Append
+} finally {
+    if ($secondShell) {
+        if (!$secondShell.HasExited) { $secondShell.Kill(); $secondShell.WaitForExit(5000) | Out-Null }
+        $secondShell.Dispose()
+    }
+    if ($shellProcess) {
+        if (!$shellProcess.HasExited) { $shellProcess.Kill(); $shellProcess.WaitForExit(5000) | Out-Null }
+        $shellProcess.Dispose()
+    }
+    if ($launchedPid) { Stop-Process -Id $launchedPid -Force -ErrorAction SilentlyContinue }
+    Remove-Item -LiteralPath $postCrashMarker -Force -ErrorAction SilentlyContinue
+    $currentService=(Get-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue).routingService
+    if ($currentService -ne $savedService) {
+        if ($null -eq $savedService) {
+            Remove-ItemProperty $settings -Name routingService -ErrorAction SilentlyContinue
+        } else {
+            Set-ItemProperty $settings -Name routingService -Value $savedService
+        }
+    }
+    try {
+        # Retain the exact process object: cleanup must not kill a reused PID
+        # or leave the next test attached to a deleted disposable service.
+        if ($testGui -and !$testGui.HasExited) {
+            $testGui.Kill()
+            if (!$testGui.WaitForExit(8000)) { throw 'Test GUI cleanup timed out' }
+        }
+        if (!(FindWindow)) { Start-Process (Join-Path $directory 'skewer.exe') }
+    } catch {
+        "FAIL: GUI restoration: $_" | Out-File $log -Append
+        $result=1
+    } finally {
+        if ($testGui) { $testGui.Dispose() }
+    }
+    # The runner must not remove the fixture service before cleanup completes.
+    "Exit: $result" | Out-File $log -Append
+}

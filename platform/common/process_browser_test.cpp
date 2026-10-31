@@ -1,0 +1,119 @@
+#include "process_browser.hpp"
+#include <QAbstractItemModelTester>
+#include <QApplication>
+#include <QPersistentModelIndex>
+#include <QSignalSpy>
+#include <stdexcept>
+#include <iostream>
+
+using namespace skewer::ui;
+void require(bool value, const char* message) {
+    if (!value) {
+        throw std::runtime_error(message);
+    }
+}
+int main(int argc, char** argv) {
+    QApplication application(argc, argv);
+    try {
+        ProcessBrowser browser;
+        QAbstractItemModelTester tester(browser.model(),
+                                        QAbstractItemModelTester::FailureReportingMode::Fatal);
+        QVector<ProcessRecord> records{
+            {1, 10, 0, "shell", "shell.exe", {}},
+            {2, 20, 1, "Browser", "browser.exe", {"First window"}},
+            {3, 30, 2, "renderer", "browser.exe", {}},
+            {4, 40, 2, "Browser", "browser.exe", {"Second window"}},
+            {5, 50, 99, "orphan", "orphan.exe", {}},
+        };
+        browser.setProcesses(records);
+        auto* apps = browser.model()->item(0);
+        records[1].icon = QImage(16, 16, QImage::Format_ARGB32);
+        records[1].icon.fill(Qt::red);
+        browser.setProcesses(records);
+        apps = browser.model()->item(0);
+        require(!apps->child(0)->icon().isNull(), "Application icon missing from model");
+        require(apps->child(0)->data(ProcessBrowser::IdentityRole).toString() == records[1].identity(),
+                "Presentation icon changed process identity");
+        require(apps->rowCount() == 2, "Separate window-bearing instances were merged");
+        require(apps->child(0)->rowCount() == 1, "Renderer missing from application tree");
+        require(browser.model()->item(1)->rowCount() == 2, "Background roots missing");
+        require(browser.launchSuggestions().count("browser.exe") == 1, "Duplicate launch suggestions");
+        require(apps->child(0, 2)->text() == "Unavailable", "Unknown routing was presented as known");
+        browser.setRoutingState(true, records[1].identity());
+        apps = browser.model()->item(0);
+        require(apps->child(0, 2)->text() == "Routed", "Exact routed identity was not marked");
+        require(apps->child(1, 2)->text() == "Unconfirmed", "Unlisted process was incorrectly declared direct");
+        browser.setRoutingSelections(true, {records[1].identity(), records[2].identity()});
+        apps = browser.model()->item(0);
+        require(apps->child(0)->child(0, 2)->text() == "Routed",
+                "Confirmed descendant did not receive a routed badge");
+        browser.setRoutingSelections(true, {records[1].identity(), records[3].identity()});
+        apps = browser.model()->item(0);
+        require(apps->child(0, 2)->text() == "Routed" && apps->child(1, 2)->text() == "Routed",
+                "Multiple selected applications were not marked");
+        browser.setRoutingSelections(true, {records[3].identity()});
+        apps = browser.model()->item(0);
+        require(apps->child(0, 2)->text() == "Unconfirmed" && apps->child(1, 2)->text() == "Routed",
+                "Per-application Release cleared the wrong badge");
+        browser.setRoutingDisplay(ProcessBrowser::RoutingDisplay::BlockedSelected, {records[3].identity()});
+        apps = browser.model()->item(0);
+        require(apps->child(1, 2)->text() == "Blocked" && !apps->child(1, 2)->font().bold(),
+                "Blocked selection retained an active badge");
+        browser.setRoutingDisplay(ProcessBrowser::RoutingDisplay::WholeHost);
+        require(browser.model()->item(0)->child(0, 2)->text() == "Host policy",
+                "Whole-host policy was presented as direct");
+        browser.setRoutingDisplay(ProcessBrowser::RoutingDisplay::Transition);
+        require(browser.model()->item(0)->child(0, 2)->text() == "Transitioning",
+                "Transition retained an active badge");
+        browser.setRoutingState(false);
+        apps = browser.model()->item(0);
+        require(apps->child(0, 2)->text() == "Unavailable", "Lost service retained routed state");
+        browser.setFilterText("renderer");
+        require(!browser.tree()->isRowHidden(0, apps->index()), "Filter hid matching descendant's parent");
+        require(browser.tree()->isRowHidden(1, apps->index()), "Filter retained nonmatching instance");
+        browser.setFilterText({});
+        require(!browser.tree()->isRowHidden(1, apps->index()), "Clearing filter did not restore instance");
+        auto index = apps->child(0)->index();
+        browser.tree()->expand(index);
+        browser.tree()->setCurrentIndex(index);
+        require(browser.selectedProcess() && browser.selectedProcess()->pid == 2,
+                "Selected process identity was not resolved");
+        QPersistentModelIndex stable(index);
+        QSignalSpy removed(browser.model(), &QAbstractItemModel::rowsRemoved);
+        browser.setProcesses(records);
+        require(stable.isValid() && removed.isEmpty(), "Unchanged poll rebuilt the tree");
+        records[0].name = "updated shell";
+        browser.setProcesses(records);
+        index = browser.model()->item(0)->child(0)->index();
+        require(browser.tree()->isExpanded(index), "Refresh lost expansion");
+        require(browser.tree()->currentIndex() == index, "Refresh lost selection");
+        records[1].created = 25;
+        browser.setProcesses(records);
+        require(!browser.tree()->currentIndex().isValid(), "Reused PID inherited old selection");
+        require(!browser.selectedProcess(), "Invalid selection resolved to a process");
+        browser.setProcesses({{10, 10, 11, "cycle-a", "a", {}},
+                              {11, 10, 10, "cycle-b", "b", {}},
+                              {12, 5, 10, "old-child", "c", {}},
+                              {0, 0, 0, "invalid", {}, {}}});
+        require(browser.model()->item(1)->rowCount() == 2, "Cycle/reused-parent handling failed");
+
+        // Bad snapshot entries must not duplicate rows or create a PID-zero root.
+        const ProcessRecord duplicate{20, 20, 0, "duplicate", "duplicate.exe", {}};
+        browser.setProcesses({duplicate, duplicate, {0, 0, 0, "invalid", {}, {}}});
+        require(browser.model()->item(1)->rowCount() == 1, "Duplicate PID created multiple rows");
+        browser.setFilterText("missing");
+        browser.setProcesses({{21, 21, 0, "different", "different.exe", {}}});
+        require(browser.tree()->isRowHidden(0, browser.model()->item(1)->index()),
+                "Snapshot refresh discarded the active filter");
+        browser.setFilterText({});
+        browser.setProcesses({});
+        require(browser.model()->item(0)->rowCount() == 0 && browser.model()->item(1)->rowCount() == 0,
+                "Empty snapshot retained stale processes");
+        std::cout << "PASS: Qt model contract, application boundaries, ancestry, refresh, PID reuse, cycles, "
+                     "launcher paths\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

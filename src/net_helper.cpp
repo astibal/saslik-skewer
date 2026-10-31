@@ -694,17 +694,15 @@ int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
         if (rules.exit_code) return 1;
         QTextStream(stdout) << "active\n"; return 0;
     }
-    if (!arguments.isEmpty() && arguments.first() == "exemptions") {
+    if (!arguments.isEmpty() && (arguments.first() == "exemptions" || arguments.first() == "exemptions-reset-tcp")) {
         QLockFile lock("/run/skewer-interface-routing.lock");
         if (!lock.tryLock(0)) return 1;
         const auto host = hostState();
         if (!host.isEmpty() && host["uid"].toVariant().toUInt() == *uid) {
             QTextStream(stderr) << "Release host routing before editing exemptions\n"; return 2;
         }
-        if (!QJsonDocument::fromJson(readIntent(*uid)).object()["tunnel_context"].toString().isEmpty()) {
-            QTextStream(stderr) << "Disable the tunnel before changing destination exemptions\n";
-            return 2;
-        }
+        const auto desired = QJsonDocument::fromJson(readIntent(*uid)).object();
+        const auto context = desired["tunnel_context"].toString();
         if (!InterfaceRouting::state(*uid).isEmpty()) {
             QTextStream(stderr) << "Release interfaces before changing destination exemptions\n";
             return 2;
@@ -712,6 +710,35 @@ int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
         QStringList normalized; QString error;
         if (!RoutingPlanner::normalizeExemptions(arguments.sliced(1), normalized, error)) {
             QTextStream(stderr) << error << '\n'; return 2;
+        }
+        QStringList saved = normalized, previous;
+        for (const auto& value : desired["exemptions"].toArray()) {
+            previous << value.toString();
+            if (value.toString().startsWith("--local-control=")) saved << value.toString();
+        }
+        std::function<int()> reset_sockets;
+        if (arguments.first() == "exemptions-reset-tcp" && !desired.isEmpty()) {
+            auto effective_before = previous;
+            auto effective_after = normalized;
+            // The transport gateway is always bypassed, regardless of CIDRs.
+            effective_before << desired["gateway"].toString();
+            effective_after << desired["gateway"].toString();
+            reset_sockets = prepareExemptionCleanup(*uid, effective_before, effective_after, error);
+            if (!reset_sockets) { QTextStream(stderr) << error << '\n'; return 1; }
+        }
+        // Save under the routing lock before updating the kernel. Preserve the
+        // tunnel fence so only its verified worker can restore routing later.
+        if (!desired.isEmpty() && !writeIntent(*uid, desired["gateway"].toString(), saved, context)) {
+            QTextStream(stderr) << "Cannot save destination exemptions; nothing changed\n";
+            return 1;
+        }
+        // An unverified tunnel has no routing table. Update its intent only;
+        // never open the closed guard merely because an exemption was edited.
+        if (!context.isEmpty() && run(nft_binary,
+                {"list", "table", "inet", RoutingPlanner::tableName(*uid)}).exit_code != 0)
+        {
+            if (reset_sockets) reset_sockets();
+            return 0;
         }
         QString rules = RoutingPlanner::exemptionUpdate(*uid, normalized);
         const QString guard_table = QString("skewer_guard_%1").arg(*uid);
@@ -721,19 +748,16 @@ int dispatch(const std::optional<uid_t>& uid, const QStringList& arguments)
         }
         const Result result = run(QString::fromLatin1(nft_binary), {"-f", "-"}, rules.toUtf8());
         QTextStream(result.exit_code == 0 ? stdout : stderr) << result.output;
-        if (result.exit_code == 0) {
-            const auto desired = QJsonDocument::fromJson(readIntent(*uid)).object();
-            QStringList saved = normalized;
-            for (const auto& value : desired["exemptions"].toArray())
-                if (value.toString().startsWith("--local-control=")) saved << value.toString();
-            if (!desired.isEmpty() && !writeIntent(*uid, desired["gateway"].toString(), saved)) {
+        if (result.exit_code != 0 && !desired.isEmpty()) {
+            if (!writeIntent(*uid, desired["gateway"].toString(), previous, context)) {
                 QFile::remove(intentPath(*uid));
-                QTextStream(stderr) << "Cannot save updated routing intent; automatic restoration stopped\n";
+                QTextStream(stderr) << "Cannot restore routing intent; automatic restoration stopped\n";
                 return 1;
             }
         }
         if (result.exit_code != 0)
             QTextStream(stderr) << "No exceptions were changed. If routing was started by an older Skewer, disable and enable routing once.\n";
+        if (result.exit_code == 0 && reset_sockets) reset_sockets();
         return result.exit_code == 0 ? 0 : 1;
     }
     if (arguments.size() >= 2 && arguments.first() == QStringLiteral("up"))

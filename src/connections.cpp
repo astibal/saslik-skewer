@@ -93,14 +93,14 @@ ConnectionsPanel::ConnectionsPanel(ApplicationModel* model, QWidget* parent) : Q
     layout->addWidget(application);
     auto* cleanup = new QPushButton(tr("Close old TCP connections…"));
     layout->addWidget(cleanup);
-    auto* automatic = new QCheckBox(tr("Close old TCP connections after Attach"));
+    auto* automatic = new QCheckBox(tr("Reset affected TCP connections after Attach or exemption changes"));
     automatic->setObjectName("automaticTcpCleanup");
     automatic->setChecked(QSettings().value("connections/cleanupOnAttach",false).toBool());
-    automatic->setToolTip(tr("Interrupts transfers. Applications may not reconnect. TCP only; existing sockets outside Skewer."));
+    automatic->setToolTip(tr("After Attach: old sockets outside Skewer. After exemption changes: sockets whose destination changes routing. TCP only; reconnection is not guaranteed."));
     layout->addWidget(automatic);
     connect(automatic,&QCheckBox::toggled,this,[this,automatic](bool checked) {
         if (checked && QMessageBox::warning(this,tr("Automatic TCP cleanup"),
-            tr("After Attach, close existing TCP connections outside Skewer. Transfers will be interrupted and reconnection is NOT guaranteed. Enable?"),
+            tr("Close old TCP connections after Attach, and affected TCP connections when destination exemptions change. Transfers will be interrupted and reconnection is NOT guaranteed. Enable?"),
             QMessageBox::Yes|QMessageBox::No,QMessageBox::No) != QMessageBox::Yes) {
             QSignalBlocker blocker(automatic); automatic->setChecked(false); return;
         }

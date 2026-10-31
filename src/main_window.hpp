@@ -3,6 +3,7 @@
 #include "cgroup_manager.hpp"
 #include "routing_controller.hpp"
 #include "tuntom_recovery.hpp"
+#include "ui/application_shell.hpp"
 
 #include <QMainWindow>
 #include <QElapsedTimer>
@@ -27,7 +28,7 @@ class QSystemTrayIcon;
 class QAction;
 class QProcess;
 
-class MainWindow final : public QMainWindow {
+class MainWindow final : public skewer::ui::ApplicationShell {
     Q_OBJECT
 
 public:
@@ -40,7 +41,6 @@ public:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
-    void changeEvent(QEvent* event) override;
 
 private slots:
     void launchCommand();
@@ -64,7 +64,6 @@ private:
     [[nodiscard]] QString currentNextHop() const;
     [[nodiscard]] bool usesSaslikUrl() const;
     void sendTrustReport();
-    void updateTrayIcon();
     void startTunnel(bool allowAuthorization = true);
     void scheduleTunnelRetry();
     void refreshTunnelCountdown();
@@ -87,9 +86,6 @@ private:
     QString tuntom_license_;
     QLabel* tuntom_availability_{};
     void applyPreferences();
-    QSystemTrayIcon* tray_{};
-    QAction* close_to_tray_{};
-    bool quitting_{};
     ApplicationModel* model_{};
     CaTrustPanel* ca_panel_{};
     QSortFilterProxyModel* filtered_model_{};

@@ -1,0 +1,160 @@
+# Windows routing service installation
+
+## Release wizard
+
+Run `SkewerSetup-VERSION.exe`. The standard wizard requests UAC once and
+installs the desktop application under `Program Files\Skewer`, together with
+the automatic, initially Idle `SkewerRouting` service and the signed Wintun and
+WinDivert dependencies. A public Start Menu shortcut is always installed; a
+desktop shortcut is optional. The wizard never starts routing by itself.
+
+Running a newer setup performs an in-place upgrade only after Skewer is closed
+and routing is explicitly disabled. It preserves the service's public tunnel
+configuration, the user's DPAPI-protected pairing, CA choices and preferences.
+The setup log is `%ProgramData%\Skewer\setup.log`.
+
+Windows Settings lists one **Skewer** uninstall entry. Normal uninstall removes
+the application and its Idle routing service but preserves user data. The
+uninstaller offers a separate, unchecked component for permanently removing
+pairing and preferences. Active routing must be disabled first.
+
+The versioned ZIP remains available for verification, development and recovery.
+
+## Legacy per-user application install
+
+Extract the release ZIP and run the per-user installer without elevation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install-skewer.ps1
+```
+
+It installs under `%LOCALAPPDATA%\Programs\Skewer`, creates a Start Menu
+shortcut and registers a per-user uninstall entry. Add `-DesktopShortcut` if
+wanted. Updates are transactional and require the installed GUI to be closed.
+Uninstall preserves pairing, preferences, CA decisions and the separately
+privileged routing service.
+
+## Routing service
+
+The scripts below are development and recovery interfaces. Normal users should
+use the release wizard above. The Skewer application binaries are not yet code
+signed; the bundled Wintun and WinDivert driver artifacts retain their upstream
+signatures and are verified before installation.
+Use a trusted build directory: driver verification does not authenticate the
+application binaries or their Qt runtime.
+
+Run `install-routing-service.ps1` from elevated PowerShell. Keep the GUI running
+as the ordinary user. Supply that user's canonical SID as `OwnerSid`, especially
+when elevation uses a different administrator account.
+
+```powershell
+# Read this in the ordinary user's session, before elevation:
+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+
+# Run elevated, using the SID obtained above:
+.\install-routing-service.ps1 `
+    -PackageDirectory C:\SkewerPackage `
+    -WinDivertDirectory C:\WinDivert\x64 `
+    -WintunDll C:\Wintun\bin\amd64\wintun.dll `
+    -OwnerSid S-1-5-21-REPLACE-WITH-USER-SID `
+    -Endpoint skewer://192.0.2.10:8766/pair `
+    -Peer 192.0.2.10
+```
+
+`Endpoint` is the public paired endpoint, never the invitation containing a key.
+`Peer` is its numeric IPv4 address. `DnsServer` defaults to `1.1.1.1` and is set
+only on the tunnel adapter when routing starts. The optional `Management`
+address permits SSH return traffic to a test host while whole-host routing is
+active; omit it for normal use.
+
+When all three dependency files are beside the script, `WinDivertDirectory` and
+`WintunDll` may be omitted. The installer validates the pinned WinDivert 2.2.2-A artifacts and driver
+signatures before and after copying. It installs only the required service
+runtime under `Program Files\SkewerRouting`, with Users read/execute access and
+SYSTEM/Administrators write access. An existing directory or service is rejected
+unless `-Upgrade` is explicit. Upgrade stops routing, backs up the exact runtime,
+updates and revalidates it, updates the SCM command line and starts in Idle. A
+failed update attempts to restore both runtime files and the previous command
+line. If restoration or restarting the old service fails, the installer retains
+the runtime backup and `service.json` (original command line and startup mode),
+and prints its exact path. The backup is restricted to Administrators and SYSTEM.
+Do not delete it until recovery is verified. Successful upgrades and successful
+rollbacks remove their redundant backup. The disposable upgrade regression
+injects failure in both the new-service start and the rollback start, verifies
+retention/configuration, then recovers and cleans up its own test resources.
+
+For a packaged CMake install, configure both `WINTUN_RUNTIME_DLL` and
+`WINDIVERT_RUNTIME_DIR`. CMake then installs the service, control client,
+installer and the three signed driver runtime files beside the desktop client;
+the Routing tab enables its standard UAC install/upgrade action only when that
+complete set is present.
+
+`packaging/package-windows.sh` creates the equivalent portable release ZIP
+from an already verified cross-build. It stages an allowlisted file set rather
+than archiving a development directory, so test logs, pairing state and local
+credentials cannot enter the artifact accidentally.
+
+The LocalSystem service starts automatically with Windows in **Idle**, never
+routing. This keeps authenticated IPC available after reboot without silently
+changing network policy. In the GUI Routing tab, send the stored pairing and
+explicitly start routing. Closing the GUI does not stop the service or routing.
+Credentials are handed over through authenticated IPC and remain memory-only in
+the service. A service restart requires sending pairing again.
+
+The installer configures bounded SCM recovery: restart after 5, 15 and 60
+seconds, resetting the failure count after 24 hours. Service-specific failures
+also trigger this policy. A restarted service always returns to Idle and never
+silently resumes routing. WinDivert filters disappear with their owner, so this
+improves availability but cannot eliminate the documented direct-connectivity
+window after a service crash.
+
+The Routing tab can explicitly remove an idle service through UAC. Removal
+stops the service and deletes only `%ProgramFiles%\SkewerRouting`; pairing and
+desktop preferences remain intact. Active routing must be stopped first.
+
+Use `-WhatIf` to validate without installation. The elevated regression script
+`tests/install-routing-service-live.ps1` checks dry-run behavior, ACLs, Idle IPC,
+overwrite rejection, upgrade and complete removal of its unique test service.
+
+The separate versioned Windows tests ZIP also includes the opt-in
+`service-upgrade-live.ps1`, `native-routing-service-live.ps1` (including
+`-FailoverInterface`), `direct-routing-service-live.ps1`, selected-application
+desktop tests and external IPv6/shared-UDP peer fixtures. `run-tests.ps1` rejects
+an incomplete archive before running its native test programs. Network-changing
+fixtures are not run implicitly by that command: use a disposable elevated VM,
+paired endpoint and explicit fixture parameters, with independent console access.
+Their presence in the archive is not evidence that every integration scenario
+has run on a particular machine.
+
+Current routing supports whole-host IPv4 (direct gateway or tunnel), or up to 64
+independently selected application trees over the tunnel. Corroborated IPv4 TCP
+and UDP are routed; ambiguous ownership remains blocked. Tunnel failure keeps
+the live guard blocking while transport recovery is attempted; explicit Stop
+restores normal routing. A WinDivert owner/driver failure cannot provide that guarantee. This is a
+lab tool, not a security boundary against an administrator or driver failure.
+
+Headless application routing uses the same authenticated service as the GUI:
+
+```powershell
+.\skewer-routing-control.exe status SkewerRouting
+.\skewer-routing-control.exe run SkewerRouting C:\Path\Application.exe --argument
+.\skewer-routing-control.exe attach SkewerRouting GENERATION PID BIRTH
+.\skewer-routing-control.exe add SkewerRouting GENERATION PID BIRTH
+.\skewer-routing-control.exe remove SkewerRouting GENERATION PID BIRTH
+.\skewer-routing-control.exe release SkewerRouting GENERATION
+```
+
+Use the opaque generation returned by `status` or `run`. `run` is authoritative
+because the child remains suspended until routing is Active. `attach` installs
+guards before resetting the adopted tree's existing IPv4 TCP connections;
+unique IPv4 UDP sockets opened before Attach are routed after owner corroboration;
+ambiguous/shared UDP binds and IPv6 sockets cannot be retroactively rerouted.
+
+`attach` starts an idle selection; `add` joins an Active selection. `run` can do
+either and keeps each launched tree independently releasable. `remove` releases
+only the exact root (PID plus creation time), leaving its processes alive and
+other selected trees routed. The GUI's routed-group picker also lists roots
+whose original process has exited while descendants remain. CLI `release` is an
+alias for **Stop of the entire generation**, not one application. Status includes
+root identities and a bounded live-member snapshot; an absent member is not proof
+of direct routing. Upgrade the service with the GUI when updating IPC versions.

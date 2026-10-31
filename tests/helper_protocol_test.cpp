@@ -40,7 +40,8 @@ int main(int argc, char** argv)
         if (QJsonDocument::fromJson(session.request({"tunnel-poll"}).output).object()["running"].toBool()) return 17;
     }
     QStringList args;
-    for (const auto* op : {"tunnel-start", "tunnel-poll", "tunnel-renew", "tunnel-stop"}) {
+    for (const auto* op : {"tunnel-start", "tunnel-poll", "tunnel-renew", "tunnel-stop",
+                          "host-status", "exemptions-reset-tcp"}) {
         const auto frame = QJsonDocument(QJsonObject{{"args", QJsonArray{op}}}).toJson(QJsonDocument::Compact);
         if (!HelperProtocol::decode(frame, args)) return 5;
     }

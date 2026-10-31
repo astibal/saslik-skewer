@@ -3,23 +3,50 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QLockFile>
 #include <QRegularExpression>
-#include <QStandardPaths>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#ifdef Q_OS_WIN
+#include "diagnostic_log_win.hpp"
+#else
+#include "diagnostic_log_linux.hpp"
+#endif
 
 namespace DiagnosticLog {
 inline constexpr qint64 maxBytes = 1024 * 1024;
 inline const QStringList components{"app", "tunnel", "session"};
 inline QString component = "app";
-inline QString directory() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/skewer/logs";
+
+namespace detail {
+inline QString directoryPath() {
+#ifdef Q_OS_WIN
+    return _directory_win();
+#else
+    return _directory_linux();
+#endif
 }
+
+inline bool prepareDirectory(const QString& path) {
+#ifdef Q_OS_WIN
+    return _prepareDirectory_win(path);
+#else
+    return _prepareDirectory_linux(path);
+#endif
+}
+
+inline bool appendRecord(const QString& path, const QByteArray& record) {
+#ifdef Q_OS_WIN
+    return _appendRecord_win(path, record);
+#else
+    return _appendRecord_linux(path, record);
+#endif
+}
+} // namespace detail
+
+inline QString directory() { return detail::directoryPath(); }
 // Defense in depth: callers must never submit protocol frames, credentials,
 // environment dumps or command lines. Redaction is repeated during export.
 inline QString redact(QString text) {
@@ -50,13 +77,7 @@ inline QJsonValue redactJson(const QJsonValue& value) {
     return value;
 }
 inline bool prepareDirectory() {
-    if (::geteuid() != ::getuid()) return false;
-    const auto path = directory();
-    if (!QDir().mkpath(path)) return false;
-    struct stat info{};
-    const auto encoded = QFile::encodeName(path);
-    if (::lstat(encoded.constData(), &info) || !S_ISDIR(info.st_mode) || info.st_uid != ::getuid()) return false;
-    return ::chmod(encoded.constData(), 0700) == 0;
+    return detail::prepareDirectory(directory());
 }
 inline bool write(const QString& category, const QString& message, const QString& level = "info") {
     if (message.trimmed().isEmpty() || !prepareDirectory()) return false;
@@ -66,23 +87,14 @@ inline bool write(const QString& category, const QString& message, const QString
     const QString path = directory() + "/" + component + ".log";
     const QByteArray record = QJsonDocument(QJsonObject{
         {"time", QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
-        {"pid", double(::getpid())}, {"component", component}, {"level", level},
+        {"pid", double(QCoreApplication::applicationPid())}, {"component", component}, {"level", level},
         {"category", category}, {"message", redact(message).left(16384)}}).toJson(QJsonDocument::Compact) + '\n';
     if (QFileInfo(path).size() + record.size() > maxBytes) {
         QFile::remove(path + ".2");
         QFile::rename(path + ".1", path + ".2");
         if (!QFile::rename(path, path + ".1")) return false;
     }
-    const int fd = ::open(QFile::encodeName(path).constData(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
-    if (fd < 0) return false;
-    struct stat info{};
-    if (::fstat(fd, &info) || !S_ISREG(info.st_mode) || info.st_uid != ::getuid() || info.st_nlink != 1) {
-        ::close(fd); return false;
-    }
-    ::fchmod(fd, 0600);
-    QFile file;
-    if (!file.open(fd, QIODevice::WriteOnly, QFileDevice::AutoCloseHandle)) { ::close(fd); return false; }
-    return file.write(record) == record.size() && file.flush();
+    return detail::appendRecord(path, record);
 }
 // Reassemble stderr lines before redacting; keys can straddle pipe reads.
 class Lines {

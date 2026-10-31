@@ -56,7 +56,7 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
     checkbox(general, tr("Close to system tray"), "window/closeToTray", true);
     checkbox(general, tr("Resume requested routing at startup"), "routing/resumeOnStartup", true);
     number(general, tr("Tree font size"), "appearance/treeFontSize", 10, 8, 24, tr(" pt"));
-    auto* cleanup = checkbox(general, tr("Close old TCP connections after Attach"), "connections/cleanupOnAttach", false);
+    auto* cleanup = checkbox(general, tr("Reset affected TCP after Attach or exemption changes"), "connections/cleanupOnAttach", false);
     auto* warning = new QLabel(tr("TCP cleanup interrupts transfers. Applications are not guaranteed to reconnect. "
         "Startup resume may ask for authorization once."), this);
     warning->setWordWrap(true);
@@ -198,7 +198,7 @@ PreferencesDialog::PreferencesDialog(QWidget* parent) : QDialog(parent)
         QSettings saved;
         if (cleanup->isChecked() && !saved.value("connections/cleanupOnAttach", false).toBool()
             && QMessageBox::warning(this, tr("Automatic TCP cleanup"),
-                tr("Existing TCP transfers will be interrupted after Attach. Reconnection is NOT guaranteed. Enable?"),
+                tr("Affected TCP transfers will be interrupted after Attach or destination exemption changes. Reconnection is NOT guaranteed. Enable?"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
         for (const auto& item : toggles) saved.setValue(item.key, item.widget->isChecked());
         for (const auto& item : numbers) saved.setValue(item.key, item.widget->value());

@@ -3,6 +3,21 @@
 Skewer discovers desktop applications and user process trees and places selected
 applications into a stable cgroup that can be routed through a Saslik lab.
 
+The Windows port uses a separate native backend; its first-release direction is
+WinDivert with a service independent of the GUI, not a custom kernel driver.
+It supports whole-host IPv4 and a selected process's fresh corroborated IPv4 TCP
+and UDP. New descendants of a routed launch inherit selection through a Windows
+Job Object; manual Attach also adopts an intact, live, owner-validated descendant
+tree. UDP, including a socket opened before Attach, requires one unique matching
+bind. Orphaned/handoff processes, selected IPv6 and ambiguous/shared UDP binds
+remain explicit limitations of the first Windows release.
+Manual Attach resets the selected tree's existing IPv4 TCP connections after
+installing fail-closed guards. Skewer is a lab/testing tool, not a security
+isolation boundary:
+termination of the WinDivert-owning service removes its filters and may restore
+direct connectivity. See the [Windows implementation status and
+limitations](platform/windows/README.md).
+
 ## Current capabilities
 
 ### Guarded shell and launcher
@@ -58,13 +73,23 @@ and updates when the next prompt is drawn, without disturbing typed commands.
 Moving applications and configuring networking are deliberately separate.
 `Attached` means that an application is in the Skewer cgroup. `Routing active`
 means that nftables marking and the dedicated policy-routing table are also
-installed. No remote transport is provided yet.
+installed. A paired Tuntom transport can carry selected-application or
+whole-host traffic to a remote Saslik; a directly reachable next hop remains
+available for Linux selected applications and whole-host routing.
 
 **Destination exemptions…** accepts up to 256 IPv4 addresses or CIDR ranges.
 They bypass Skewer marking for every attached application and follow the host's
 ordinary routing (which may itself include a VPN). The list is saved and used
-by GUI and TUI routing starts. Live changes replace the nftables set atomically;
-existing connections may break and need reconnecting. No DNS expansion or IPv6
+by GUI and TUI routing starts. Live changes work with both direct routing and
+Tuntom, without restarting the tunnel. Routing and guard sets change in one
+nftables transaction, and the saved exemptions survive routing recovery. During
+a tunnel outage, changes are saved for recovery without opening the guard.
+The optional automatic TCP reset checkbox also applies to exemption changes:
+only existing sockets in the user's routed slice whose destination changes
+between exempt and routed are reset, after successful rule installation.
+Overlapping CIDRs with unchanged effective routing leave sockets untouched.
+With the checkbox off, no sockets are reset. Reconnection is not guaranteed.
+No DNS expansion or IPv6
 exceptions are provided. After upgrading an already active older ruleset,
 disable and enable routing once to create the exemption set.
 
@@ -113,16 +138,18 @@ PEM files and copy an explicit shell environment. It never edits `certifi` or
 language package directories, so a package update cannot silently erase the
 CA. Java remains inspection-only until a particular JDK truststore is selected.
 
-The next networking milestone is intentionally smaller: route traffic from the
-Skewer cgroup toward a configurable, directly reachable next-hop IP. A dynamic
-authenticated tuntom client is a later transport option, planned for the Saslik
-VM/appliance phase; see [TODO.md](TODO.md).
+Skewer supports a directly reachable next hop and a dynamic authenticated
+Tuntom client. On Windows, selected applications use Tuntom; Direct is an
+explicit whole-host mode. See [TODO.md](TODO.md) for deferred hardening and
+network combinations.
 
 Existing sockets retain the routing context in which they were created. For a
 reliable test, launch the application through Skewer instead of attaching an
 already-running process tree.
 
 ## Install a release
+
+### Linux
 
 Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS, amd64
 (for upcoming releases; the original 0.9.50 asset targets Ubuntu 26.04 only):
@@ -131,6 +158,22 @@ Debian 12/13 and Ubuntu / Kubuntu 24.04/26.04 LTS, amd64
 curl -fLO https://github.com/astibal/saslik-skewer/releases/latest/download/skewer-linux-amd64.deb
 sudo apt install ./skewer-linux-amd64.deb
 ```
+
+### Windows
+
+Windows 11, x64:
+
+```powershell
+Invoke-WebRequest `
+  https://github.com/astibal/saslik-skewer/releases/latest/download/SkewerSetup.exe `
+  -OutFile SkewerSetup.exe
+Start-Process .\SkewerSetup.exe
+```
+
+The conventional wizard requests UAC once, installs the application and its
+Idle routing service, and adds Start Menu and uninstall entries. It never starts
+routing automatically. Download the adjacent `.sha256` to verify the installer.
+The versioned ZIP remains available for development and recovery.
 
 Release tags use the shared ecosystem version without a prefix, e.g. `0.9.50`.
 An optional fourth number denotes a stable hotfix, e.g. `0.9.50.1` and
@@ -143,7 +186,11 @@ matrix: Debian 12/13 and Ubuntu 24.04/26.04. Every entry must pass dependency
 resolution, installed-file checks, dynamic library resolution and an offscreen
 GUI startup before publication. No forced dependencies or per-distribution
 rebuilds are used. The matrix runs on main, pull requests and release tags.
-Only tags publish releases. Published assets are not retroactively replaced.
+It also cross-builds the Windows wizard and recovery ZIP from checksum-pinned
+inputs. A native Windows runner verifies checksums, signed drivers, PE runtime,
+wizard install/upgrade/uninstall, the Idle service, shortcuts, registration and
+GUI startup. Only tags publish releases. Published assets are not retroactively
+replaced.
 
 Container checks do not cover a real desktop polkit prompt, user systemd session
 or privileged packet forwarding. The real cgroup movement test requires a local
@@ -237,6 +284,12 @@ paired Saslik URL. Auto selects a directly reachable gateway at activation,
 otherwise it starts Tuntom. Direct opts out of tunneling; Enforced tunnel forces
 it even when Saslik is directly connected. Neither a failure nor loss of the
 tunnel silently enables a direct fallback in this mode.
+
+On Windows, Tuntom is the default and **Auto always means Tuntom**, including
+after upgrading with a previously saved Direct gateway. Windows Direct remains
+an explicit whole-host option; selected applications require Tuntom. This differs
+from Linux Auto because Windows has no dependency-free per-application next-hop
+equivalent to the Linux routing policy.
 
 Disable routing before changing modes. A selected tunnel never silently falls
 back to Direct. Failed tunnel controllers are retried after 5, 10, 20 and then

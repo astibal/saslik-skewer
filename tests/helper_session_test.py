@@ -42,7 +42,9 @@ def inside(binary, uid, host_net, host_mount):
     def wait_restore():
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
-            if restored():
+            # Route installation precedes reopening the fail-closed guard.
+            # Observe a completed recovery, not its intentionally blocked phase.
+            if restored() and guard_open():
                 return
             time.sleep(.1)
         raise AssertionError('worker did not restore desired routing')
@@ -73,6 +75,19 @@ def inside(binary, uid, host_net, host_mount):
         pid = worker.pid
         assert restored()
         assert request(['exemptions', '198.51.100.0/24'])['ok']
+        def check_exemptions(expected):
+            for name in ('skewer_', 'skewer_guard_'):
+                rules = run('nft', 'list', 'set', 'inet', name + uid, 'bypass_v4')
+                assert (b'198.51.100.0/24' in rules) == expected, rules
+        check_exemptions(True)
+        reset = request(['exemptions-reset-tcp', '198.51.100.0/24'])
+        assert reset['ok'], reset
+        assert 'Changed-destination TCP sockets closed: 0' in reset['detail']
+        assert not request(['exemptions', 'invalid-address'])['ok']
+        check_exemptions(True)
+        assert request(['exemptions'])['ok']
+        check_exemptions(False)
+        assert request(['exemptions', '198.51.100.0/24'])['ok']
         with open('/run/skewer-route-intent-' + uid + '.json') as saved:
             assert '--local-control=127.0.0.1:8766' in json.load(saved)['exemptions']
         receipt = '/run/skewer-guard-' + uid
@@ -97,6 +112,7 @@ def inside(binary, uid, host_net, host_mount):
         run('ip', 'addr', 'add', '192.0.2.1/24', 'dev', 'uplink')
         wait_restore()
         assert worker.pid == pid and worker.poll() is None
+        check_exemptions(True)
         assert request(['down'])['ok']
         time.sleep(2.5)
         assert not os.path.exists('/run/skewer-route-intent-' + uid + '.json')
