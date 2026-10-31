@@ -1,6 +1,12 @@
 Skewer for Debian 12/13, Ubuntu / Kubuntu 24.04/26.04 LTS and Windows 11
 (amd64).
 
+### 0.9.50.9
+
+- Fixes the Windows wizard installation of the privileged routing service.
+- Makes upgrade and uninstall cleanup reliable across supported PowerShell and
+  Windows registry environments.
+
 ### 0.9.50.8
 
 - Adds the native Windows 11 client with selected-application and whole-host
