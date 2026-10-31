@@ -4,6 +4,14 @@ param(
     [switch]$RemoveSettings
 )
 $ErrorActionPreference = 'Stop'
+$InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
+$installRoot = Get-Item -LiteralPath $InstallDirectory
+if (!$installRoot.PSIsContainer -or
+    ($installRoot.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+    !(Test-Path -LiteralPath (Join-Path $InstallDirectory 'skewer.exe') -PathType Leaf) -or
+    !(Test-Path -LiteralPath (Join-Path $InstallDirectory 'Uninstall.exe') -PathType Leaf)) {
+    throw 'InstallDirectory is not a complete, regular Skewer installation.'
+}
 $nativeModuleRoot = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules'
 $moduleRoots = @($env:PSModulePath -split ';' | Where-Object { $_ })
 if ((Test-Path -LiteralPath $nativeModuleRoot -PathType Container) -and
@@ -57,3 +65,10 @@ if ($RemoveSettings) {
     Remove-Item -LiteralPath (Join-Path $profile.LocalPath 'AppData\Local\skewer') -Recurse -Force -ErrorAction SilentlyContinue
 }
 Add-Content -LiteralPath $logFile -Value ('{0:o} Uninstall orchestration completed.' -f [DateTime]::UtcNow) -Encoding UTF8
+
+# The elevated orchestration owns payload cleanup as well as service removal.
+# Keep only the running NSIS image; setup removes that final file after this
+# PowerShell process exits.
+Get-ChildItem -LiteralPath $InstallDirectory -Force | Where-Object {
+    $_.Name -cne 'Uninstall.exe'
+} | Remove-Item -Recurse -Force
