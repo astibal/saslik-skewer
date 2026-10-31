@@ -61,7 +61,7 @@ jobs:
         with:
           name: skewer-windows-amd64
           path: dist/windows
-      - name: Verify and install the Windows release package
+      - name: Verify Windows release artifacts
         shell: pwsh
         run: |
           $archive = @(Get-ChildItem -LiteralPath dist/windows -Filter 'skewer-windows-amd64-*.zip')
@@ -86,21 +86,38 @@ jobs:
           if ($tests[0].BaseName -ne "skewer-windows-tests-amd64-$version") {
             throw 'Windows package and test bundle versions differ'
           }
+          $installer = @(Get-ChildItem -LiteralPath dist/windows -Filter 'SkewerSetup-*.exe')
+          if ($installer.Count -ne 1) { throw "Expected one Windows installer, found $($installer.Count)" }
+          "SKEWER_WINDOWS_ARCHIVE=$($archive[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "SKEWER_WINDOWS_TESTS=$($tests[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "SKEWER_WINDOWS_INSTALLER=$($installer[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "SKEWER_WINDOWS_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Run native Windows tests
+        shell: pwsh
+        run: |
           $testRoot = Join-Path $env:RUNNER_TEMP 'skewer-native-tests'
-          Expand-Archive -LiteralPath $tests[0].FullName -DestinationPath $testRoot
-          $testPackage = Join-Path $testRoot $tests[0].BaseName
+          Expand-Archive -LiteralPath $env:SKEWER_WINDOWS_TESTS -DestinationPath $testRoot
+          $testPackage = Join-Path $testRoot "skewer-windows-tests-amd64-$env:SKEWER_WINDOWS_VERSION"
           & (Join-Path $testPackage 'run-tests.ps1') -Root $testPackage
+      - name: Verify portable Windows package
+        shell: pwsh
+        run: |
           $smokeRoot = Join-Path $env:RUNNER_TEMP 'skewer-release-smoke'
-          ./packaging/test-windows-package.ps1 -Archive $archive[0].FullName `
-            -ExpectedVersion $version -TestRoot $smokeRoot
-          $package = Join-Path $smokeRoot "skewer-windows-amd64-$version"
+          ./packaging/test-windows-package.ps1 -Archive $env:SKEWER_WINDOWS_ARCHIVE `
+            -ExpectedVersion $env:SKEWER_WINDOWS_VERSION -TestRoot $smokeRoot
+      - name: Verify Windows routing service installation
+        shell: pwsh
+        run: |
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'skewer-release-smoke'
+          $package = Join-Path $smokeRoot "skewer-windows-amd64-$env:SKEWER_WINDOWS_VERSION"
           ./platform/windows/tests/install-routing-service-live.ps1 `
             -Directory $package -WinDivertDirectory $package `
             -WintunDll (Join-Path $package 'wintun.dll')
-          $installer = @(Get-ChildItem -LiteralPath dist/windows -Filter 'SkewerSetup-*.exe')
-          if ($installer.Count -ne 1) { throw "Expected one Windows installer, found $($installer.Count)" }
-          ./packaging/test-windows-installer.ps1 -Installer $installer[0].FullName `
-            -ExpectedVersion $version
+      - name: Verify Windows wizard installer
+        shell: pwsh
+        run: |
+          ./packaging/test-windows-installer.ps1 -Installer $env:SKEWER_WINDOWS_INSTALLER `
+            -ExpectedVersion $env:SKEWER_WINDOWS_VERSION
   install:
     needs: package
     runs-on: ubuntu-24.04
