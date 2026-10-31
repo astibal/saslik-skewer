@@ -148,6 +148,10 @@ uninstall_silent_error:
   RMDir /r "$SMPROGRAMS\Skewer"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Skewer"
   DeleteRegKey HKLM "Software\Smithproxy\Skewer"
+  ; NSIS runs the uninstaller from a temporary copy, but its installed image
+  ; must be explicitly deleted before the now-empty directory can disappear.
+  Delete "$INSTDIR\Uninstall.exe"
+  RMDir /r "$INSTDIR"
 SectionEnd
 
 Section /o "un.Pairing and user settings" UNSEC_SETTINGS
@@ -166,10 +170,6 @@ settings_silent_error:
     Quit
   ${EndIf}
 SectionEnd
-
-Function un.onUninstSuccess
-  RMDir /r "$INSTDIR"
-FunctionEnd
 
 LangString DESC_UNSEC_CORE ${LANG_ENGLISH} "Remove the application and its idle routing service. Pairing and settings are preserved."
 LangString DESC_UNSEC_SETTINGS ${LANG_ENGLISH} "Also permanently remove pairing credentials and this user's preferences."
