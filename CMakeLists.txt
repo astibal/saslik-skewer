@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(saslik-skewer VERSION 0.9.50.10 LANGUAGES CXX)
+project(saslik-skewer VERSION 0.9.50.11 LANGUAGES CXX)
 
 # Select platform dependencies before discovering Linux-only services/libraries.
 if(WIN32)
@@ -248,7 +248,8 @@ if(BUILD_TESTING)
         src/desktop_catalog.cpp src/process_scanner.cpp
         src/routing_controller.cpp src/routing_plan.cpp)
     target_include_directories(saslik_status_test PRIVATE src)
-    target_link_libraries(saslik_status_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test PkgConfig::SYSTEMD)
+    target_link_libraries(saslik_status_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+        PkgConfig::SYSTEMD skewer-ipv4-prefix)
     target_sources(saslik_status_test PRIVATE src/pairing.cpp)
     target_link_libraries(saslik_status_test PRIVATE OpenSSL::SSL OpenSSL::Crypto)
     target_compile_definitions(saslik_status_test PRIVATE
@@ -261,7 +262,8 @@ if(BUILD_TESTING)
         src/application_model.cpp src/desktop_catalog.cpp src/process_scanner.cpp
         src/cgroup_manager.cpp src/routing_controller.cpp src/routing_plan.cpp)
     target_include_directories(tui_test PRIVATE src)
-    target_link_libraries(tui_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent PkgConfig::SYSTEMD PkgConfig::NCURSESW)
+    target_link_libraries(tui_test PRIVATE Qt6::Widgets Qt6::Network Qt6::Concurrent
+        PkgConfig::SYSTEMD PkgConfig::NCURSESW skewer-ipv4-prefix)
     target_compile_definitions(tui_test PRIVATE
         SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
     add_test(NAME tui COMMAND tui_test)
@@ -288,7 +290,7 @@ if(BUILD_TESTING)
     add_executable(tuntom_routing_driver tests/tuntom_routing_driver.cpp
         src/tuntom_process.cpp src/socket_cleanup.cpp src/ca_store.cpp src/routing_plan.cpp)
     target_include_directories(tuntom_routing_driver PRIVATE src)
-    target_link_libraries(tuntom_routing_driver PRIVATE Qt6::Network)
+    target_link_libraries(tuntom_routing_driver PRIVATE Qt6::Network skewer-ipv4-prefix)
     target_compile_definitions(tuntom_routing_driver PRIVATE
         SKEWER_INSTALLED_HELPER_PATH="${CMAKE_INSTALL_FULL_LIBEXECDIR}/skewer-net-helper")
     add_test(NAME tuntom_routing COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/tuntom_routing_test.py
